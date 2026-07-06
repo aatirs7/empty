@@ -10,7 +10,7 @@ export default function LogoutButton() {
         router.replace("/login");
         router.refresh();
       }}
-      className="text-muted text-sm"
+      className="w-full rounded-2xl border border-border py-3 text-sm text-down"
     >
       Sign out
     </button>

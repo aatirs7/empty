@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getLatestRun } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
+import PullToRefresh from "@/components/PullToRefresh";
 import { StatusPill, Empty, PageTitle } from "@/components/ui";
 import { plainVerdict, confidenceLabel } from "@/lib/format";
 
@@ -14,6 +15,7 @@ export default async function TodayPage() {
 
   return (
     <div className="space-y-5">
+      <PullToRefresh />
       <PageTitle title="Today" subtitle={run.runDate} />
 
       <p className="text-center text-sm text-muted leading-relaxed">
@@ -46,7 +48,15 @@ export default async function TodayPage() {
 
               {plain && <p className="text-sm text-muted leading-relaxed">{plain}</p>}
 
-              <div className="text-xs text-muted">{confidenceLabel(p.confidence)}</div>
+              {isTrade && (p.strikeHint || p.expiryHint) && (
+                <p className="text-xs text-muted num">
+                  {p.strikeHint} · {p.expiryHint}
+                </p>
+              )}
+
+              <div className="text-xs text-muted">
+                {confidenceLabel(p.confidence)} · <span className="num">{Math.round(Number(p.confidence) * 100)}%</span> sure
+              </div>
 
               {isTrade && p.status === "pending" ? (
                 <div className="pt-1 space-y-2">

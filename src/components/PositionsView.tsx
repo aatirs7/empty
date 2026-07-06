@@ -1,6 +1,7 @@
 "use client";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { usd } from "@/lib/format";
+import { usd, parseOcc, companyName, positionRecommendation } from "@/lib/format";
 
 interface Pos {
   symbol: string;
@@ -8,6 +9,7 @@ interface Pos {
   avg_entry_price: string;
   market_value: string | null;
   unrealized_pl: string | null;
+  unrealized_plpc: string | null;
   current_price: string | null;
 }
 interface Data {
@@ -38,7 +40,7 @@ export default function PositionsView() {
     load();
   }
 
-  if (!data) return <p className="text-sm text-muted">Loading positions…</p>;
+  if (!data) return <p className="text-sm text-muted text-center py-8">Loading positions…</p>;
   if (!data.positions.length) return <p className="text-sm text-muted text-center py-12">No open positions.</p>;
 
   return (
@@ -54,28 +56,43 @@ export default function PositionsView() {
 
       {data.positions.map((p) => {
         const pl = p.unrealized_pl ? Number(p.unrealized_pl) : 0;
+        const plPc = p.unrealized_plpc != null ? Number(p.unrealized_plpc) : null;
+        const occ = parseOcc(p.symbol);
+        const company = occ ? companyName(occ.underlying) : p.symbol;
+        const dir = occ?.type === "call" ? "up" : "down";
+        const rec = positionRecommendation(p.symbol, plPc);
         return (
-          <div key={p.symbol} className="bg-panel border border-border rounded-2xl p-4">
-            <div className="flex justify-between items-start gap-2">
-              <div className="min-w-0">
-                <p className="font-medium num text-sm break-all">{p.symbol}</p>
-                <p className="text-xs text-muted num">
-                  {p.qty} @ {usd(p.avg_entry_price)}
-                  {p.current_price ? ` · now ${usd(p.current_price)}` : ""}
-                </p>
+          <div key={p.symbol} className="bg-panel border border-border rounded-2xl p-4 space-y-3">
+            <Link href={`/position/${encodeURIComponent(p.symbol)}`} className="block">
+              <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0">
+                  <p className="font-medium text-sm">
+                    {company}{" "}
+                    {occ && <span className={dir === "up" ? "text-up" : "text-down"}>({dir})</span>}
+                  </p>
+                  <p className="text-xs text-muted num">
+                    {p.qty} @ {usd(p.avg_entry_price)}
+                    {occ && ` · target ${usd(occ.strike, 0)}`}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={`num font-semibold ${pl >= 0 ? "text-up" : "text-down"}`}>
+                    {pl >= 0 ? "+" : ""}
+                    {usd(pl)}
+                  </p>
+                  <p className="text-xs text-muted num">{usd(p.market_value)}</p>
+                </div>
               </div>
-              <div className="text-right shrink-0">
-                <p className={`num font-semibold ${pl >= 0 ? "text-up" : "text-down"}`}>
-                  {pl >= 0 ? "+" : ""}
-                  {usd(pl)}
-                </p>
-                <p className="text-xs text-muted num">{usd(p.market_value)}</p>
-              </div>
+            </Link>
+
+            <div className={`text-xs text-center ${rec.tone === "up" ? "text-up" : rec.tone === "down" ? "text-down" : "text-muted"}`}>
+              {rec.text}
             </div>
+
             <button
               onClick={() => close(p.symbol)}
               disabled={closing === p.symbol}
-              className="mt-3 w-full rounded-lg border border-down/40 text-down text-sm py-2 disabled:opacity-40"
+              className="w-full rounded-xl border border-down/40 text-down text-sm py-2 disabled:opacity-40"
             >
               {closing === p.symbol ? "Closing…" : "Close position"}
             </button>

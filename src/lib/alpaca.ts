@@ -130,6 +130,37 @@ export function listPositions(): Promise<Position[]> {
   return trading<Position[]>("/v2/positions");
 }
 
+/** Single position by symbol, or null if none open. */
+export async function getPosition(symbol: string): Promise<Position | null> {
+  try {
+    return await trading<Position>(`/v2/positions/${encodeURIComponent(symbol)}`);
+  } catch {
+    return null;
+  }
+}
+
+export interface Bar {
+  t: string;
+  c: number;
+}
+
+/** Daily closing bars for an underlying stock (free IEX feed), most recent last. */
+export async function getStockBars(symbol: string, days = 90): Promise<Bar[]> {
+  const start = new Date();
+  start.setUTCDate(start.getUTCDate() - days);
+  const q = new URLSearchParams({
+    timeframe: "1Day",
+    start: start.toISOString().slice(0, 10),
+    feed: "iex",
+    limit: "1000",
+    adjustment: "raw",
+  });
+  const resp = await data<{ bars?: { t: string; c: number }[] }>(
+    `/v2/stocks/${encodeURIComponent(symbol)}/bars?${q.toString()}`,
+  );
+  return (resp.bars ?? []).map((b) => ({ t: b.t, c: b.c }));
+}
+
 export function getOrder(id: string): Promise<Order> {
   return trading<Order>(`/v2/orders/${id}`);
 }
