@@ -1,61 +1,72 @@
 import Link from "next/link";
 import { getLatestRun } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
-import { PricedInTag, Confidence, StatusPill, Empty, PageTitle } from "@/components/ui";
-import { labelStrategy } from "@/lib/format";
+import { StatusPill, Empty, PageTitle } from "@/components/ui";
+import { plainVerdict, confidenceLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function TodayPage() {
   const data = await getLatestRun();
-  if (!data) return <Empty>No research yet. Operation Vega runs each weekday, pre-market.</Empty>;
+  if (!data) return <Empty>No research yet. Vega runs each weekday, early in the morning.</Empty>;
   const { run, proposals } = data;
+  const trades = proposals.filter((p) => p.strategy !== "no_trade");
 
   return (
     <div className="space-y-5">
-      <PageTitle title="Today" subtitle={`Run #${run.id} · ${run.runDate} · ${run.status}`} />
+      <PageTitle title="Today" subtitle={run.runDate} />
+
+      <p className="text-center text-sm text-muted leading-relaxed">
+        Vega looked at {proposals.length} {proposals.length === 1 ? "stock" : "stocks"} this morning and found{" "}
+        <span className="text-foreground font-medium">
+          {trades.length === 0 ? "no clear opportunities" : `${trades.length} possible ${trades.length === 1 ? "trade" : "trades"}`}
+        </span>
+        .{trades.length === 0 && " That's normal — most days there's no edge, and sitting out is a fine choice."}
+      </p>
 
       {run.marketContext && (
-        <p className="text-sm text-muted bg-panel border border-border rounded-2xl p-4 text-center">
-          {run.marketContext}
-        </p>
+        <details className="bg-panel border border-border rounded-2xl p-4 text-center">
+          <summary className="text-xs text-muted cursor-pointer list-none select-none">Today&apos;s market mood ▾</summary>
+          <p className="text-sm text-muted mt-2 leading-relaxed">{run.marketContext}</p>
+        </details>
       )}
 
       <div className="space-y-3">
         {proposals.map((p) => {
           const isTrade = p.strategy !== "no_trade";
+          const verdict = plainVerdict(p.strategy, p.symbol);
+          const toneClass = verdict.tone === "up" ? "text-up" : verdict.tone === "down" ? "text-down" : "text-muted";
+          const plain = p.plainExplanation || p.rationale;
           return (
-            <div key={p.id} className="bg-panel border border-border rounded-2xl p-4 space-y-2.5">
-              <div className="flex items-start justify-between gap-2">
-                <Link href={`/proposal/${p.id}`} className="min-w-0">
-                  <span className="font-semibold">{p.symbol}</span>{" "}
-                  {isTrade ? (
-                    <span className="text-xs text-muted">
-                      {labelStrategy(p.strategy)} · {p.strikeHint} · {p.expiryHint}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted">no trade</span>
-                  )}
-                </Link>
-                <PricedInTag value={p.pricedInAssessment} />
+            <div key={p.id} className="bg-panel border border-border rounded-2xl p-5 text-center space-y-3">
+              <div>
+                <div className="text-xl font-bold tracking-tight">{p.symbol}</div>
+                <div className={`text-sm font-medium ${toneClass}`}>{verdict.title}</div>
               </div>
 
-              {p.plainExplanation && <p className="text-sm">{p.plainExplanation}</p>}
+              {plain && <p className="text-sm text-muted leading-relaxed">{plain}</p>}
 
-              <div className="flex items-center justify-between">
-                <Confidence value={p.confidence} />
-                {!isTrade ? (
-                  <span className="text-xs text-muted">—</span>
-                ) : p.status === "pending" ? (
+              <div className="text-xs text-muted">{confidenceLabel(p.confidence)}</div>
+
+              {isTrade && p.status === "pending" ? (
+                <div className="pt-1 space-y-2">
                   <ProposalActions id={p.id} />
-                ) : (
+                  <Link href={`/proposal/${p.id}`} className="block text-xs text-accent">
+                    See what you could make or lose →
+                  </Link>
+                </div>
+              ) : isTrade ? (
+                <div className="flex items-center justify-center gap-3">
                   <StatusPill status={p.status} />
-                )}
-              </div>
-
-              <Link href={`/proposal/${p.id}`} className="block text-xs text-accent">
-                {isTrade ? "See the trade & risk →" : "Details →"}
-              </Link>
+                  <Link href={`/proposal/${p.id}`} className="text-xs text-accent">
+                    Details →
+                  </Link>
+                </div>
+              ) : (
+                <Link href={`/proposal/${p.id}`} className="text-xs text-accent">
+                  Why sit out? →
+                </Link>
+              )}
             </div>
           );
         })}

@@ -4,7 +4,7 @@ import { getProposalById } from "@/lib/queries";
 import RiskExplainer from "@/components/RiskExplainer";
 import PendingRisk from "@/components/PendingRisk";
 import { PricedInTag, Confidence } from "@/components/ui";
-import { labelStrategy, usd } from "@/lib/format";
+import { labelStrategy, usd, plainPricedIn } from "@/lib/format";
 import type { Scenario } from "@/lib/risk";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
   if (!data) notFound();
   const { proposal: p, order } = data;
   const isTrade = p.strategy !== "no_trade" && !!p.direction && p.direction !== "none";
-  const priced = (p.pricedInAssessment ?? "unclear").replace("_", " ");
+  const plain = p.plainExplanation || p.rationale;
 
   return (
     <div className="space-y-5">
@@ -36,15 +36,15 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
       </div>
 
       <section>
-        <h2 className="text-sm font-semibold mb-1">In plain English</h2>
-        <p className="text-sm">{p.plainExplanation ?? "—"}</p>
+        <h2 className="text-sm font-semibold mb-1 text-center">In plain English</h2>
+        <p className="text-sm text-center leading-relaxed">{plain ?? "—"}</p>
       </section>
 
       <section>
-        <h2 className="text-sm font-semibold mb-1">Why Vega picked it</h2>
-        <p className="text-sm text-muted">{p.rationale ?? "—"}</p>
-        <p className="text-xs text-muted mt-1">
-          Vega&apos;s read: the market&apos;s reaction looks <span className="text-foreground">{priced}</span>.
+        <h2 className="text-sm font-semibold mb-1 text-center">Why Vega picked it</h2>
+        <p className="text-sm text-muted text-center leading-relaxed">
+          Vega thinks <span className="text-foreground">{plainPricedIn(p.pricedInAssessment)}</span>
+          {p.plainExplanation && p.rationale ? `. ${p.rationale}` : "."}
         </p>
       </section>
 
@@ -69,8 +69,9 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
           <p className="text-sm text-muted">This proposal is {p.status} with no order attached.</p>
         )
       ) : (
-        <section className="bg-panel border border-border rounded-xl p-4 text-sm text-muted">
-          No trade today — no clear, defensible edge on {p.symbol}. A day with no trade is a fine outcome.
+        <section className="bg-panel border border-border rounded-2xl p-4 text-sm text-muted text-center leading-relaxed">
+          No trade today — Vega didn&apos;t see a clear edge on {p.symbol}. A day with no trade is a perfectly good
+          outcome.
         </section>
       )}
 

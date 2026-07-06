@@ -1,5 +1,6 @@
 import { getSettings } from "@/lib/settings";
 import SettingsForm from "@/components/SettingsForm";
+import ThemeToggle from "@/components/ThemeToggle";
 import { PageTitle } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,7 @@ export default async function SettingsPage() {
   return (
     <div className="space-y-5">
       <PageTitle title="Settings" />
+      <ThemeToggle />
       <SettingsForm
         initial={{
           autoExecute: s.autoExecute,

@@ -21,22 +21,24 @@ export default function ProposalActions({ id }: { id: number }) {
   }
 
   return (
-    <div className="flex items-center gap-2">
-      {err && <span className="text-xs text-down">{err}</span>}
-      <button
-        onClick={() => act("reject")}
-        disabled={!!busy}
-        className="px-3 py-1.5 rounded-lg border border-border text-sm disabled:opacity-40"
-      >
-        Reject
-      </button>
-      <button
-        onClick={() => act("approve")}
-        disabled={!!busy}
-        className="px-3 py-1.5 rounded-lg bg-up/90 text-black text-sm font-medium disabled:opacity-40"
-      >
-        {busy === "approve" ? "…" : "Approve"}
-      </button>
+    <div>
+      {err && <p className="text-xs text-down mb-2">{err}</p>}
+      <div className="flex gap-2">
+        <button
+          onClick={() => act("reject")}
+          disabled={!!busy}
+          className="flex-1 py-2.5 rounded-xl border border-border text-sm disabled:opacity-40"
+        >
+          {busy === "reject" ? "…" : "Skip"}
+        </button>
+        <button
+          onClick={() => act("approve")}
+          disabled={!!busy}
+          className="flex-1 py-2.5 rounded-xl bg-up text-white text-sm font-medium disabled:opacity-40"
+        >
+          {busy === "approve" ? "…" : "Approve"}
+        </button>
+      </div>
     </div>
   );
 }

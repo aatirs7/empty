@@ -1,13 +1,40 @@
 @import "tailwindcss";
 
+/* Light is the default; dark applies via system preference or an explicit toggle. */
 :root {
+  --background: #f5f5f7;
+  --panel: #ffffff;
+  --panel-2: #eeeef1;
+  --border: #e3e3e8;
+  --foreground: #17171a;
+  --muted: #6b6b76;
+  --accent: #d4383d;
+  --up: #128a4e;
+  --down: #d4383d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #0a0a0b;
+    --panel: #141416;
+    --panel-2: #1b1b1f;
+    --border: #2a2a30;
+    --foreground: #ededed;
+    --muted: #9a9aa6;
+    --accent: #e5484d;
+    --up: #33c27f;
+    --down: #e5484d;
+  }
+}
+
+:root[data-theme="dark"] {
   --background: #0a0a0b;
   --panel: #141416;
   --panel-2: #1b1b1f;
   --border: #2a2a30;
   --foreground: #ededed;
   --muted: #9a9aa6;
-  --accent: #e5484d; /* red accent, matches the app icon */
+  --accent: #e5484d;
   --up: #33c27f;
   --down: #e5484d;
 }
@@ -24,8 +51,16 @@
   --color-down: var(--down);
 }
 
-html {
+:root {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
   color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
 }
 
 body {
