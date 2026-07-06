@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { getSettings } from "@/lib/settings";
 import SettingsForm from "@/components/SettingsForm";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -28,13 +27,6 @@ export default async function SettingsPage() {
           maxContractPrice: Number(s.maxContractPrice),
         }}
       />
-      <Link
-        href="/handoff"
-        className="block bg-panel border border-border rounded-2xl p-4 text-center text-sm text-accent"
-      >
-        Handoff doc &rarr;
-        <span className="block text-[11px] text-muted mt-0.5">Context to paste into any chat</span>
-      </Link>
       <LogoutButton />
     </div>
   );
