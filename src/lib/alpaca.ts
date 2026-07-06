@@ -126,6 +126,23 @@ export function getAccount(): Promise<Account> {
   return trading<Account>("/v2/account");
 }
 
+export interface Asset {
+  symbol: string;
+  name: string;
+  class: string;
+  status: string;
+  tradable: boolean;
+}
+
+/** Look up a tradable asset by symbol, or null if it doesn't exist. */
+export async function getAsset(symbol: string): Promise<Asset | null> {
+  try {
+    return await trading<Asset>(`/v2/assets/${encodeURIComponent(symbol)}`);
+  } catch {
+    return null;
+  }
+}
+
 export function listPositions(): Promise<Position[]> {
   return trading<Position[]>("/v2/positions");
 }

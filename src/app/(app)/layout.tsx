@@ -1,12 +1,14 @@
 import Link from "next/link";
 import AutoBanner from "@/components/AutoBanner";
 import BottomNav from "@/components/BottomNav";
+import HeaderThemeToggle from "@/components/HeaderThemeToggle";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-dvh flex flex-col pb-24">
       <header className="sticky top-0 z-10 bg-background/85 backdrop-blur pt-[env(safe-area-inset-top)]">
-        <div className="h-11 max-w-xl mx-auto px-4 flex items-center justify-end">
+        <div className="h-11 max-w-xl mx-auto px-4 flex items-center justify-between">
+          <HeaderThemeToggle />
           <Link href="/settings" aria-label="Settings" className="text-muted p-1 -mr-1">
             <svg
               viewBox="0 0 24 24"

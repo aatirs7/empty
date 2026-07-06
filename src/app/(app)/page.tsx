@@ -40,7 +40,8 @@ export default async function TodayPage() {
           const toneClass = verdict.tone === "up" ? "text-up" : verdict.tone === "down" ? "text-down" : "text-muted";
           const plain = p.plainExplanation || p.rationale;
           return (
-            <div key={p.id} className="bg-panel border border-border rounded-2xl p-5 text-center space-y-3">
+            <div key={p.id} className="bg-panel border border-accent/30 rounded-2xl p-5 text-center space-y-3">
+              <div className="mx-auto h-1 w-10 rounded-full bg-accent/70" />
               <div>
                 <div className="text-xl font-bold tracking-tight">{p.symbol}</div>
                 <div className={`text-sm font-medium ${toneClass}`}>{verdict.title}</div>
