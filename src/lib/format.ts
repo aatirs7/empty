@@ -1,13 +1,19 @@
 export function usd(n: number | string | null | undefined, dp = 2): string {
-  if (n == null || n === "") return "—";
+  if (n == null || n === "") return "-";
   const v = Number(n);
-  if (!Number.isFinite(v)) return "—";
+  if (!Number.isFinite(v)) return "-";
   return `$${v.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
 }
 
 export function pct(n: number | string | null | undefined): string {
-  if (n == null) return "—";
+  if (n == null) return "-";
   return `${Math.round(Number(n) * 100)}%`;
+}
+
+// Strip em/en dashes out of model-generated text before display.
+export function stripDash(s: string | null | undefined): string {
+  if (!s) return "";
+  return s.replace(/\s*[—–]\s*/g, ", ").replace(/\s+,/g, ",");
 }
 
 export function labelStrategy(s: string | null): string {
@@ -83,19 +89,32 @@ export interface PositionRec {
   tone: "up" | "down" | "muted";
 }
 
-// Simple, code-computed rule-of-thumb — NOT financial advice. Combines how far
+// Simple, code-computed rule-of-thumb, NOT financial advice. Combines how far
 // the trade is up/down with how close it is to expiry.
 export function positionRecommendation(symbol: string, unrealizedPlPc: number | null): PositionRec {
   const expiry = optionExpiryFromOcc(symbol);
   const days = expiry ? Math.ceil((Date.parse(`${expiry}T00:00:00Z`) - Date.now()) / 86_400_000) : Infinity;
   const plPct = (unrealizedPlPc ?? 0) * 100;
 
-  if (days <= 1) return { text: "Expires today or tomorrow — close now, or it may expire worthless.", tone: "down" };
-  if (days <= 3) return { text: "Only a few days left — decide soon; value drops fast near expiry.", tone: "down" };
-  if (plPct >= 50) return { text: "Up nicely — closing now locks in the gain.", tone: "up" };
-  if (plPct <= -50) return { text: "Down a lot — consider cutting the loss before it decays further.", tone: "down" };
-  if (days <= 7) return { text: "Getting close to expiry — worth keeping an eye on.", tone: "muted" };
-  return { text: "No strong signal — holding a while longer is reasonable.", tone: "muted" };
+  if (days <= 2)
+    return {
+      text:
+        plPct >= 0
+          ? "Close it. It expires in a day or two, so lock in what you have."
+          : "Close it. It expires in a day or two and probably won't recover.",
+      tone: "down",
+    };
+  if (plPct >= 50) return { text: "Close it. You're up big, so take the profit.", tone: "up" };
+  if (plPct <= -50) return { text: "Consider closing. It's down a lot and keeps bleeding value over time.", tone: "down" };
+  if (days <= 5)
+    return {
+      text:
+        plPct >= 0
+          ? "Hold, but be ready to close within a few days as it nears expiry."
+          : "Lean toward closing. Expiry is close and it hasn't worked out yet.",
+      tone: "muted",
+    };
+  return { text: "Hold. No strong reason to close it yet.", tone: "muted" };
 }
 
 export function plainPricedIn(v: string | null): string {

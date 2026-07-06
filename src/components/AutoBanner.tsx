@@ -10,7 +10,7 @@ export default async function AutoBanner() {
       href="/settings"
       className="block bg-accent/15 border-b border-accent/40 text-accent text-xs text-center py-2 px-4"
     >
-      ● AUTO-EXECUTE IS ON — auto-places paper trades ≥ {Math.round(Number(s.autoMinConfidence) * 100)}% confidence, up to{" "}
+      ● AUTO-EXECUTE IS ON, auto-places paper trades ≥ {Math.round(Number(s.autoMinConfidence) * 100)}% confidence, up to{" "}
       {s.maxAutoTradesPerDay}/day. Tap to manage or turn off.
     </Link>
   );

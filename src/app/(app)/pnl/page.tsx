@@ -33,7 +33,7 @@ export default async function PnlPage() {
       <PageTitle title="Profit & Loss" />
 
       <div className="bg-panel border border-border rounded-2xl p-5 text-center">
-        <p className="text-xs text-muted">Net profit — trade P&amp;L minus API cost</p>
+        <p className="text-xs text-muted">Net profit, trade P&amp;L minus API cost</p>
         <p className={`text-4xl font-bold num mt-1 ${net >= 0 ? "text-up" : "text-down"}`}>
           {net >= 0 ? "+" : ""}
           {usd(net)}
@@ -46,7 +46,7 @@ export default async function PnlPage() {
       <div className="grid grid-cols-2 gap-3">
         <Stat
           label="Trade P&L (paper, all-time)"
-          value={pl ? `${tradePL >= 0 ? "+" : ""}${usd(tradePL)}` : "—"}
+          value={pl ? `${tradePL >= 0 ? "+" : ""}${usd(tradePL)}` : "-"}
           tone={pl ? (tradePL >= 0 ? "up" : "down") : undefined}
         />
         <Stat label="API cost (all-time)" value={usd(cost.total)} />
@@ -58,7 +58,7 @@ export default async function PnlPage() {
 
       <p className="text-xs text-muted">
         Paper account. Trade P&amp;L is your paper equity change since the account started (realized + unrealized) from
-        Alpaca. API cost is the summed estimate of every research run. Net is simply one minus the other — both
+        Alpaca. API cost is the summed estimate of every research run. Net is simply one minus the other, both
         code-computed.
       </p>
     </div>

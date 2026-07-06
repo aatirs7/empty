@@ -1,5 +1,5 @@
 /**
- * Shared execute path — used by BOTH the manual API route and auto-execute.
+ * Shared execute path, used by BOTH the manual API route and auto-execute.
  * All guardrails live HERE so every path is protected identically:
  *   - PAPER-ONLY (asserts TRADING_MODE === "paper")
  *   - per-order contract cap (MAX_CONTRACTS_PER_ORDER)
@@ -54,13 +54,13 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   const [proposal] = await db.select().from(proposals).where(eq(proposals.id, proposalId)).limit(1);
   if (!proposal) throw new ExecuteError(`Proposal ${proposalId} not found.`, "not_found");
   if (proposal.strategy === "no_trade" || !proposal.direction || proposal.direction === "none") {
-    throw new ExecuteError(`Proposal ${proposalId} is a no_trade — nothing to execute.`, "no_trade");
+    throw new ExecuteError(`Proposal ${proposalId} is a no_trade, nothing to execute.`, "no_trade");
   }
   if (proposal.status !== "pending") {
     throw new ExecuteError(`Proposal ${proposalId} is already "${proposal.status}".`, "already_actioned");
   }
 
-  // Open-position cap — count real Alpaca positions.
+  // Open-position cap, count real Alpaca positions.
   const positions = await listPositions();
   if (positions.length >= openCap) {
     throw new ExecuteError(`Open-position cap reached (${positions.length}/${openCap}).`, "open_cap");

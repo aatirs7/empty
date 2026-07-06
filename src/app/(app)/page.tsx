@@ -3,7 +3,7 @@ import { getLatestRun } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
 import PullToRefresh from "@/components/PullToRefresh";
 import { StatusPill, Empty, PageTitle } from "@/components/ui";
-import { plainVerdict, confidenceLabel } from "@/lib/format";
+import { plainVerdict, confidenceLabel, stripDash } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -23,22 +23,26 @@ export default async function TodayPage() {
         <span className="text-foreground font-medium">
           {trades.length === 0 ? "no clear opportunities" : `${trades.length} possible ${trades.length === 1 ? "trade" : "trades"}`}
         </span>
-        .{trades.length === 0 && " That's normal — most days there's no edge, and sitting out is a fine choice."}
+        .{trades.length === 0 && " That's normal, most days there's no edge, and sitting out is a fine choice."}
       </p>
 
       {run.marketContext && (
         <details className="bg-panel border border-border rounded-2xl p-4 text-center">
           <summary className="text-xs text-muted cursor-pointer list-none select-none">Today&apos;s market mood ▾</summary>
-          <p className="text-sm text-muted mt-2 leading-relaxed">{run.marketContext}</p>
+          <p className="text-sm text-muted mt-2 leading-relaxed">{stripDash(run.marketContext)}</p>
         </details>
       )}
+
+      <Link href="/operation-vega" className="block text-center text-xs text-accent">
+        See Operation Vega&apos;s full research &rarr;
+      </Link>
 
       <div className="space-y-3">
         {proposals.map((p) => {
           const isTrade = p.strategy !== "no_trade";
           const verdict = plainVerdict(p.strategy, p.symbol);
           const toneClass = verdict.tone === "up" ? "text-up" : verdict.tone === "down" ? "text-down" : "text-muted";
-          const plain = p.plainExplanation || p.rationale;
+          const plain = stripDash(p.plainExplanation || p.rationale);
           return (
             <div key={p.id} className="bg-panel border border-accent/30 rounded-2xl p-5 text-center space-y-3">
               <div className="mx-auto h-1 w-10 rounded-full bg-accent/70" />

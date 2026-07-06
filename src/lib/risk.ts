@@ -1,5 +1,5 @@
 /**
- * Pure trade risk math — CODE-COMPUTED, never model-generated.
+ * Pure trade risk math, CODE-COMPUTED, never model-generated.
  * Long single-leg options only (long_call / long_put).
  */
 export interface RiskInput {
@@ -35,7 +35,7 @@ function intrinsic(direction: "call" | "put", strike: number, underlying: number
 /**
  * Max loss, breakeven, and a few expiration-payoff scenarios. Scenarios move the
  * underlying in the trade's favorable direction (up for calls, down for puts)
- * plus flat — adverse moves just floor at maxLoss, which is already shown.
+ * plus flat, adverse moves just floor at maxLoss, which is already shown.
  */
 export function computeRisk(input: RiskInput): RiskMath {
   const { direction, strike, premiumPerShare, qty, underlyingPrice } = input;

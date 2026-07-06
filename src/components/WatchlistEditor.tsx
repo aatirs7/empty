@@ -62,7 +62,7 @@ export default function WatchlistEditor() {
 
   return (
     <div className="bg-panel border border-border rounded-2xl p-4 space-y-3">
-      <div>
+      <div className="text-center">
         <p className="text-sm font-medium">Stocks to research</p>
         <p className="text-xs text-muted mt-0.5">
           What Vega looks at each morning.{rows ? ` ${activeCount} active.` : ""}
@@ -90,7 +90,7 @@ export default function WatchlistEditor() {
       {!rows ? (
         <p className="text-xs text-muted">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="text-xs text-muted">No stocks yet — add one above.</p>
+        <p className="text-xs text-muted">No stocks yet, add one above.</p>
       ) : (
         <div className="divide-y divide-border">
           {rows.map((r) => (

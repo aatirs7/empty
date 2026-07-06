@@ -16,6 +16,20 @@ export async function getLatestRun(): Promise<{ run: ResearchRun; proposals: Pro
   return { run, proposals: props };
 }
 
+export async function getRunWithProposals(
+  id: number,
+): Promise<{ run: ResearchRun; proposals: ProposalRow[] } | null> {
+  const [run] = await db.select().from(researchRuns).where(eq(researchRuns.id, id)).limit(1);
+  if (!run) return null;
+  const props = await db.select().from(proposals).where(eq(proposals.runId, id)).orderBy(desc(proposals.confidence));
+  return { run, proposals: props };
+}
+
+export async function getLatestRunId(): Promise<number | null> {
+  const [run] = await db.select({ id: researchRuns.id }).from(researchRuns).orderBy(desc(researchRuns.id)).limit(1);
+  return run?.id ?? null;
+}
+
 export async function getProposalById(
   id: number,
 ): Promise<{ proposal: ProposalRow; order: OrderRow | null; run: ResearchRun | null } | null> {

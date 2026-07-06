@@ -1,5 +1,5 @@
 /**
- * Alpaca broker layer — PAPER ONLY.
+ * Alpaca broker layer, PAPER ONLY.
  *
  * Two base URLs:
  *   - trading (orders, positions, option contracts): ALPACA_BASE_URL

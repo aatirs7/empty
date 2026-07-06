@@ -1,5 +1,6 @@
+import Link from "next/link";
 import { getRunsLog, getCostTotals } from "@/lib/queries";
-import { usd, labelStrategy } from "@/lib/format";
+import { usd, labelStrategy, stripDash } from "@/lib/format";
 import { Empty, PageTitle } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,7 @@ export default async function LogPage() {
                 <span className="text-xs text-muted num">{usd(Number(run.costEstimate), 4)}</span>
               </summary>
               <div className="mt-3 space-y-2">
-                {run.marketContext && <p className="text-xs text-muted">{run.marketContext}</p>}
+                {run.marketContext && <p className="text-xs text-muted">{stripDash(run.marketContext)}</p>}
                 {proposals.map((p) => (
                   <div key={p.id} className="flex justify-between text-xs">
                     <span>
@@ -46,6 +47,9 @@ export default async function LogPage() {
                 <div className="text-[11px] text-muted num">
                   {run.searchCount ?? 0} searches · {run.inputTokens ?? 0} in / {run.outputTokens ?? 0} out
                 </div>
+                <Link href={`/operation-vega/${run.id}`} className="block text-xs text-accent">
+                  Full breakdown &rarr;
+                </Link>
               </div>
             </details>
           ))}

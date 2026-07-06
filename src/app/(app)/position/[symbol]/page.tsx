@@ -16,7 +16,7 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
         <Link href="/positions" className="text-xs text-muted">
           ← Positions
         </Link>
-        <p className="text-sm text-muted text-center py-12">This position isn&apos;t open anymore — it may have been closed.</p>
+        <p className="text-sm text-muted text-center py-12">This position isn&apos;t open anymore, it may have been closed.</p>
       </div>
     );
   }

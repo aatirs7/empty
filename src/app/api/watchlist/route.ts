@@ -17,7 +17,7 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as { symbol?: string };
   const symbol = (body.symbol ?? "").trim().toUpperCase();
   if (!/^[A-Z]{1,5}$/.test(symbol)) {
-    return NextResponse.json({ ok: false, error: "Enter a valid ticker (1–5 letters)." }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Enter a valid ticker (1-5 letters)." }, { status: 400 });
   }
 
   const asset = await getAsset(symbol);

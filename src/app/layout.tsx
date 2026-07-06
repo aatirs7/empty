@@ -8,7 +8,7 @@ const themeInit = `try{var t=localStorage.getItem('vega-theme');if(t==='light'||
 
 export const metadata: Metadata = {
   title: "Vega",
-  description: "Pre-market options research — paper trading only.",
+  description: "Pre-market options research, paper trading only.",
   applicationName: "Vega",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Vega" },
   icons: { icon: "/icon.png", apple: "/icons/apple-touch-icon.png" },

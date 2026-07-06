@@ -4,7 +4,7 @@ import { getProposalById } from "@/lib/queries";
 import RiskExplainer from "@/components/RiskExplainer";
 import PendingRisk from "@/components/PendingRisk";
 import { PricedInTag, Confidence } from "@/components/ui";
-import { labelStrategy, usd, plainPricedIn } from "@/lib/format";
+import { labelStrategy, usd, plainPricedIn, stripDash } from "@/lib/format";
 import type { Scenario } from "@/lib/risk";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
   if (!data) notFound();
   const { proposal: p, order } = data;
   const isTrade = p.strategy !== "no_trade" && !!p.direction && p.direction !== "none";
-  const plain = p.plainExplanation || p.rationale;
+  const plain = stripDash(p.plainExplanation || p.rationale);
 
   return (
     <div className="space-y-5">
@@ -37,14 +37,14 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
 
       <section>
         <h2 className="text-sm font-semibold mb-1 text-center">In plain English</h2>
-        <p className="text-sm text-center leading-relaxed">{plain ?? "—"}</p>
+        <p className="text-sm text-center leading-relaxed">{plain || "No summary available."}</p>
       </section>
 
       <section>
         <h2 className="text-sm font-semibold mb-1 text-center">Why Vega picked it</h2>
         <p className="text-sm text-muted text-center leading-relaxed">
           Vega thinks <span className="text-foreground">{plainPricedIn(p.pricedInAssessment)}</span>
-          {p.plainExplanation && p.rationale ? `. ${p.rationale}` : "."}
+          {p.plainExplanation && p.rationale ? `. ${stripDash(p.rationale)}` : "."}
         </p>
       </section>
 
@@ -70,7 +70,7 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
         )
       ) : (
         <section className="bg-panel border border-border rounded-2xl p-4 text-sm text-muted text-center leading-relaxed">
-          No trade today — Vega didn&apos;t see a clear edge on {p.symbol}. A day with no trade is a perfectly good
+          No trade today, Vega didn&apos;t see a clear edge on {p.symbol}. A day with no trade is a perfectly good
           outcome.
         </section>
       )}
@@ -81,7 +81,7 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
           <Confidence value={p.confidence} />
         </div>
         <p className="text-xs text-muted mt-2">
-          This is one idea, not a guarantee. Vega is often deliberately low-confidence — most mornings the honest answer
+          This is one idea, not a guarantee. Vega is often deliberately low-confidence, most mornings the honest answer
           is &ldquo;no edge.&rdquo; Paper trading only; none of this is financial advice.
         </p>
       </section>

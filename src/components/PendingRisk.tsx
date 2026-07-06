@@ -83,7 +83,7 @@ export default function PendingRisk({ id }: { id: number }) {
   if (!data.ok || !data.resolved) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-down">Couldn&apos;t price it live ({data.error}). You can still approve — it fills at the next open.</p>
+        <p className="text-sm text-down">Couldn&apos;t price it live ({data.error}). You can still approve, it fills at the next open.</p>
         {err && <p className="text-sm text-down">{err}</p>}
         {buttons}
       </div>
@@ -94,7 +94,7 @@ export default function PendingRisk({ id }: { id: number }) {
   return (
     <div className="space-y-3">
       <div className="text-xs text-muted num">
-        Live contract: {r.symbol} · strike {usd(r.strike, 0)} · exp {r.expiry} · bid {r.bid ?? "—"} / ask {r.ask ?? "—"}
+        Live contract: {r.symbol} · strike {usd(r.strike, 0)} · exp {r.expiry} · bid {r.bid ?? "-"} / ask {r.ask ?? "-"}
       </div>
       {data.risk ? (
         <RiskExplainer

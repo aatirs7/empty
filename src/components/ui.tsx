@@ -1,4 +1,4 @@
-// Presentational helpers — no hooks, usable in server or client components.
+// Presentational helpers, no hooks, usable in server or client components.
 
 export function PricedInTag({ value }: { value: string | null }) {
   const map: Record<string, string> = {

@@ -24,8 +24,8 @@ export default function ThemeToggle() {
 
   return (
     <div className="bg-panel border border-border rounded-2xl p-4">
-      <p className="text-sm font-medium">Appearance</p>
-      <p className="text-xs text-muted mt-0.5 mb-3">Match your phone, or force light / dark.</p>
+      <p className="text-sm font-medium text-center">Appearance</p>
+      <p className="text-xs text-muted mt-0.5 mb-3 text-center">Match your phone, or force light / dark.</p>
       <div className="grid grid-cols-3 gap-2">
         {OPTS.map((o) => (
           <button

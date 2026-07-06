@@ -35,7 +35,7 @@ export default function StockChart({ closes, strike }: { closes: number[]; strik
       </svg>
       <div className="flex justify-center gap-4 mt-1 text-[11px] text-muted">
         <span>~{closes.length} trading days</span>
-        {strike != null && <span>— — strike (target)</span>}
+        {strike != null && <span>-, strike (target)</span>}
       </div>
     </div>
   );

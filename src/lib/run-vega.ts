@@ -1,5 +1,5 @@
 /**
- * Operation Vega persistence — load the active watchlist, run The Brain, write
+ * Operation Vega persistence, load the active watchlist, run The Brain, write
  * the run + proposals to Neon, then (if enabled) run PAPER-ONLY auto-execute.
  * Shared by the CLI script (M2/M3) and the GitHub Actions job (M4).
  *
@@ -108,7 +108,7 @@ async function maybeAutoExecute(inserted: InsertedProposal[]): Promise<AutoExecS
 export async function runAndPersist(): Promise<PersistedRun> {
   const list = await loadActiveWatchlist();
   if (list.length === 0) {
-    throw new Error("Watchlist is empty — seed it first with `npm run seed`.");
+    throw new Error("Watchlist is empty, seed it first with `npm run seed`.");
   }
 
   const runDate = new Date().toISOString().slice(0, 10);

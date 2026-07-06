@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Vega",
     short_name: "Vega",
-    description: "Pre-market options research — paper trading only.",
+    description: "Pre-market options research, paper trading only.",
     start_url: "/",
     display: "standalone",
     background_color: "#0a0a0b",

@@ -1,8 +1,8 @@
 /**
- * The Brain — one Claude call with web search, forced to return only JSON.
+ * The Brain, one Claude call with web search, forced to return only JSON.
  *
  * Model: claude-sonnet-5 (via RESEARCH_MODEL). Web search: web_search_20260209
- * (dynamic filtering). The Brain never sees or invents option prices — it emits
+ * (dynamic filtering). The Brain never sees or invents option prices, it emits
  * strike/expiry HINTS only.
  */
 import Anthropic from "@anthropic-ai/sdk";
@@ -81,7 +81,7 @@ Hard rules:
 - Keep each rationale to two sentences maximum.
 - Also include a "plain_explanation": 2-3 sentences in plain, jargon-free English
   describing what the trade is and why you picked it, written for someone who does
-  not trade options. QUALITATIVE ONLY — do NOT put any numbers, prices, strikes, or
+  not trade options. QUALITATIVE ONLY, do NOT put any numbers, prices, strikes, or
   percentages in it (a separate system computes the numbers). For a "no_trade",
   briefly say in plain English why there's no clear opportunity.
 - Include the source URLs you relied on.
@@ -111,7 +111,7 @@ Schema:
 
 function buildUserMessage(watchlist: WatchlistItem[]): string {
   const today = new Date().toISOString().slice(0, 10);
-  const lines = watchlist.map((w) => `${w.symbol} — ${w.notes?.trim() || "no extra context"}`).join("\n");
+  const lines = watchlist.map((w) => `${w.symbol}, ${w.notes?.trim() || "no extra context"}`).join("\n");
   return `Today is ${today}. Research the following watchlist for pre-market opportunities.
 Return one proposal object per symbol (use "no_trade" when there is no edge).
 
@@ -198,7 +198,7 @@ async function converse(
 
     // Per-turn cost diagnostic. Each pause_turn continuation re-sends the full
     // accumulated context (including prior search results) and re-bills it as
-    // input — watch `in=` climb across turns to see the re-send amplification.
+    // input, watch `in=` climb across turns to see the re-send amplification.
     const t = turnSearches(response);
     console.log(
       `[brain] turn ${i + 1}: stop=${response.stop_reason} in=${response.usage.input_tokens} out=${response.usage.output_tokens} searches=${t.count}`,
@@ -247,7 +247,7 @@ export async function runResearch(watchlist: WatchlistItem[]): Promise<ResearchR
       {
         role: "user",
         content:
-          "Your previous reply did not parse as the required JSON object. Reply with ONLY the single JSON object matching the schema — no preamble, no commentary, no markdown code fences.",
+          "Your previous reply did not parse as the required JSON object. Reply with ONLY the single JSON object matching the schema, no preamble, no commentary, no markdown code fences.",
       },
     ];
     text = await converse(client, model, retryMessages, totals);

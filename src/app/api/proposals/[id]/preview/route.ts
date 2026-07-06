@@ -19,7 +19,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const [p] = await db.select().from(proposals).where(eq(proposals.id, proposalId)).limit(1);
   if (!p) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   if (p.strategy === "no_trade" || !p.direction || p.direction === "none") {
-    return NextResponse.json({ ok: false, error: "no_trade — nothing to price" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "no_trade, nothing to price" }, { status: 400 });
   }
 
   const direction = p.direction as "call" | "put";
