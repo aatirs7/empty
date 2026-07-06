@@ -67,11 +67,16 @@ const data = <T>(path: string, init?: RequestInit) => request<T>(dataBase(), pat
 
 export interface Account {
   id: string;
+  account_number?: string;
   status: string;
   options_trading_level?: number;
   options_approved_level?: number;
   buying_power: string;
   cash: string;
+  equity?: string;
+  portfolio_value?: string;
+  last_equity?: string;
+  long_market_value?: string;
 }
 
 export interface OptionContract {

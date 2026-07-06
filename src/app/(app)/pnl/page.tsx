@@ -3,6 +3,7 @@ import { getPortfolioPL, type PortfolioPL } from "@/lib/alpaca";
 import { usd } from "@/lib/format";
 import { PageTitle } from "@/components/ui";
 import GoalProgress from "@/components/GoalProgress";
+import AccountBalance from "@/components/AccountBalance";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,8 @@ export default async function PnlPage() {
   return (
     <div className="space-y-5">
       <PageTitle title="Profit & Loss" />
+
+      <AccountBalance />
 
       <GoalProgress />
 
