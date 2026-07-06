@@ -1,0 +1,32 @@
+name: Operation Vega
+
+# Pre-market research run. Two crons cover DST: only the trigger that lands in
+# the 08:00-09:15 ET window actually runs (the script guards on ET time), so
+# exactly one real run happens per weekday year-round. workflow_dispatch forces
+# an immediate run for testing.
+on:
+  schedule:
+    - cron: "30 12 * * 1-5" # 12:30 UTC = 08:30 ET during EDT (summer)
+    - cron: "30 13 * * 1-5" # 13:30 UTC = 08:30 ET during EST (winter)
+  workflow_dispatch: {}
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run vega
+        env:
+          # Secrets (required)
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Variables (optional — code defaults to claude-sonnet-5 / 8 if unset)
+          RESEARCH_MODEL: ${{ vars.RESEARCH_MODEL }}
+          MAX_WEB_SEARCHES: ${{ vars.MAX_WEB_SEARCHES }}
+          # workflow_dispatch bypasses the ET-window guard; scheduled runs respect it.
+          VEGA_FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
