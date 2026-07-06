@@ -14,7 +14,7 @@ Never violate these. Never "temporarily" disable them to make a test pass.
 
 1. **Paper trading only.** `ALPACA_BASE_URL` is hardcoded to `https://paper-api.alpaca.markets`. There is NO live-trading code path in this repo. Do not add one.
 2. **`TRADING_MODE` must equal `paper`.** The execute endpoint asserts this and throws otherwise.
-3. **Human in the loop.** Operation Vega only writes proposals to the database. It NEVER places orders. Orders are placed only when the owner taps Approve on a specific proposal.
+3. **Human in the loop is the DEFAULT.** Operation Vega writes proposals; by default orders are placed only when the owner taps Approve on a specific proposal. **Deliberate exception (not a violation to "fix"):** an explicit, off-by-default, **PAPER-ONLY** auto-execute mode may place orders automatically, bounded by its own caps (`settings.autoMinConfidence`, `settings.maxAutoTradesPerDay`) plus the standard per-order and open-position caps. Auto-execute MUST assert `TRADING_MODE === "paper"` and hard-refuse otherwise. It is off unless the owner turns it on in settings. This does not create a live-trading path (guardrail #1 still holds).
 4. **Position caps, enforced server-side:** max 1 contract per order (`MAX_CONTRACTS_PER_ORDER`), max 3 open positions (`MAX_OPEN_POSITIONS`). The execute endpoint rejects anything over.
 5. **The Brain never sees or invents option prices.** It emits strike and expiry HINTS only. A separate step resolves real contracts off the live Alpaca chain.
 
@@ -65,6 +65,21 @@ Never commit `.env`. Keep secrets out of the repo.
 - Cost logging on every run: `(inputTokens/1e6 * INPUT_RATE) + (outputTokens/1e6 * OUTPUT_RATE) + (searchCount * 0.01)`, with rates set to the active Sonnet 5 pricing.
 - Mobile-first, dark theme, large tap targets. A calm decision surface, not a hype screen.
 - Proposals default to `pending`. Approve → execute → `filled`. Reject → `rejected`. Stale unactioned → `expired`.
+
+## Planned: Auto-execute + Trade explainer (M5/M6)
+
+**Feature A — Auto-execute (M5), PAPER-ONLY, off by default.**
+- `settings` table, single row: `autoExecute` bool default false, `autoMinConfidence` numeric default 0.7, `maxAutoTradesPerDay` int default 2 (dashboard-toggleable, no redeploy).
+- Refactor execute into a **shared lib function** (`src/lib/execute.ts`) used by BOTH the manual API route and the research script. The paper-only assertion + all caps live INSIDE it, so both paths are protected identically.
+- Auto flow: after Operation Vega persists proposals, if `autoExecute` is on, for each real-trade proposal (not `no_trade`) with `confidence >= autoMinConfidence`, place a paper order — up to `maxAutoTradesPerDay`, respecting per-order + open-position caps. Skip the rest.
+- `orders.executionMode`: `'auto' | 'manual'` — always know which trades were automated.
+
+**Feature B — Trade explainer (risk math M5, UI M6).**
+- Pure risk-math helper (`src/lib/risk.ts`), **code-computed, never model-generated**: `maxLoss = premium × 100 × qty`; breakeven (call: strike + premium; put: strike − premium); 2–3 scenario payoffs (underlying flat / +5% / +10%). Store on the order row at execution time.
+- Add `plain_explanation` to the research JSON schema: 2–3 jargon-free sentences, **qualitative only, no numbers** (numbers stay in code).
+- Explainer detail page (M6) per proposal/order, plain language, downside gets equal billing with upside: In plain English (from `plain_explanation`) · Why Vega picked it (rationale + priced-in, de-jargoned) · What you can lose (code max loss, big + blunt; can expire worthless) · What you can gain (breakeven, scenarios; calls uncapped, puts capped at strike→0) · The catch (time decay) · Confidence + honest "one idea, not a guarantee" line.
+- For a **PENDING** proposal (pre-approval), the page fetches a live indicative quote for the resolved contract and computes max-loss/breakeven LIVE (reuse M5 resolve + quote), so real dollars-at-risk show before Approve.
+- Settings screen (M6): auto-execute toggle with a visible "auto is ON" indicator + easy pause/kill switch.
 
 ## Build status (update as you go)
 
