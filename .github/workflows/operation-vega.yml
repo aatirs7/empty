@@ -28,6 +28,10 @@ jobs:
           # Secrets (required)
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Alpaca + paper mode, so auto-buy / auto-manage can run when enabled
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          TRADING_MODE: paper
           # Variables (optional — code defaults to claude-sonnet-5 / 8 if unset)
           RESEARCH_MODEL: ${{ vars.RESEARCH_MODEL }}
           MAX_WEB_SEARCHES: ${{ vars.MAX_WEB_SEARCHES }}

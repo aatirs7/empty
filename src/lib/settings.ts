@@ -17,6 +17,9 @@ export interface SettingsPatch {
   autoExecute?: boolean;
   autoMinConfidence?: number;
   maxAutoTradesPerDay?: number;
+  autoManage?: boolean;
+  weeklyGoal?: number;
+  riskTolerance?: string;
 }
 
 export async function updateSettings(patch: SettingsPatch): Promise<Settings> {
@@ -27,6 +30,9 @@ export async function updateSettings(patch: SettingsPatch): Promise<Settings> {
       ...(patch.autoExecute !== undefined ? { autoExecute: patch.autoExecute } : {}),
       ...(patch.autoMinConfidence !== undefined ? { autoMinConfidence: String(patch.autoMinConfidence) } : {}),
       ...(patch.maxAutoTradesPerDay !== undefined ? { maxAutoTradesPerDay: patch.maxAutoTradesPerDay } : {}),
+      ...(patch.autoManage !== undefined ? { autoManage: patch.autoManage } : {}),
+      ...(patch.weeklyGoal !== undefined ? { weeklyGoal: String(patch.weeklyGoal) } : {}),
+      ...(patch.riskTolerance !== undefined ? { riskTolerance: patch.riskTolerance } : {}),
       updatedAt: new Date(),
     })
     .where(eq(settings.id, current.id))

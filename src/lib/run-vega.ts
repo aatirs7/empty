@@ -13,6 +13,8 @@ import { watchlist as watchlistTable, researchRuns, proposals as proposalsTable,
 import { runResearch, ResearchParseError, type ResearchResult, type WatchlistItem } from "./anthropic";
 import { getSettings } from "./settings";
 import { executeProposal, ExecuteError } from "./execute";
+import { getWeeklyPL } from "./alpaca";
+import { autoManagePositions, type ManageSummary } from "./manage";
 
 export async function loadActiveWatchlist(): Promise<WatchlistItem[]> {
   const rows = await db
@@ -38,6 +40,7 @@ export interface AutoExecSummary {
   maxTradesPerDay?: number;
   alreadyPlacedToday?: number;
   placed: AutoPlacement[];
+  goalMet?: boolean;
 }
 
 export interface PersistedRun {
@@ -45,6 +48,7 @@ export interface PersistedRun {
   result: ResearchResult;
   proposalsInserted: number;
   auto: AutoExecSummary;
+  manage: ManageSummary;
 }
 
 interface InsertedProposal {
@@ -62,6 +66,19 @@ async function maybeAutoExecute(inserted: InsertedProposal[]): Promise<AutoExecS
 
   const minConfidence = Number(settings.autoMinConfidence);
   const maxTradesPerDay = settings.maxAutoTradesPerDay;
+
+  // Goal-aware: once the weekly goal is met, stop opening new trades (protect the gains).
+  const goal = Number(settings.weeklyGoal);
+  if (goal > 0) {
+    try {
+      const { weeklyPL } = await getWeeklyPL();
+      if (weeklyPL >= goal) {
+        return { enabled: true, minConfidence, maxTradesPerDay, alreadyPlacedToday: 0, placed: [], goalMet: true };
+      }
+    } catch {
+      // if P&L can't be fetched, proceed normally
+    }
+  }
 
   // How many auto orders already placed today?
   const startOfDay = new Date();
@@ -164,8 +181,14 @@ export async function runAndPersist(): Promise<PersistedRun> {
     }
 
     const auto = await maybeAutoExecute(inserted);
+    let manage: ManageSummary = { enabled: false, actions: [] };
+    try {
+      manage = await autoManagePositions();
+    } catch {
+      // don't fail the research run if management can't run
+    }
 
-    return { runId: run.id, result, proposalsInserted: inserted.length, auto };
+    return { runId: run.id, result, proposalsInserted: inserted.length, auto, manage };
   } catch (err) {
     const rawOrMsg =
       err instanceof ResearchParseError ? err.rawText : err instanceof Error ? err.message : String(err);

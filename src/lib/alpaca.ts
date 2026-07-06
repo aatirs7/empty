@@ -311,6 +311,17 @@ export async function getPortfolioPL(): Promise<PortfolioPL> {
   };
 }
 
+/** This week's paper P&L (rolling 7 days) from portfolio history. */
+export async function getWeeklyPL(): Promise<{ weeklyPL: number; currentEquity: number }> {
+  const resp = await trading<{ base_value: number; equity: (number | null)[] }>(
+    "/v2/account/portfolio/history?period=1W&timeframe=1D",
+  );
+  const series = (resp.equity ?? []).filter((v): v is number => typeof v === "number");
+  const currentEquity = series.length ? series[series.length - 1] : resp.base_value;
+  const base = resp.base_value ?? currentEquity;
+  return { weeklyPL: Math.round((currentEquity - base) * 100) / 100, currentEquity };
+}
+
 /** Mid price from a quote, falling back to ask, then bid. Returns null if unpriced. */
 export function midPrice(quote: OptionQuote | undefined): number | null {
   if (!quote) return null;

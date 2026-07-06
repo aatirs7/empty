@@ -2,6 +2,7 @@ import { getCostTotals } from "@/lib/queries";
 import { getPortfolioPL, type PortfolioPL } from "@/lib/alpaca";
 import { usd } from "@/lib/format";
 import { PageTitle } from "@/components/ui";
+import GoalProgress from "@/components/GoalProgress";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,8 @@ export default async function PnlPage() {
   return (
     <div className="space-y-5">
       <PageTitle title="Profit & Loss" />
+
+      <GoalProgress />
 
       <div className="bg-panel border border-border rounded-2xl p-5 text-center">
         <p className="text-xs text-muted">Net profit, trade P&amp;L minus API cost</p>

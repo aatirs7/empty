@@ -15,6 +15,13 @@
       "when": 1783361230984,
       "tag": "0001_small_mandroid",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783371312178,
+      "tag": "0002_luxuriant_mandroid",
+      "breakpoints": true
     }
   ]
 }

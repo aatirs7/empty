@@ -84,12 +84,16 @@ export const orders = pgTable("orders", {
   filledAt: timestamp("filled_at", { withTimezone: true }),
 });
 
-// Single-row app settings (auto-execute mode). PAPER-ONLY; off by default.
+// Single-row app settings. PAPER-ONLY; automation off by default.
 export const settings = pgTable("settings", {
   id: serial("id").primaryKey(),
   autoExecute: boolean("auto_execute").notNull().default(false),
   autoMinConfidence: numeric("auto_min_confidence").notNull().default("0.7"),
   maxAutoTradesPerDay: integer("max_auto_trades_per_day").notNull().default(2),
+  // Goal-driven auto-management of open positions.
+  autoManage: boolean("auto_manage").notNull().default(false),
+  weeklyGoal: numeric("weekly_goal").notNull().default("100"), // $ profit target per week
+  riskTolerance: text("risk_tolerance").notNull().default("balanced"), // conservative | balanced | aggressive
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

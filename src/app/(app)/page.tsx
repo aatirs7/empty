@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getLatestRun } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
 import PullToRefresh from "@/components/PullToRefresh";
+import GoalProgress from "@/components/GoalProgress";
 import { StatusPill, Empty, PageTitle } from "@/components/ui";
 import { plainVerdict, confidenceLabel, stripDash } from "@/lib/format";
 
@@ -17,6 +18,8 @@ export default async function TodayPage() {
     <div className="space-y-5">
       <PullToRefresh />
       <PageTitle title="Today" subtitle={run.runDate} />
+
+      <GoalProgress />
 
       <p className="text-center text-sm text-muted leading-relaxed">
         Vega looked at {proposals.length} {proposals.length === 1 ? "stock" : "stocks"} this morning and found{" "}

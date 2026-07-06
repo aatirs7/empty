@@ -6,55 +6,130 @@ interface Initial {
   autoExecute: boolean;
   autoMinConfidence: number;
   maxAutoTradesPerDay: number;
+  autoManage: boolean;
+  weeklyGoal: number;
+  riskTolerance: string;
 }
+
+const RISK: { key: string; label: string; hint: string }[] = [
+  { key: "conservative", label: "Careful", hint: "Take profits early, cut losses fast." },
+  { key: "balanced", label: "Balanced", hint: "A middle-ground." },
+  { key: "aggressive", label: "Bold", hint: "Let winners run, tolerate bigger swings." },
+];
 
 export default function SettingsForm({ initial }: { initial: Initial }) {
   const router = useRouter();
   const [autoExecute, setAutoExecute] = useState(initial.autoExecute);
   const [minConf, setMinConf] = useState(initial.autoMinConfidence);
   const [maxTrades, setMaxTrades] = useState(initial.maxAutoTradesPerDay);
+  const [autoManage, setAutoManage] = useState(initial.autoManage);
+  const [goal, setGoal] = useState(initial.weeklyGoal);
+  const [risk, setRisk] = useState(initial.riskTolerance);
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   async function save(patch: Partial<Initial>) {
     setBusy(true);
-    setSaved(false);
-    const res = await fetch("/api/settings", {
+    await fetch("/api/settings", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
     });
     setBusy(false);
-    if (res.ok) {
-      setSaved(true);
-      router.refresh();
-    }
+    router.refresh();
   }
 
-  async function killSwitch() {
+  const anyAuto = autoExecute || autoManage;
+
+  async function killAll() {
     setAutoExecute(false);
-    await save({ autoExecute: false });
+    setAutoManage(false);
+    await save({ autoExecute: false, autoManage: false });
   }
 
   return (
     <div className="space-y-5">
-      {autoExecute && (
-        <div className="bg-accent/15 border border-accent/40 rounded-xl p-4">
-          <p className="text-accent text-sm font-medium">● Auto-execute is ON</p>
-          <p className="text-xs text-muted mt-1">
-            Vega will place paper trades automatically for high-confidence proposals. Turn it off any time.
+      {anyAuto && (
+        <div className="bg-accent/15 border border-accent/40 rounded-2xl p-4 text-center">
+          <p className="text-accent text-sm font-medium">
+            {autoExecute && autoManage ? "Vega is on autopilot" : autoExecute ? "Auto-buy is on" : "Auto-manage is on"}
           </p>
-          <button onClick={killSwitch} disabled={busy} className="mt-3 w-full rounded-lg bg-accent text-white py-2.5 font-medium disabled:opacity-40">
-            Turn auto-execute OFF now
+          <p className="text-xs text-muted mt-1">
+            Vega is making paper trades on its own. Turn it off any time.
+          </p>
+          <button
+            onClick={killAll}
+            disabled={busy}
+            className="mt-3 w-full rounded-lg bg-accent text-white py-2.5 font-medium disabled:opacity-40"
+          >
+            Turn everything OFF now
           </button>
         </div>
       )}
 
-      <div className="bg-panel border border-border rounded-xl p-4 space-y-4">
+      {/* Weekly goal + auto-manage */}
+      <div className="bg-panel border border-border rounded-2xl p-4 space-y-4">
+        <p className="text-sm font-medium text-center">Weekly goal</p>
+
+        <label className="flex items-center justify-between text-sm">
+          <span>How much do you want to make each week?</span>
+          <span className="flex items-center gap-1">
+            <span className="text-muted">$</span>
+            <input
+              type="number"
+              min={0}
+              step={25}
+              value={goal}
+              onChange={(e) => setGoal(Number(e.target.value))}
+              onBlur={() => save({ weeklyGoal: goal })}
+              className="w-20 rounded-lg bg-panel-2 border border-border px-2 py-1 num text-right"
+            />
+          </span>
+        </label>
+
+        <div>
+          <p className="text-sm mb-2">Risk tolerance</p>
+          <div className="grid grid-cols-3 gap-2">
+            {RISK.map((r) => (
+              <button
+                key={r.key}
+                onClick={() => {
+                  setRisk(r.key);
+                  save({ riskTolerance: r.key });
+                }}
+                className={`py-2 rounded-xl text-sm border ${
+                  risk === r.key ? "border-accent text-accent bg-accent/10 font-medium" : "border-border text-muted"
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted mt-2 text-center">{RISK.find((r) => r.key === risk)?.hint}</p>
+        </div>
+
+        <label className="flex items-center justify-between pt-1">
+          <span>
+            <span className="block text-sm font-medium">Let Vega manage trades for me</span>
+            <span className="block text-xs text-muted">Closes winners and losers on its own, toward the goal.</span>
+          </span>
+          <input
+            type="checkbox"
+            checked={autoManage}
+            onChange={(e) => {
+              setAutoManage(e.target.checked);
+              save({ autoManage: e.target.checked });
+            }}
+            className="h-6 w-6 accent-[var(--accent)]"
+          />
+        </label>
+      </div>
+
+      {/* Auto-buy */}
+      <div className="bg-panel border border-border rounded-2xl p-4 space-y-4">
         <label className="flex items-center justify-between">
           <span>
-            <span className="block text-sm font-medium">Auto-execute (paper only)</span>
-            <span className="block text-xs text-muted">Off by default. You stay in the loop unless this is on.</span>
+            <span className="block text-sm font-medium">Let Vega buy trades for me</span>
+            <span className="block text-xs text-muted">Auto-buys the most confident ideas each morning.</span>
           </span>
           <input
             type="checkbox"
@@ -69,8 +144,8 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
 
         <div>
           <div className="flex justify-between text-sm">
-            <span>Min confidence to auto-trade</span>
-            <span className="num text-muted">{Math.round(minConf * 100)}%</span>
+            <span>Only buy when Vega is at least</span>
+            <span className="num text-muted">{Math.round(minConf * 100)}% sure</span>
           </div>
           <input
             type="range"
@@ -85,7 +160,7 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
         </div>
 
         <label className="flex items-center justify-between text-sm">
-          <span>Max auto-trades per day</span>
+          <span>Most auto-buys per day</span>
           <input
             type="number"
             min={1}
@@ -98,9 +173,8 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
         </label>
       </div>
 
-      <p className="text-xs text-muted">
-        {busy ? "Saving…" : saved ? "Saved." : "Changes save automatically."} Auto-execute is always paper-only and
-        enforces the same per-order and open-position caps as manual approval.
+      <p className="text-[11px] text-muted text-center">
+        Everything here is paper-only and keeps the same 1-contract and open-position caps. Changes save automatically.
       </p>
     </div>
   );

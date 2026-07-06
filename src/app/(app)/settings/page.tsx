@@ -19,6 +19,9 @@ export default async function SettingsPage() {
           autoExecute: s.autoExecute,
           autoMinConfidence: Number(s.autoMinConfidence),
           maxAutoTradesPerDay: s.maxAutoTradesPerDay,
+          autoManage: s.autoManage,
+          weeklyGoal: Number(s.weeklyGoal),
+          riskTolerance: s.riskTolerance,
         }}
       />
       <LogoutButton />

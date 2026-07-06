@@ -29,7 +29,10 @@ export default function PositionsView() {
   }, []);
 
   useEffect(() => {
-    load();
+    // Opening this screen also runs goal-driven auto-management (no-op if off).
+    fetch("/api/manage", { method: "POST" })
+      .catch(() => {})
+      .finally(load);
   }, [load]);
 
   async function close(sym: string) {
