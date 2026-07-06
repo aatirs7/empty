@@ -19,7 +19,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # `npm install` (not `npm ci`): a Windows-generated lockfile trips npm's
+      # cross-platform optional-dependency check on Linux (@unrs/resolver wasm
+      # binding -> @emnapi). Fresh resolve on the runner is reliable here.
+      - run: npm install --no-audit --no-fund
       - run: npm run vega
         env:
           # Secrets (required)
