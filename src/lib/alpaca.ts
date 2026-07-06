@@ -234,6 +234,35 @@ export async function getOptionQuotes(occSymbols: string[]): Promise<Record<stri
   return resp.quotes ?? {};
 }
 
+/** Close (liquidate) an entire position by symbol. PAPER-ONLY. Returns the closing order. */
+export async function closePosition(symbol: string): Promise<Order> {
+  if (process.env.TRADING_MODE !== "paper") {
+    throw new Error(`GUARDRAIL: TRADING_MODE must be "paper", got "${process.env.TRADING_MODE}".`);
+  }
+  return trading<Order>(`/v2/positions/${encodeURIComponent(symbol)}`, { method: "DELETE" });
+}
+
+export interface PortfolioPL {
+  baseValue: number; // equity at the start of the period (~account inception)
+  currentEquity: number;
+  totalPL: number; // currentEquity - baseValue (realized + unrealized, paper)
+}
+
+/** All-time paper account P&L from Alpaca's portfolio history. */
+export async function getPortfolioPL(): Promise<PortfolioPL> {
+  const resp = await trading<{ base_value: number; equity: (number | null)[] }>(
+    "/v2/account/portfolio/history?period=all&timeframe=1D",
+  );
+  const equitySeries = (resp.equity ?? []).filter((v): v is number => typeof v === "number");
+  const currentEquity = equitySeries.length ? equitySeries[equitySeries.length - 1] : resp.base_value;
+  const baseValue = resp.base_value ?? 0;
+  return {
+    baseValue,
+    currentEquity,
+    totalPL: Math.round((currentEquity - baseValue) * 100) / 100,
+  };
+}
+
 /** Mid price from a quote, falling back to ask, then bid. Returns null if unpriced. */
 export function midPrice(quote: OptionQuote | undefined): number | null {
   if (!quote) return null;

@@ -30,6 +30,7 @@ export interface AutoPlacement {
   orderId?: number;
   status?: string;
   error?: string;
+  dryRun?: boolean;
 }
 export interface AutoExecSummary {
   enabled: boolean;
@@ -72,6 +73,10 @@ async function maybeAutoExecute(inserted: InsertedProposal[]): Promise<AutoExecS
   const alreadyPlacedToday = Number(n);
   let remaining = Math.max(0, maxTradesPerDay - alreadyPlacedToday);
 
+  // Dry-run: log which proposals WOULD auto-execute at the real threshold,
+  // without placing anything. Set AUTO_EXECUTE_DRY_RUN=1 to validate the mechanism.
+  const dryRun = process.env.AUTO_EXECUTE_DRY_RUN === "1";
+
   const candidates = inserted
     .filter((p) => p.strategy && p.strategy !== "no_trade")
     .filter((p) => Number(p.confidence) >= minConfidence)
@@ -80,6 +85,12 @@ async function maybeAutoExecute(inserted: InsertedProposal[]): Promise<AutoExecS
   const placed: AutoPlacement[] = [];
   for (const c of candidates) {
     if (remaining <= 0) break;
+    if (dryRun) {
+      console.log(`[auto] DRY-RUN: would auto-execute proposal ${c.id} (${c.symbol}, confidence ${c.confidence}).`);
+      placed.push({ proposalId: c.id, symbol: c.symbol, ok: false, dryRun: true });
+      remaining -= 1;
+      continue;
+    }
     try {
       const res = await executeProposal(c.id, "auto");
       placed.push({ proposalId: c.id, symbol: c.symbol, ok: true, orderId: res.orderId, status: res.orderStatus });

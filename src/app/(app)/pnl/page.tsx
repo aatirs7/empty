@@ -1,0 +1,65 @@
+import { getCostTotals } from "@/lib/queries";
+import { getPortfolioPL, type PortfolioPL } from "@/lib/alpaca";
+import { usd } from "@/lib/format";
+
+export const dynamic = "force-dynamic";
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
+  const color = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-foreground";
+  return (
+    <div className="bg-panel border border-border rounded-xl p-3">
+      <p className="text-xs text-muted">{label}</p>
+      <p className={`text-lg font-semibold num ${color}`}>{value}</p>
+    </div>
+  );
+}
+
+export default async function PnlPage() {
+  const cost = await getCostTotals();
+  let pl: PortfolioPL | null = null;
+  let plError: string | null = null;
+  try {
+    pl = await getPortfolioPL();
+  } catch (e) {
+    plError = e instanceof Error ? e.message : "unavailable";
+  }
+
+  const tradePL = pl?.totalPL ?? 0;
+  const net = tradePL - cost.total;
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-lg font-semibold">Profit &amp; Loss</h1>
+
+      <div className="bg-panel border border-border rounded-2xl p-5">
+        <p className="text-xs text-muted">Net profit — trade P&amp;L minus API cost</p>
+        <p className={`text-3xl font-bold num ${net >= 0 ? "text-up" : "text-down"}`}>
+          {net >= 0 ? "+" : ""}
+          {usd(net)}
+        </p>
+        <p className="text-xs text-muted mt-1 num">
+          {pl ? `${tradePL >= 0 ? "+" : ""}${usd(tradePL)} trades − ${usd(cost.total)} API` : `− ${usd(cost.total)} API cost`}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Stat
+          label="Trade P&L (paper, all-time)"
+          value={pl ? `${tradePL >= 0 ? "+" : ""}${usd(tradePL)}` : "—"}
+          tone={pl ? (tradePL >= 0 ? "up" : "down") : undefined}
+        />
+        <Stat label="API cost (all-time)" value={usd(cost.total)} />
+        <Stat label="API cost (this month)" value={usd(cost.monthToDate)} />
+        <Stat label="Research runs" value={String(cost.runCount)} />
+      </div>
+
+      {plError && <p className="text-xs text-muted">Trade P&amp;L unavailable right now ({plError}).</p>}
+
+      <p className="text-xs text-muted">
+        Paper account. Trade P&amp;L is your paper equity change since the account started (realized + unrealized) from
+        Alpaca. API cost is the summed estimate of every research run. Net is simply one minus the other — both
+        code-computed.
+      </p>
+    </div>
+  );
+}

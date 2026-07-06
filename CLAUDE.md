@@ -88,7 +88,7 @@ Never commit `.env`. Keep secrets out of the repo.
 - [x] M3: DB + wiring — 5 tables migrated to Neon, watchlist seeded, run #1 + 5 proposals persisted with cost fields. Inspect with `npm run inspect`.
 - [x] M4: Scheduler — VERIFIED. `workflow_dispatch` on aatirs7/empty wrote run #2 to Neon. CI uses `npm install` (not `npm ci`) due to a Windows→Linux optional-dep lockfile quirk. Cost fix confirmed: cap-8 → single turn, ~$0.82/run.
 - [x] M5: Execute endpoint — VERIFIED. Shared `src/lib/execute.ts` (paper assert + caps inside). Manual approve filled a real paper order (TSLA, order #1, $11.25), risk math stored, executionMode=manual, proposal→filled. Live resolve/quote/risk (`/preview`), risk unit-checked, guardrails (not_paper, already_actioned) confirmed. Auto-execute built (settings-gated, off by default) — reuses executeProposal; test via M6 toggle. Routes: approve/reject/preview/positions/settings. `npm run check:m5`, `npm run execute -- <id>`.
-- [ ] M6: Dashboard + PWA (installable on phone, approve/reject works)
+- [x] M6: Dashboard + PWA + auth — VERIFIED at runtime. Screens: Today, Positions (w/ close-position), Log, P&L (net = trade P&L − API cost), proposal explainer (honest downside, live dollars-at-risk from /preview for pending), Settings (auto toggle + params + "auto is ON" banner + kill switch). Single-password auth (proxy.ts + HMAC cookie via APP_PASSWORD/AUTH_SECRET). PWA: manifest.ts + sw.js + generated icons. Auth flow, all pages, positions/preview/close/settings APIs verified live. Auto-execute dry-run: AUTO_EXECUTE_DRY_RUN=1.
 
 ## Notes for future sessions
 
