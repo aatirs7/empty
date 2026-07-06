@@ -44,7 +44,7 @@ async function main() {
   console.log(`\n=== Operation Vega — research run ===\n`);
   const started = Date.now();
 
-  const { runId, result, proposalsInserted } = await runAndPersist();
+  const { runId, result, proposalsInserted, auto } = await runAndPersist();
 
   console.log(JSON.stringify(result.output, null, 2));
 
@@ -58,6 +58,18 @@ async function main() {
   console.log(`  web searches:   ${result.searchCount}`);
   console.log(`  est. cost:      $${result.costEstimate.toFixed(4)}`);
   console.log(`  wall time:      ${((Date.now() - started) / 1000).toFixed(1)}s`);
+
+  console.log("\n--- auto-execute ---");
+  if (!auto.enabled) {
+    console.log("  disabled (human-in-the-loop). Enable in settings to auto-place high-confidence trades.");
+  } else {
+    console.log(`  enabled: minConfidence=${auto.minConfidence} maxTradesPerDay=${auto.maxTradesPerDay} alreadyToday=${auto.alreadyPlacedToday}`);
+    if (auto.placed.length === 0) console.log("  no qualifying proposals this run.");
+    for (const p of auto.placed) {
+      console.log(`  ${p.symbol}: ${p.ok ? `PLACED order ${p.orderId} (${p.status})` : `skipped (${p.error})`}`);
+    }
+  }
+
   console.log(`\n✅ Run ${runId} written to Neon (research_runs + proposals).`);
 }
 

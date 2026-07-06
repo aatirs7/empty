@@ -5,7 +5,7 @@
 import "dotenv/config";
 import { desc, eq } from "drizzle-orm";
 import { db } from "../src/db";
-import { researchRuns, proposals } from "../src/db/schema";
+import { researchRuns, proposals, orders } from "../src/db/schema";
 
 async function main() {
   const [run] = await db.select().from(researchRuns).orderBy(desc(researchRuns.id)).limit(1);
@@ -23,6 +23,15 @@ async function main() {
   for (const p of rows) {
     const trade = p.strategy === "no_trade" ? "no_trade" : `${p.strategy} ${p.strikeHint} / ${p.expiryHint}`;
     console.log(`  ${p.symbol.padEnd(5)} ${trade.padEnd(34)} conf ${p.confidence}  ${p.pricedInAssessment}  [${p.status}]`);
+  }
+
+  const orderRows = await db.select().from(orders).orderBy(desc(orders.id)).limit(5);
+  console.log(`\nRecent orders (${orderRows.length}):`);
+  for (const o of orderRows) {
+    console.log(
+      `  #${o.id} p${o.proposalId} ${o.contractSymbol} [${o.executionMode}] ${o.status} ` +
+        `fill=${o.filledPrice ?? "—"} maxLoss=$${o.maxLoss} be=$${o.breakeven}`,
+    );
   }
 }
 

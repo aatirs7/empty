@@ -8,6 +8,13 @@
       "when": 1783357951284,
       "tag": "0000_soft_shooting_star",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783361230984,
+      "tag": "0001_small_mandroid",
+      "breakpoints": true
     }
   ]
 }

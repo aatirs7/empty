@@ -86,8 +86,8 @@ Never commit `.env`. Keep secrets out of the repo.
 - [x] M1: Alpaca paper smoke test — plumbing verified live (account/chain/quote/order/read-back). Order rests as `new` when market is closed; re-run `npm run smoke` during 09:30–16:00 ET to watch a fill.
 - [x] M2: The Brain in isolation — schema-valid JSON, correct "priced-in" discipline. COST: ~$1.2–1.6/run (input tokens dominate). `MAX_WEB_SEARCHES` default 8; watchlist size is the other lever. Watch monthly spend vs the Anthropic Console cap.
 - [x] M3: DB + wiring — 5 tables migrated to Neon, watchlist seeded, run #1 + 5 proposals persisted with cost fields. Inspect with `npm run inspect`.
-- [~] M4: Scheduler — workflow authored (`.github/workflows/operation-vega.yml`, dual-cron + ET-window guard + workflow_dispatch). Verify by pushing to GitHub, setting Actions secrets (DATABASE_URL, ANTHROPIC_API_KEY, RESEARCH_MODEL), and running a manual dispatch.
-- [ ] M5: Execute endpoint (approved proposal becomes a filled paper order)
+- [x] M4: Scheduler — VERIFIED. `workflow_dispatch` on aatirs7/empty wrote run #2 to Neon. CI uses `npm install` (not `npm ci`) due to a Windows→Linux optional-dep lockfile quirk. Cost fix confirmed: cap-8 → single turn, ~$0.82/run.
+- [x] M5: Execute endpoint — VERIFIED. Shared `src/lib/execute.ts` (paper assert + caps inside). Manual approve filled a real paper order (TSLA, order #1, $11.25), risk math stored, executionMode=manual, proposal→filled. Live resolve/quote/risk (`/preview`), risk unit-checked, guardrails (not_paper, already_actioned) confirmed. Auto-execute built (settings-gated, off by default) — reuses executeProposal; test via M6 toggle. Routes: approve/reject/preview/positions/settings. `npm run check:m5`, `npm run execute -- <id>`.
 - [ ] M6: Dashboard + PWA (installable on phone, approve/reject works)
 
 ## Notes for future sessions

@@ -19,6 +19,7 @@ export const ProposalSchema = z.object({
   confidence: z.number().min(0).max(1),
   priced_in_assessment: z.enum(["priced_in", "underdone", "overdone", "unclear"]),
   rationale: z.string(),
+  plain_explanation: z.string(),
   sources: z.array(z.string()),
 });
 
@@ -78,6 +79,11 @@ Hard rules:
   as hints only ("ATM", "~5% OTM") and expiries as hints only ("nearest weekly",
   "2-4 weeks"). A separate system picks the real contract later.
 - Keep each rationale to two sentences maximum.
+- Also include a "plain_explanation": 2-3 sentences in plain, jargon-free English
+  describing what the trade is and why you picked it, written for someone who does
+  not trade options. QUALITATIVE ONLY — do NOT put any numbers, prices, strikes, or
+  percentages in it (a separate system computes the numbers). For a "no_trade",
+  briefly say in plain English why there's no clear opportunity.
 - Include the source URLs you relied on.
 - Be honest about confidence. Low confidence is normal.
 - Output ONLY a single JSON object matching the schema. No preamble, no markdown
@@ -97,6 +103,7 @@ Schema:
       "confidence": <number 0.0 to 1.0>,
       "priced_in_assessment": "priced_in" | "underdone" | "overdone" | "unclear",
       "rationale": "<two sentences max>",
+      "plain_explanation": "<2-3 jargon-free sentences, NO numbers>",
       "sources": ["<url>", "..."]
     }
   ]

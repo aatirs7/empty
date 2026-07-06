@@ -45,12 +45,20 @@ export const proposals = pgTable("proposals", {
   confidence: numeric("confidence"), // 0.0 - 1.0
   pricedInAssessment: text("priced_in_assessment"), // priced_in | underdone | overdone | unclear
   rationale: text("rationale"), // <= 2 sentences
+  plainExplanation: text("plain_explanation"), // jargon-free 2-3 sentences (qualitative only, no numbers)
   sources: jsonb("sources").$type<string[]>(), // array of URLs
   status: text("status").notNull().default("pending"), // pending | approved | rejected | filled | expired
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// Actual paper orders placed after approval.
+// Scenario payoff computed by code (never model-generated).
+export interface Scenario {
+  label: string; // e.g. "flat", "+5%", "+10%"
+  underlyingPrice: number;
+  payoff: number; // per contract, net of premium
+}
+
+// Actual paper orders placed after approval (manual) or by auto-execute.
 export const orders = pgTable("orders", {
   id: serial("id").primaryKey(),
   proposalId: integer("proposal_id")
@@ -63,8 +71,26 @@ export const orders = pgTable("orders", {
   limitPrice: numeric("limit_price"),
   filledPrice: numeric("filled_price"),
   status: text("status"), // submitted | filled | canceled | rejected
+  executionMode: text("execution_mode"), // manual | auto
+  // resolved-contract context + code-computed risk math (Feature B)
+  direction: text("direction"), // call | put
+  strike: numeric("strike"),
+  expiry: date("expiry"),
+  underlyingPrice: numeric("underlying_price"), // spot at execution
+  maxLoss: numeric("max_loss"), // premium * 100 * qty
+  breakeven: numeric("breakeven"),
+  scenarios: jsonb("scenarios").$type<Scenario[]>(),
   submittedAt: timestamp("submitted_at", { withTimezone: true }),
   filledAt: timestamp("filled_at", { withTimezone: true }),
+});
+
+// Single-row app settings (auto-execute mode). PAPER-ONLY; off by default.
+export const settings = pgTable("settings", {
+  id: serial("id").primaryKey(),
+  autoExecute: boolean("auto_execute").notNull().default(false),
+  autoMinConfidence: numeric("auto_min_confidence").notNull().default("0.7"),
+  maxAutoTradesPerDay: integer("max_auto_trades_per_day").notNull().default(2),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // Periodic P&L snapshots for history/charts.
@@ -78,3 +104,4 @@ export type Watchlist = typeof watchlist.$inferSelect;
 export type ResearchRun = typeof researchRuns.$inferSelect;
 export type ProposalRow = typeof proposals.$inferSelect;
 export type OrderRow = typeof orders.$inferSelect;
+export type Settings = typeof settings.$inferSelect;
