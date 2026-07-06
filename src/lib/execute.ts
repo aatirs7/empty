@@ -13,6 +13,7 @@ import { proposals, orders } from "../db/schema";
 import { placeOptionOrder, waitForFill, listPositions } from "./alpaca";
 import { resolveContract } from "./resolve";
 import { computeRisk, type RiskMath } from "./risk";
+import { getSettings } from "./settings";
 
 export class ExecuteError extends Error {
   constructor(
@@ -44,12 +45,12 @@ function assertPaper(): void {
 export async function executeProposal(proposalId: number, mode: "manual" | "auto"): Promise<ExecuteResult> {
   assertPaper();
 
-  const perOrderCap = Number(process.env.MAX_CONTRACTS_PER_ORDER ?? 1);
+  const perOrderCap = Number(process.env.MAX_CONTRACTS_PER_ORDER ?? 20);
   const openCap = Number(process.env.MAX_OPEN_POSITIONS ?? 3);
-  const qty = 1;
-  if (qty > perOrderCap) {
-    throw new ExecuteError(`Per-order contract cap is ${perOrderCap}.`, "per_order_cap");
-  }
+  const settings = await getSettings();
+  const perTradeBudget = Number(settings.perTradeBudget);
+  const maxContracts = Math.max(1, Math.min(settings.maxContracts, perOrderCap));
+  const maxContractPrice = Number(settings.maxContractPrice);
 
   const [proposal] = await db.select().from(proposals).where(eq(proposals.id, proposalId)).limit(1);
   if (!proposal) throw new ExecuteError(`Proposal ${proposalId} not found.`, "not_found");
@@ -72,12 +73,15 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     direction,
     strikeHint: proposal.strikeHint ?? "ATM",
     expiryHint: proposal.expiryHint ?? "nearest weekly",
+    maxPrice: maxContractPrice > 0 ? maxContractPrice : undefined,
   });
   if (resolved.price == null || resolved.price <= 0) {
     throw new ExecuteError(`No usable quote for ${resolved.symbol} (market closed or unpriced).`, "no_quote");
   }
 
   const limitPrice = resolved.price;
+  // Buy as many cheap contracts as the per-trade budget allows (>=1, capped).
+  const qty = Math.max(1, Math.min(maxContracts, Math.floor(perTradeBudget / (limitPrice * 100))));
   const placedRisk = computeRisk({
     direction,
     strike: resolved.strike,

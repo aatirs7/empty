@@ -9,6 +9,9 @@ interface Initial {
   autoManage: boolean;
   weeklyGoal: number;
   riskTolerance: string;
+  perTradeBudget: number;
+  maxContracts: number;
+  maxContractPrice: number;
 }
 
 const RISK: { key: string; label: string; hint: string }[] = [
@@ -25,6 +28,9 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
   const [autoManage, setAutoManage] = useState(initial.autoManage);
   const [goal, setGoal] = useState(initial.weeklyGoal);
   const [risk, setRisk] = useState(initial.riskTolerance);
+  const [budget, setBudget] = useState(initial.perTradeBudget);
+  const [maxPrice, setMaxPrice] = useState(initial.maxContractPrice);
+  const [maxContracts, setMaxContracts] = useState(initial.maxContracts);
   const [busy, setBusy] = useState(false);
 
   async function save(patch: Partial<Initial>) {
@@ -122,6 +128,61 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
             className="h-6 w-6 accent-[var(--accent)]"
           />
         </label>
+      </div>
+
+      {/* Position sizing */}
+      <div className="bg-panel border border-border rounded-2xl p-4 space-y-4">
+        <p className="text-sm font-medium text-center">How it sizes each trade</p>
+
+        <label className="flex items-center justify-between text-sm">
+          <span>Spend up to (per trade)</span>
+          <span className="flex items-center gap-1">
+            <span className="text-muted">$</span>
+            <input
+              type="number"
+              min={20}
+              step={25}
+              value={budget}
+              onChange={(e) => setBudget(Number(e.target.value))}
+              onBlur={() => save({ perTradeBudget: budget })}
+              className="w-20 rounded-lg bg-panel-2 border border-border px-2 py-1 num text-right"
+            />
+          </span>
+        </label>
+
+        <label className="flex items-center justify-between text-sm">
+          <span>Only buy options cheaper than</span>
+          <span className="flex items-center gap-1">
+            <span className="text-muted">$</span>
+            <input
+              type="number"
+              min={0.2}
+              step={0.5}
+              value={maxPrice}
+              onChange={(e) => setMaxPrice(Number(e.target.value))}
+              onBlur={() => save({ maxContractPrice: maxPrice })}
+              className="w-20 rounded-lg bg-panel-2 border border-border px-2 py-1 num text-right"
+            />
+          </span>
+        </label>
+
+        <label className="flex items-center justify-between text-sm">
+          <span>Most contracts per trade</span>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={maxContracts}
+            onChange={(e) => setMaxContracts(Number(e.target.value))}
+            onBlur={() => save({ maxContracts })}
+            className="w-16 rounded-lg bg-panel-2 border border-border px-2 py-1 num text-right"
+          />
+        </label>
+
+        <p className="text-[11px] text-muted text-center">
+          Vega hunts cheap out-of-the-money contracts (big upside if the move is right) and buys as many as your budget
+          allows, up to the cap.
+        </p>
       </div>
 
       {/* Auto-buy */}

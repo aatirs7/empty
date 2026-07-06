@@ -22,6 +22,9 @@ export default async function SettingsPage() {
           autoManage: s.autoManage,
           weeklyGoal: Number(s.weeklyGoal),
           riskTolerance: s.riskTolerance,
+          perTradeBudget: Number(s.perTradeBudget),
+          maxContracts: s.maxContracts,
+          maxContractPrice: Number(s.maxContractPrice),
         }}
       />
       <LogoutButton />

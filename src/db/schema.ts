@@ -94,6 +94,10 @@ export const settings = pgTable("settings", {
   autoManage: boolean("auto_manage").notNull().default(false),
   weeklyGoal: numeric("weekly_goal").notNull().default("100"), // $ profit target per week
   riskTolerance: text("risk_tolerance").notNull().default("balanced"), // conservative | balanced | aggressive
+  // Position sizing for a small, realistic account (cheap OTM contracts).
+  perTradeBudget: numeric("per_trade_budget").notNull().default("150"), // $ to spend per trade
+  maxContracts: integer("max_contracts").notNull().default(5), // cap on contracts per order
+  maxContractPrice: numeric("max_contract_price").notNull().default("2.5"), // only buy options cheaper than this per share
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

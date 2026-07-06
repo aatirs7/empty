@@ -10,6 +10,7 @@ import {
   getOptionQuotes,
   midPrice,
   type OptionContract,
+  type OptionQuote,
 } from "./alpaca";
 
 export interface ResolveInput {
@@ -17,6 +18,7 @@ export interface ResolveInput {
   direction: "call" | "put";
   strikeHint: string;
   expiryHint: string;
+  maxPrice?: number; // prefer contracts cheaper than this per share
 }
 
 export interface ResolvedContract {
@@ -88,14 +90,52 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
     input.expiryHint,
   );
   const atExpiry = contracts.filter((c) => c.expiration_date === expiry && c.tradable !== false);
-  const pool = atExpiry.length ? atExpiry : contracts.filter((c) => c.expiration_date === expiry);
-  const tStrike = targetStrike(input.strikeHint, input.direction, spot);
-  const pick: OptionContract = pool.reduce((best, c) =>
-    Math.abs(Number(c.strike_price) - tStrike) < Math.abs(Number(best.strike_price) - tStrike) ? c : best,
-  );
+  const poolAll = atExpiry.length ? atExpiry : contracts.filter((c) => c.expiration_date === expiry);
 
-  const quotes = await getOptionQuotes([pick.symbol]);
-  const quote = quotes[pick.symbol];
+  let pick: OptionContract | null = null;
+  let quote: OptionQuote | undefined;
+
+  // Cheap-contract targeting: quote a near-ATM -> OTM window and pick the
+  // priciest contract still under maxPrice (best odds among affordable cheap
+  // options). Falls back to the Brain's strike hint if nothing is priced.
+  if (input.maxPrice && input.maxPrice > 0) {
+    const lo = input.direction === "call" ? spot * 0.98 : spot * 0.6;
+    const hi = input.direction === "call" ? spot * 1.4 : spot * 1.02;
+    let candidates = poolAll.filter((c) => Number(c.strike_price) >= lo && Number(c.strike_price) <= hi);
+    candidates.sort((a, b) =>
+      input.direction === "call"
+        ? Number(a.strike_price) - Number(b.strike_price)
+        : Number(b.strike_price) - Number(a.strike_price),
+    );
+    candidates = candidates.slice(0, 50);
+    if (candidates.length > 0) {
+      const quotes = await getOptionQuotes(candidates.map((c) => c.symbol));
+      const priced = candidates
+        .map((c) => ({ c, q: quotes[c.symbol], ask: quotes[c.symbol]?.ap ?? 0 }))
+        .filter((x) => x.ask > 0.05);
+      const affordable = priced.filter((x) => x.ask <= input.maxPrice!);
+      const chosen =
+        affordable.length > 0
+          ? affordable.reduce((best, x) => (x.ask > best.ask ? x : best))
+          : priced.length > 0
+            ? priced.reduce((best, x) => (x.ask < best.ask ? x : best))
+            : null;
+      if (chosen) {
+        pick = chosen.c;
+        quote = chosen.q;
+      }
+    }
+  }
+
+  if (!pick) {
+    const tStrike = targetStrike(input.strikeHint, input.direction, spot);
+    pick = poolAll.reduce((best, c) =>
+      Math.abs(Number(c.strike_price) - tStrike) < Math.abs(Number(best.strike_price) - tStrike) ? c : best,
+    );
+    const quotes = await getOptionQuotes([pick.symbol]);
+    quote = quotes[pick.symbol];
+  }
+
   const mid = midPrice(quote);
   const ask = quote?.ap && quote.ap > 0 ? quote.ap : null;
   const bid = quote?.bp && quote.bp > 0 ? quote.bp : null;

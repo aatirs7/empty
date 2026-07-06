@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { proposals } from "@/db/schema";
 import { resolveContract } from "@/lib/resolve";
 import { computeRisk } from "@/lib/risk";
+import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,24 +24,33 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   const direction = p.direction as "call" | "put";
+  const settings = await getSettings();
+  const maxContractPrice = Number(settings.maxContractPrice);
+  const perTradeBudget = Number(settings.perTradeBudget);
+  const maxContracts = Math.max(1, settings.maxContracts);
   try {
     const resolved = await resolveContract({
       symbol: p.symbol,
       direction,
       strikeHint: p.strikeHint ?? "ATM",
       expiryHint: p.expiryHint ?? "nearest weekly",
+      maxPrice: maxContractPrice > 0 ? maxContractPrice : undefined,
     });
+    const qty =
+      resolved.price != null && resolved.price > 0
+        ? Math.max(1, Math.min(maxContracts, Math.floor(perTradeBudget / (resolved.price * 100))))
+        : 1;
     const risk =
       resolved.price != null
         ? computeRisk({
             direction,
             strike: resolved.strike,
             premiumPerShare: resolved.price,
-            qty: 1,
+            qty,
             underlyingPrice: resolved.underlyingPrice,
           })
         : null;
-    return NextResponse.json({ ok: true, resolved, risk });
+    return NextResponse.json({ ok: true, resolved, risk, qty });
   } catch (err) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : "error" }, { status: 502 });
   }
