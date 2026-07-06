@@ -43,19 +43,19 @@ export default function PositionsView() {
 
   return (
     <div className="space-y-3">
-      <div className="bg-panel border border-border rounded-xl p-4">
+      <div className="bg-panel border border-border rounded-2xl p-5 text-center">
         <p className="text-xs text-muted">Total unrealized P&amp;L</p>
-        <p className={`text-2xl font-bold num ${data.totalUnrealizedPl >= 0 ? "text-up" : "text-down"}`}>
+        <p className={`text-3xl font-bold num mt-1 ${data.totalUnrealizedPl >= 0 ? "text-up" : "text-down"}`}>
           {data.totalUnrealizedPl >= 0 ? "+" : ""}
           {usd(data.totalUnrealizedPl)}
         </p>
-        <p className="text-xs text-muted num">Market value {usd(data.totalMarketValue)}</p>
+        <p className="text-xs text-muted num mt-1">Market value {usd(data.totalMarketValue)}</p>
       </div>
 
       {data.positions.map((p) => {
         const pl = p.unrealized_pl ? Number(p.unrealized_pl) : 0;
         return (
-          <div key={p.symbol} className="bg-panel border border-border rounded-xl p-3">
+          <div key={p.symbol} className="bg-panel border border-border rounded-2xl p-4">
             <div className="flex justify-between items-start gap-2">
               <div className="min-w-0">
                 <p className="font-medium num text-sm break-all">{p.symbol}</p>

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getLatestRun } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
-import { PricedInTag, Confidence, StatusPill, Empty } from "@/components/ui";
+import { PricedInTag, Confidence, StatusPill, Empty, PageTitle } from "@/components/ui";
 import { labelStrategy } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -12,23 +12,20 @@ export default async function TodayPage() {
   const { run, proposals } = data;
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Today</h1>
-        <p className="text-xs text-muted num">
-          Run #{run.id} · {run.runDate} · {run.status}
-        </p>
-      </div>
+    <div className="space-y-5">
+      <PageTitle title="Today" subtitle={`Run #${run.id} · ${run.runDate} · ${run.status}`} />
 
       {run.marketContext && (
-        <p className="text-sm text-muted bg-panel border border-border rounded-xl p-3">{run.marketContext}</p>
+        <p className="text-sm text-muted bg-panel border border-border rounded-2xl p-4 text-center">
+          {run.marketContext}
+        </p>
       )}
 
       <div className="space-y-3">
         {proposals.map((p) => {
           const isTrade = p.strategy !== "no_trade";
           return (
-            <div key={p.id} className="bg-panel border border-border rounded-xl p-3 space-y-2">
+            <div key={p.id} className="bg-panel border border-border rounded-2xl p-4 space-y-2.5">
               <div className="flex items-start justify-between gap-2">
                 <Link href={`/proposal/${p.id}`} className="min-w-0">
                   <span className="font-semibold">{p.symbol}</span>{" "}

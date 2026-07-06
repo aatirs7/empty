@@ -1,6 +1,6 @@
 import { getRunsLog, getCostTotals } from "@/lib/queries";
 import { usd, labelStrategy } from "@/lib/format";
-import { Empty } from "@/components/ui";
+import { Empty, PageTitle } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -8,18 +8,15 @@ export default async function LogPage() {
   const [runs, cost] = await Promise.all([getRunsLog(30), getCostTotals()]);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-lg font-semibold">Log</h1>
-        <span className="text-xs text-muted num">MTD cost {usd(cost.monthToDate)}</span>
-      </div>
+    <div className="space-y-5">
+      <PageTitle title="Log" subtitle={`Month-to-date cost ${usd(cost.monthToDate)}`} />
 
       {runs.length === 0 ? (
         <Empty>No runs yet.</Empty>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           {runs.map(({ run, proposals, orders }) => (
-            <details key={run.id} className="bg-panel border border-border rounded-xl px-3 py-2.5">
+            <details key={run.id} className="bg-panel border border-border rounded-2xl px-4 py-3">
               <summary className="flex items-center justify-between cursor-pointer list-none">
                 <span className="text-sm num">
                   Run #{run.id} · {run.runDate}{" "}

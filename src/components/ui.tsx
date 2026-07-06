@@ -41,3 +41,12 @@ export function StatusPill({ status }: { status: string }) {
 export function Empty({ children }: { children: React.ReactNode }) {
   return <p className="text-sm text-muted text-center py-12">{children}</p>;
 }
+
+export function PageTitle({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <div className="text-center">
+      <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+      {subtitle && <p className="text-xs text-muted num mt-1">{subtitle}</p>}
+    </div>
+  );
+}

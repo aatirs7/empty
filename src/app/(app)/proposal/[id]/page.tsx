@@ -23,19 +23,16 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
         ← Today
       </Link>
 
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-bold">{p.symbol}</h1>
-          {isTrade && <span className="text-sm text-muted">{labelStrategy(p.strategy)}</span>}
-          <div className="ml-auto">
-            <PricedInTag value={p.pricedInAssessment} />
-          </div>
-        </div>
+      <div className="text-center">
+        <h1 className="text-3xl font-bold">{p.symbol}</h1>
         {isTrade && (
           <p className="text-sm text-muted mt-1">
-            {p.strikeHint} · {p.expiryHint}
+            {labelStrategy(p.strategy)} · {p.strikeHint} · {p.expiryHint}
           </p>
         )}
+        <div className="mt-2 flex justify-center">
+          <PricedInTag value={p.pricedInAssessment} />
+        </div>
       </div>
 
       <section>

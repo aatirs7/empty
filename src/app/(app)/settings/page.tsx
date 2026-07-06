@@ -1,13 +1,14 @@
 import { getSettings } from "@/lib/settings";
 import SettingsForm from "@/components/SettingsForm";
+import { PageTitle } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const s = await getSettings();
   return (
-    <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Settings</h1>
+    <div className="space-y-5">
+      <PageTitle title="Settings" />
       <SettingsForm
         initial={{
           autoExecute: s.autoExecute,

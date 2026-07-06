@@ -1,6 +1,7 @@
 import { getCostTotals } from "@/lib/queries";
 import { getPortfolioPL, type PortfolioPL } from "@/lib/alpaca";
 import { usd } from "@/lib/format";
+import { PageTitle } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -28,12 +29,12 @@ export default async function PnlPage() {
   const net = tradePL - cost.total;
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Profit &amp; Loss</h1>
+    <div className="space-y-5">
+      <PageTitle title="Profit & Loss" />
 
-      <div className="bg-panel border border-border rounded-2xl p-5">
+      <div className="bg-panel border border-border rounded-2xl p-5 text-center">
         <p className="text-xs text-muted">Net profit — trade P&amp;L minus API cost</p>
-        <p className={`text-3xl font-bold num ${net >= 0 ? "text-up" : "text-down"}`}>
+        <p className={`text-4xl font-bold num mt-1 ${net >= 0 ? "text-up" : "text-down"}`}>
           {net >= 0 ? "+" : ""}
           {usd(net)}
         </p>
