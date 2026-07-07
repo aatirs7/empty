@@ -56,6 +56,12 @@ export default async function TodayPage() {
 
               {plain && <p className="text-sm text-muted leading-relaxed">{plain}</p>}
 
+              {p.zoneRead && (
+                <p className="text-xs text-accent/90 leading-relaxed">
+                  <span className="uppercase tracking-wide text-[10px] text-muted">Zone</span> {stripDash(p.zoneRead)}
+                </p>
+              )}
+
               {isTrade && (p.strikeHint || p.expiryHint) && (
                 <p className="text-xs text-muted num">
                   {p.strikeHint} · {p.expiryHint}

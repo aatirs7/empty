@@ -36,6 +36,13 @@
       "when": 1783384575648,
       "tag": "0004_dark_fabian_cortez",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783384926529,
+      "tag": "0005_swift_firestar",
+      "breakpoints": true
     }
   ]
 }

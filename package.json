@@ -14,6 +14,8 @@
     "zones-check": "tsx scripts/zones-check.ts",
     "scan": "tsx scripts/scan.ts",
     "seed:universe": "tsx scripts/seed-universe.ts",
+    "vega:zones": "tsx scripts/vega-zones.ts",
+    "zone-demo": "tsx scripts/zone-brain-demo.ts",
     "seed": "tsx scripts/seed-watchlist.ts",
     "inspect": "tsx scripts/inspect-db.ts",
     "check:m5": "tsx scripts/check-m5.ts",

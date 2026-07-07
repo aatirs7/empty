@@ -7,6 +7,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import type { ZoneSetup } from "./strategy";
 
 // ---------- Output schema (spec §6.4) ----------
 
@@ -21,6 +22,7 @@ export const ProposalSchema = z.object({
   rationale: z.string(),
   plain_explanation: z.string(),
   sources: z.array(z.string()),
+  zone_read: z.string().nullable().optional(),
 });
 
 export const ResearchOutputSchema = z.object({
@@ -35,6 +37,7 @@ export type ResearchOutput = z.infer<typeof ResearchOutputSchema>;
 export interface WatchlistItem {
   symbol: string;
   notes?: string | null;
+  zoneSetup?: ZoneSetup | null;
 }
 
 export interface ResearchResult {
@@ -74,6 +77,22 @@ For each symbol:
    no edge on a symbol, propose "no_trade." A day with zero proposals is a fine
    and expected outcome.
 
+ZONE SETUPS (highest-weight signal):
+Some symbols carry a code-computed ZONE SETUP, a supply/demand order-block setup.
+When a symbol has a zone setup, it is the PRIMARY driver, above news:
+- The trade DIRECTION is fixed by the setup's "direction" (call or put). Do not
+  override it with a news-based direction. The strategy fades the approach into a
+  zone: price falling into a zone => call (expect a bounce up), price rising into a
+  zone => put (expect a rejection down).
+- Use news only as confirmation or caution: does it support or threaten that bounce/
+  rejection? Reflect it in confidence. Strong opposing news lowers confidence a lot.
+- If "clear_runway" is false or "setup_valid" is false, do NOT force a zone trade;
+  prefer "no_trade" unless news alone independently justifies one.
+- Match the expiry hint to the setup horizon. A daily-scan zone tap is a short swing,
+  so "1-2 weeks" fits; never justify it with a long-term trend.
+- Provide "zone_read": one plain sentence on what the zone setup implies. For symbols
+  with no zone setup, leave zone_read empty and proceed on news as usual.
+
 Hard rules:
 - You never see live option prices and you must never invent them. Express strikes
   as hints only ("ATM", "~5% OTM") and expiries as hints only ("nearest weekly",
@@ -104,14 +123,24 @@ Schema:
       "priced_in_assessment": "priced_in" | "underdone" | "overdone" | "unclear",
       "rationale": "<two sentences max>",
       "plain_explanation": "<2-3 jargon-free sentences, NO numbers>",
-      "sources": ["<url>", "..."]
+      "sources": ["<url>", "..."],
+      "zone_read": "<one sentence on the zone setup, or empty if none>"
     }
   ]
 }`;
 
 function buildUserMessage(watchlist: WatchlistItem[]): string {
   const today = new Date().toISOString().slice(0, 10);
-  const lines = watchlist.map((w) => `${w.symbol}, ${w.notes?.trim() || "no extra context"}`).join("\n");
+  const lines = watchlist
+    .map((w) => {
+      const base = `${w.symbol}, ${w.notes?.trim() || "no extra context"}`;
+      const z = w.zoneSetup;
+      if (z && z.active_zone) {
+        return `${base}\n   ZONE SETUP: direction=${z.direction} approach=${z.approach} ${z.active_zone.type} zone [${z.active_zone.bottom}-${z.active_zone.top}] price=${z.price} distance_to_edge=${z.distance_to_edge_pct}% clear_runway=${z.clear_runway} setup_valid=${z.setup_valid} (${z.tap_granularity})`;
+      }
+      return base;
+    })
+    .join("\n");
   return `Today is ${today}. Research the following watchlist for pre-market opportunities.
 Return one proposal object per symbol (use "no_trade" when there is no edge).
 

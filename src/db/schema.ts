@@ -48,6 +48,10 @@ export const proposals = pgTable("proposals", {
   plainExplanation: text("plain_explanation"), // jargon-free 2-3 sentences (qualitative only, no numbers)
   sources: jsonb("sources").$type<string[]>(), // array of URLs
   status: text("status").notNull().default("pending"), // pending | approved | rejected | filled | expired
+  // Strategy attribution + zone context (code-computed; zoneRead is the model's one-liner).
+  variant: text("variant").notNull().default("news_only"), // news_only | news_plus_zones | ...
+  zoneSetup: jsonb("zone_setup"), // full code-computed ZoneSetup, when zone-driven
+  zoneRead: text("zone_read"), // model's one-sentence read of the zone (qualitative)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

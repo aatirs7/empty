@@ -7,14 +7,21 @@
  * is true; when on it places paper orders for high-confidence real-trade proposals,
  * bounded by its own caps + the shared execute guardrails.
  */
-import { and, count, eq, gte } from "drizzle-orm";
+import { and, count, desc, eq, gte } from "drizzle-orm";
 import { db } from "../db";
-import { watchlist as watchlistTable, researchRuns, proposals as proposalsTable, orders } from "../db/schema";
+import {
+  watchlist as watchlistTable,
+  researchRuns,
+  proposals as proposalsTable,
+  orders,
+  candidates as candidatesTable,
+} from "../db/schema";
 import { runResearch, ResearchParseError, type ResearchResult, type WatchlistItem } from "./anthropic";
 import { getSettings } from "./settings";
 import { executeProposal, ExecuteError } from "./execute";
 import { getWeeklyPL } from "./alpaca";
 import { autoManagePositions, type ManageSummary } from "./manage";
+import type { ZoneSetup } from "./strategy";
 
 export async function loadActiveWatchlist(): Promise<WatchlistItem[]> {
   const rows = await db
@@ -23,6 +30,38 @@ export async function loadActiveWatchlist(): Promise<WatchlistItem[]> {
     .where(eq(watchlistTable.active, true))
     .orderBy(watchlistTable.symbol);
   return rows.map((r) => ({ symbol: r.symbol, notes: r.notes }));
+}
+
+/**
+ * Build a watchlist from the latest scan's VALID zone setups (the daily-scan
+ * taps). Returns [] when the most recent scan produced no valid setups.
+ */
+export async function loadZoneWatchlist(): Promise<WatchlistItem[]> {
+  const [latest] = await db
+    .select({ runDate: candidatesTable.runDate })
+    .from(candidatesTable)
+    .orderBy(desc(candidatesTable.runDate))
+    .limit(1);
+  if (!latest) return [];
+  const rows = await db
+    .select()
+    .from(candidatesTable)
+    .where(and(eq(candidatesTable.runDate, latest.runDate), eq(candidatesTable.setupValid, true)));
+  return rows.map((r) => {
+    const z = r.zone as { type: string; bottom: number; top: number } | null;
+    return {
+      symbol: r.symbol,
+      notes: z ? `valid ${r.direction} setup off a ${z.type} zone [${z.bottom}-${z.top}]` : `${r.direction} zone setup`,
+      zoneSetup: r.setup as ZoneSetup,
+    };
+  });
+}
+
+/** Research the latest valid zone setups (variant='news_plus_zones'). Null if none. */
+export async function runZoneResearch(): Promise<PersistedRun | null> {
+  const watchlist = await loadZoneWatchlist();
+  if (watchlist.length === 0) return null;
+  return runAndPersist({ watchlist, variant: "news_plus_zones" });
 }
 
 export interface AutoPlacement {
@@ -122,11 +161,18 @@ async function maybeAutoExecute(inserted: InsertedProposal[]): Promise<AutoExecS
   return { enabled: true, minConfidence, maxTradesPerDay, alreadyPlacedToday, placed };
 }
 
-export async function runAndPersist(): Promise<PersistedRun> {
-  const list = await loadActiveWatchlist();
+export interface RunOptions {
+  watchlist?: WatchlistItem[];
+  variant?: string;
+}
+
+export async function runAndPersist(opts: RunOptions = {}): Promise<PersistedRun> {
+  const list = opts.watchlist ?? (await loadActiveWatchlist());
   if (list.length === 0) {
     throw new Error("Watchlist is empty, seed it first with `npm run seed`.");
   }
+  const variant = opts.variant ?? "news_only";
+  const zoneBySymbol = new Map(list.filter((w) => w.zoneSetup).map((w) => [w.symbol, w.zoneSetup!]));
 
   const runDate = new Date().toISOString().slice(0, 10);
   const model = process.env.RESEARCH_MODEL ?? "claude-sonnet-5";
@@ -170,6 +216,9 @@ export async function runAndPersist(): Promise<PersistedRun> {
             plainExplanation: p.plain_explanation,
             sources: p.sources,
             status: "pending" as const,
+            variant,
+            zoneSetup: zoneBySymbol.get(p.symbol) ?? null,
+            zoneRead: p.zone_read ?? null,
           })),
         )
         .returning({
