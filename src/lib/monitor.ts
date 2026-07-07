@@ -16,9 +16,10 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { candidates, proposals, researchRuns } from "../db/schema";
-import { getLatestPrices } from "./alpaca";
+import { getLatestPrices, getStockBars } from "./alpaca";
 import { getSettings } from "./settings";
 import { executeProposal } from "./execute";
+import { classifyAndScore, PLAYBOOK_MIN_SCORE } from "./playbook";
 
 export interface Fire {
   symbol: string;
@@ -98,10 +99,29 @@ export async function monitorTick(state: MonitorState): Promise<Fire[]> {
     state.fired.add(c.id);
     if (await alreadyFired(c.id)) continue;
 
-    const alert =
-      direction === "call"
-        ? `CALLS: ${c.symbol} tapped support zone [${z.bottom}-${z.top}] at ${cur}.`
-        : `PUTS: ${c.symbol} tapped resistance zone [${z.bottom}-${z.top}] at ${cur}.`;
+    // Score the setup (SniperBot playbook classifier). Only fire if it clears the
+    // quality threshold — this is what keeps the bot selective.
+    let pb: ReturnType<typeof classifyAndScore> | null = null;
+    try {
+      const bars = await getStockBars(c.symbol, 400);
+      pb = classifyAndScore(bars, z, direction, cur);
+    } catch {
+      pb = null;
+    }
+    if (!pb || !pb.alert) {
+      fires.push({
+        symbol: c.symbol,
+        direction,
+        candidateId: c.id,
+        price: cur,
+        placed: false,
+        detail: pb ? `score ${pb.score}/100 < ${PLAYBOOK_MIN_SCORE} (${pb.playbook}); skipped` : "could not score; skipped",
+      });
+      continue;
+    }
+
+    const zoneWord = direction === "call" ? "support" : "resistance";
+    const alert = `${direction.toUpperCase()}S: ${c.symbol} — ${pb.playbook}. Tapped ${zoneWord} zone [${z.bottom}-${z.top}] at ${cur}. Safe target ${pb.safeTarget ?? "?"}, extended ${pb.extendedTarget ?? "?"}, ~5-10d. Score ${pb.score}/100.`;
     try {
       const runId = await ensureMonitorRun();
       const [prop] = await db
@@ -115,8 +135,8 @@ export async function monitorTick(state: MonitorState): Promise<Fire[]> {
           expiryHint: "2-4 weeks",
           confidence: "1",
           pricedInAssessment: "unclear",
-          rationale: alert,
-          plainExplanation: `${c.symbol} just tapped its zone live, betting on a ${direction === "call" ? "bounce up off support" : "rejection down off resistance"}.`,
+          rationale: `${alert} ${pb.reason}`,
+          plainExplanation: `${c.symbol} just tapped its zone live (${pb.playbook}), betting on a ${direction === "call" ? "bounce up off support" : "rejection down off resistance"} over the next 1-2 weeks.`,
           sources: [],
           status: "pending" as const,
           variant: "news_plus_zones",
