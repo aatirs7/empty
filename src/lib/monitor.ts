@@ -1,21 +1,20 @@
 /**
  * Live intraday zone monitor (I6). PAPER-ONLY.
  *
- * Polls live prices for the latest scan's candidates and fires the moment price
- * actually TAPS a zone boundary in the valid direction (SniperBot rules): it must
- * CROSS the near edge, not merely sit inside the zone. On a tap it creates a
- * mechanical proposal (no Brain) and auto-buys via executeProposal (paper assert,
- * near-ATM+liquid picker, live-price check, caps). Dedups per candidate.
+ * One stateless tick: polls live prices for the latest scan's candidates and fires
+ * the moment price CROSSES a zone boundary in the valid direction (SniperBot rules)
+ * — a real intraday trigger, not a stale daily-scan guess. On a tap it classifies
+ * the playbook + scores it (SNIPERBOT-PLAYBOOK.md) and only fires when the score
+ * clears the threshold, then creates a mechanical proposal and auto-buys via
+ * executeProposal (paper assert, cheap near-ATM+liquid picker, live-price check).
  *
- * Direction (from the daily-close bias stored on the candidate):
- *   - PUT setup  (price below the zone / resistance): fire when price rises to tap
- *     the BOTTOM boundary from below (prev < bottom, now >= bottom).
- *   - CALL setup (price above the zone / support):    fire when price pulls back to
- *     tap the TOP boundary from above (prev > top, now <= top).
+ * State (last-seen price per candidate, for crossing detection) lives in the
+ * `monitor_state` DB row, so this works identically from a persistent worker loop
+ * OR a stateless serverless cron tick. Dedup is durable (proposals.candidateId).
  */
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
-import { candidates, proposals, researchRuns } from "../db/schema";
+import { candidates, monitorState, proposals, researchRuns } from "../db/schema";
 import { getLatestPrices, getStockBars } from "./alpaca";
 import { getSettings } from "./settings";
 import { executeProposal } from "./execute";
@@ -29,14 +28,6 @@ export interface Fire {
   placed: boolean;
   detail: string;
 }
-
-/** Session state carried across ticks: what already fired + last seen price per candidate. */
-export interface MonitorState {
-  fired: Set<number>;
-  lastPrice: Map<number, number>;
-}
-
-export const newMonitorState = (): MonitorState => ({ fired: new Set(), lastPrice: new Map() });
 
 async function ensureMonitorRun(): Promise<number> {
   const runDate = new Date().toISOString().slice(0, 10);
@@ -53,18 +44,13 @@ async function ensureMonitorRun(): Promise<number> {
   return r.id;
 }
 
-async function alreadyFired(candidateId: number): Promise<boolean> {
-  const [p] = await db.select({ id: proposals.id }).from(proposals).where(eq(proposals.candidateId, candidateId)).limit(1);
-  return !!p;
-}
-
-/** A boundary-tap crossing for the setup's direction, else null (no fire). */
+/** A boundary-tap crossing for the setup's direction, else false. */
 function tapCrossing(direction: "call" | "put", prev: number, cur: number, bottom: number, top: number): boolean {
   if (direction === "put") return prev < bottom && cur >= bottom; // rose into resistance from below
   return prev > top && cur <= top; // call: pulled into support from above
 }
 
-export async function monitorTick(state: MonitorState): Promise<Fire[]> {
+export async function monitorTick(): Promise<Fire[]> {
   const settings = await getSettings();
 
   const [latest] = await db
@@ -79,7 +65,20 @@ export async function monitorTick(state: MonitorState): Promise<Fire[]> {
   ).filter((c) => (c.direction === "call" || c.direction === "put") && c.zone);
   if (cands.length === 0) return [];
 
+  // Durable crossing state.
+  let [row] = await db.select().from(monitorState).limit(1);
+  if (!row) [row] = await db.insert(monitorState).values({}).returning();
+  const prevPrices = { ...(row.prices as Record<string, number>) };
+
+  // Durable dedup: which candidates already fired a proposal.
+  const firedRows = await db
+    .select({ cid: proposals.candidateId })
+    .from(proposals)
+    .where(inArray(proposals.candidateId, cands.map((c) => c.id)));
+  const firedSet = new Set(firedRows.map((r) => r.cid));
+
   const prices = await getLatestPrices([...new Set(cands.map((c) => c.symbol))]);
+  const nextPrices = { ...prevPrices };
   const fires: Fire[] = [];
 
   for (const c of cands) {
@@ -87,20 +86,16 @@ export async function monitorTick(state: MonitorState): Promise<Fire[]> {
     const cur = prices[c.symbol];
     if (cur == null) continue;
 
-    const prev = state.lastPrice.get(c.id);
-    state.lastPrice.set(c.id, cur);
-    if (state.fired.has(c.id)) continue;
-    if (prev === undefined) continue; // first sighting: establish a baseline, don't fire
+    const key = String(c.id);
+    const prev = prevPrices[key];
+    nextPrices[key] = cur;
+    if (firedSet.has(c.id)) continue;
+    if (prev === undefined) continue; // first sighting: establish baseline, don't fire
 
     const direction = c.direction as "call" | "put";
     if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
 
-    // Live boundary tap.
-    state.fired.add(c.id);
-    if (await alreadyFired(c.id)) continue;
-
-    // Score the setup (SniperBot playbook classifier). Only fire if it clears the
-    // quality threshold — this is what keeps the bot selective.
+    // Score the setup; only fire if it clears the quality threshold.
     let pb: ReturnType<typeof classifyAndScore> | null = null;
     try {
       const bars = await getStockBars(c.symbol, 400);
@@ -161,5 +156,6 @@ export async function monitorTick(state: MonitorState): Promise<Fire[]> {
     }
   }
 
+  await db.update(monitorState).set({ prices: nextPrices, updatedAt: new Date() }).where(eq(monitorState.id, row.id));
   return fires;
 }

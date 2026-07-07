@@ -131,6 +131,14 @@ export const candidates = pgTable("candidates", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Single-row monitor state: last-seen price per candidate (for stateless,
+// serverless-friendly boundary-crossing detection across ticks).
+export const monitorState = pgTable("monitor_state", {
+  id: serial("id").primaryKey(),
+  prices: jsonb("prices").$type<Record<string, number>>().notNull().default({}),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Mechanical shadow outcome per proposal (and a daily SPY baseline). Measures
 // what Vega PROPOSED, independent of which trades the owner approved.
 export const shadowOutcomes = pgTable("shadow_outcomes", {

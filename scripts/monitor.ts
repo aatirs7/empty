@@ -9,12 +9,11 @@
  * PAPER-ONLY: refuses to start unless TRADING_MODE=paper.
  */
 import "dotenv/config";
-import { monitorTick, newMonitorState } from "../src/lib/monitor";
+import { monitorTick } from "../src/lib/monitor";
 import { getClock } from "../src/lib/alpaca";
 
 const INTERVAL = Number(process.env.MONITOR_INTERVAL_MS ?? 30_000);
 const CLOSED_SLEEP = 5 * 60_000;
-const state = newMonitorState();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -33,7 +32,7 @@ async function main() {
         await sleep(CLOSED_SLEEP);
         continue;
       }
-      const fires = await monitorTick(state);
+      const fires = await monitorTick();
       for (const f of fires) {
         console.log(
           `[${new Date().toISOString()}] TAP ${f.symbol} ${f.direction} @ ${f.price} -> ${f.placed ? "BOUGHT" : "skipped"} (${f.detail})`,
