@@ -114,16 +114,15 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
       const quotes = await getOptionQuotes(candidates.map((c) => c.symbol));
       const priced = candidates
         .map((c) => ({ c, q: quotes[c.symbol], ask: quotes[c.symbol]?.ap ?? 0, bid: quotes[c.symbol]?.bp ?? 0 }))
-        // Require a real market: non-zero bid AND a spread that isn't absurd.
-        .filter((x) => x.ask > 0.05 && x.bid > 0 && x.bid >= 0.4 * x.ask);
+        // Require a LIQUID market: non-zero bid and a tight spread (bid >= 70% of
+        // ask, i.e. <=~30% spread). Wide-spread options fill at the ask and mark
+        // near the bid, showing an instant paper loss, so we only take tight ones.
+        .filter((x) => x.ask > 0.05 && x.bid > 0 && x.bid >= 0.7 * x.ask);
+      // Only take a contract that is BOTH affordable (<= maxPrice) and liquid.
+      // No fallback to an over-cap or illiquid contract.
       const affordable = priced.filter((x) => x.ask <= input.maxPrice!);
-      const chosen =
-        affordable.length > 0
-          ? affordable.reduce((best, x) => (x.ask > best.ask ? x : best))
-          : priced.length > 0
-            ? priced.reduce((best, x) => (x.ask < best.ask ? x : best))
-            : null;
-      if (chosen) {
+      if (affordable.length > 0) {
+        const chosen = affordable.reduce((best, x) => (x.ask > best.ask ? x : best));
         pick = chosen.c;
         quote = chosen.q;
       }
@@ -135,8 +134,13 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
     pick = poolAll.reduce((best, c) =>
       Math.abs(Number(c.strike_price) - tStrike) < Math.abs(Number(best.strike_price) - tStrike) ? c : best,
     );
-    const quotes = await getOptionQuotes([pick.symbol]);
-    quote = quotes[pick.symbol];
+    // In budget mode, reaching here means no affordable+liquid contract exists.
+    // Leave it UNPRICED so execute skips this trade (never buy a pricey/illiquid
+    // fallback). Non-budget callers (the live preview) still get a real quote.
+    if (!(input.maxPrice && input.maxPrice > 0)) {
+      const quotes = await getOptionQuotes([pick.symbol]);
+      quote = quotes[pick.symbol];
+    }
   }
 
   const mid = midPrice(quote);

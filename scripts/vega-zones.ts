@@ -15,10 +15,11 @@ async function main() {
     return;
   }
   console.log(`zone run #${res.runId}: ${res.proposalsInserted} proposals (variant=news_plus_zones)`);
-  for (const p of res.result.output.proposals) {
-    console.log(`\n  ${p.symbol} ${p.strategy} (${p.direction}) conf=${p.confidence}`);
-    if (p.zone_read) console.log(`     zone: ${p.zone_read}`);
-    console.log(`     ${p.rationale}`);
+  console.log(`\nAUTO-BUY (${res.auto.placed.length} attempted):`);
+  for (const pl of res.auto.placed) {
+    console.log(
+      `  ${pl.symbol}: ${pl.ok ? `PLACED order #${pl.orderId} (${pl.status})` : `skipped — ${pl.error}`}`,
+    );
   }
 }
 

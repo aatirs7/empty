@@ -28,6 +28,8 @@ async function main() {
     autoMinConfidence: 0, // driven by the zone setups, not a Brain confidence gate
     maxAutoTradesPerDay: 100, // caps removed for the paper real-test
     maxContracts: 100, // caps removed; per-trade budget + buying power size it
+    maxContractPrice: 1.5, // cheap + LIQUID contracts (<=~$150), spreads across names
+    perTradeBudget: 100, // ~$100/name so $500 spreads across several setups
     weeklyGoal: 0, // goal-based exits off; zone exits are close-through
   });
 
