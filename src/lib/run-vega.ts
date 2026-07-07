@@ -237,7 +237,12 @@ export async function runAndPersist(opts: RunOptions = {}): Promise<PersistedRun
         });
     }
 
-    const auto = await maybeAutoExecute(inserted);
+    // Auto-buy is ZONE-ONLY during the paper month: only the zone run trades.
+    // Any other run (e.g. the news watchlist) persists proposals but never buys.
+    const auto =
+      variant === "news_plus_zones"
+        ? await maybeAutoExecute(inserted)
+        : { enabled: false as const, placed: [] };
     let manage: ManageSummary = { enabled: false, actions: [] };
     try {
       manage = await autoManagePositions();
