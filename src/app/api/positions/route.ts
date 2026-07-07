@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { positionsSnapshots } from "@/db/schema";
-import { listPositions } from "@/lib/alpaca";
+import { getBroker } from "@/lib/broker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const snapshot = url.searchParams.get("snapshot") === "1";
 
-  const positions = await listPositions();
+  const positions = await getBroker().listPositions();
   const totalUnrealizedPl = positions.reduce((s, p) => s + (p.unrealized_pl ? Number(p.unrealized_pl) : 0), 0);
   const totalMarketValue = positions.reduce((s, p) => s + (p.market_value ? Number(p.market_value) : 0), 0);
   const totalCostBasis = positions.reduce((s, p) => s + (p.cost_basis ? Number(p.cost_basis) : 0), 0);

@@ -10,7 +10,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { proposals, orders } from "../db/schema";
-import { placeOptionOrder, waitForFill, listPositions } from "./alpaca";
+import { getBroker } from "./broker";
 import { resolveContract } from "./resolve";
 import { computeRisk, type RiskMath } from "./risk";
 import { getSettings } from "./settings";
@@ -44,6 +44,7 @@ function assertPaper(): void {
 
 export async function executeProposal(proposalId: number, mode: "manual" | "auto"): Promise<ExecuteResult> {
   assertPaper();
+  const broker = getBroker();
 
   const perOrderCap = Number(process.env.MAX_CONTRACTS_PER_ORDER ?? 20);
   const openCap = Number(process.env.MAX_OPEN_POSITIONS ?? 3);
@@ -62,7 +63,7 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   }
 
   // Open-position cap, count real Alpaca positions.
-  const positions = await listPositions();
+  const positions = await broker.listPositions();
   if (positions.length >= openCap) {
     throw new ExecuteError(`Open-position cap reached (${positions.length}/${openCap}).`, "open_cap");
   }
@@ -91,7 +92,7 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   });
 
   // Place the paper order (placeOptionOrder re-asserts paper + per-order cap).
-  const alpacaOrder = await placeOptionOrder({ symbol: resolved.symbol, qty, side: "buy", limitPrice });
+  const alpacaOrder = await broker.placeOptionOrder({ symbol: resolved.symbol, qty, side: "buy", limitPrice });
 
   const [orderRow] = await db
     .insert(orders)
@@ -119,7 +120,7 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   await db.update(proposals).set({ status: "approved" }).where(eq(proposals.id, proposalId));
 
   // Poll for the fill.
-  const final = await waitForFill(alpacaOrder.id);
+  const final = await broker.waitForFill(alpacaOrder.id);
   const filled = final.status === "filled";
   const filledPrice = final.filled_avg_price ? Number(final.filled_avg_price) : null;
 

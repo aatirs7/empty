@@ -9,7 +9,7 @@
  * It never opens trades (that's auto-execute) and only ever closes — the worst
  * it can do on paper is exit a position.
  */
-import { listPositions, closePosition, getWeeklyPL } from "./alpaca";
+import { getBroker } from "./broker";
 import { getSettings } from "./settings";
 import { optionExpiryFromOcc } from "./format";
 
@@ -46,12 +46,13 @@ export async function autoManagePositions(): Promise<ManageSummary> {
     throw new Error(`GUARDRAIL: TRADING_MODE must be "paper", got "${process.env.TRADING_MODE}".`);
   }
 
+  const broker = getBroker();
   const tol = THRESHOLDS[(settings.riskTolerance as RiskTolerance)] ?? THRESHOLDS.balanced;
   const goal = Number(settings.weeklyGoal);
-  const { weeklyPL } = await getWeeklyPL();
+  const { weeklyPL } = await broker.getWeeklyPL();
   const goalMet = goal > 0 && weeklyPL >= goal;
 
-  const positions = await listPositions();
+  const positions = await broker.listPositions();
   const actions: ManageAction[] = [];
 
   for (const p of positions) {
@@ -67,7 +68,7 @@ export async function autoManagePositions(): Promise<ManageSummary> {
 
     if (reason) {
       try {
-        await closePosition(p.symbol);
+        await broker.closePosition(p.symbol);
         actions.push({ symbol: p.symbol, reason });
       } catch {
         // ignore a single failed close; continue managing the rest

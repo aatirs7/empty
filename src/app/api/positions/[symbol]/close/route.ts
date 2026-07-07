@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { closePosition } from "@/lib/alpaca";
+import { getBroker } from "@/lib/broker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ symbol
     return NextResponse.json({ ok: false, error: "not paper mode" }, { status: 403 });
   }
   try {
-    const order = await closePosition(symbol);
+    const order = await getBroker().closePosition(symbol);
     return NextResponse.json({ ok: true, orderId: order.id, status: order.status });
   } catch (err) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : "error" }, { status: 502 });
