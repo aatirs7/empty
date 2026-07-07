@@ -11,6 +11,7 @@
     "smoke": "tsx scripts/alpaca-smoke.ts",
     "vega": "tsx scripts/operation-vega.ts",
     "manage": "tsx scripts/manage.ts",
+    "zones-check": "tsx scripts/zones-check.ts",
     "seed": "tsx scripts/seed-watchlist.ts",
     "inspect": "tsx scripts/inspect-db.ts",
     "check:m5": "tsx scripts/check-m5.ts",

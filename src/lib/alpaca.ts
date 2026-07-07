@@ -163,24 +163,76 @@ export async function getPosition(symbol: string): Promise<Position | null> {
 
 export interface Bar {
   t: string;
+  o: number;
+  h: number;
+  l: number;
   c: number;
+  v: number;
 }
 
-/** Daily closing bars for an underlying stock (free IEX feed), most recent last. */
+interface RawBar {
+  t: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+const toBar = (b: RawBar): Bar => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v });
+
+/** Daily OHLCV bars for an underlying stock (free IEX feed), most recent last. */
 export async function getStockBars(symbol: string, days = 90): Promise<Bar[]> {
   const start = new Date();
   start.setUTCDate(start.getUTCDate() - days);
-  const q = new URLSearchParams({
-    timeframe: "1Day",
-    start: start.toISOString().slice(0, 10),
-    feed: "iex",
-    limit: "1000",
-    adjustment: "raw",
-  });
-  const resp = await data<{ bars?: { t: string; c: number }[] }>(
-    `/v2/stocks/${encodeURIComponent(symbol)}/bars?${q.toString()}`,
-  );
-  return (resp.bars ?? []).map((b) => ({ t: b.t, c: b.c }));
+  const bars: Bar[] = [];
+  let pageToken: string | undefined;
+  do {
+    const q = new URLSearchParams({
+      timeframe: "1Day",
+      start: start.toISOString().slice(0, 10),
+      feed: "iex",
+      limit: "10000",
+      adjustment: "raw",
+    });
+    if (pageToken) q.set("page_token", pageToken);
+    const resp = await data<{ bars?: RawBar[]; next_page_token?: string | null }>(
+      `/v2/stocks/${encodeURIComponent(symbol)}/bars?${q.toString()}`,
+    );
+    bars.push(...(resp.bars ?? []).map(toBar));
+    pageToken = resp.next_page_token ?? undefined;
+  } while (pageToken);
+  return bars;
+}
+
+/**
+ * Daily OHLCV bars for MANY symbols in one batched request (scanner). Returns a
+ * map of symbol -> bars (most recent last). Paginates via next_page_token.
+ */
+export async function getMultiStockBars(symbols: string[], days = 450): Promise<Record<string, Bar[]>> {
+  if (symbols.length === 0) return {};
+  const start = new Date();
+  start.setUTCDate(start.getUTCDate() - days);
+  const out: Record<string, Bar[]> = {};
+  let pageToken: string | undefined;
+  do {
+    const q = new URLSearchParams({
+      symbols: symbols.join(","),
+      timeframe: "1Day",
+      start: start.toISOString().slice(0, 10),
+      feed: "iex",
+      limit: "10000",
+      adjustment: "raw",
+    });
+    if (pageToken) q.set("page_token", pageToken);
+    const resp = await data<{ bars?: Record<string, RawBar[]>; next_page_token?: string | null }>(
+      `/v2/stocks/bars?${q.toString()}`,
+    );
+    for (const [sym, arr] of Object.entries(resp.bars ?? {})) {
+      (out[sym] ??= []).push(...arr.map(toBar));
+    }
+    pageToken = resp.next_page_token ?? undefined;
+  } while (pageToken);
+  return out;
 }
 
 export function getOrder(id: string): Promise<Order> {
