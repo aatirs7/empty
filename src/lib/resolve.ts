@@ -118,11 +118,17 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
         // ask, i.e. <=~30% spread). Wide-spread options fill at the ask and mark
         // near the bid, showing an instant paper loss, so we only take tight ones.
         .filter((x) => x.ask > 0.05 && x.bid > 0 && x.bid >= 0.7 * x.ask);
-      // Only take a contract that is BOTH affordable (<= maxPrice) and liquid.
-      // No fallback to an over-cap or illiquid contract.
-      const affordable = priced.filter((x) => x.ask <= input.maxPrice!);
-      if (affordable.length > 0) {
-        const chosen = affordable.reduce((best, x) => (x.ask > best.ask ? x : best));
+      // Farrukh's sizing: enter CHEAP contracts ~$0.50-$1.00 (up to the cap) that
+      // are near enough to be pushed into the money on a good zone-tap move — those
+      // give the big % gains. Target ~$0.70, within [floor, cap], liquid only. No
+      // expensive (near the cap) or sub-floor deep-OTM lottery contracts.
+      const PRICE_FLOOR = 0.4;
+      const PRICE_IDEAL = 0.7;
+      const inBand = priced.filter((x) => x.ask >= PRICE_FLOOR && x.ask <= input.maxPrice!);
+      if (inBand.length > 0) {
+        const chosen = inBand.reduce((best, x) =>
+          Math.abs(x.ask - PRICE_IDEAL) < Math.abs(best.ask - PRICE_IDEAL) ? x : best,
+        );
         pick = chosen.c;
         quote = chosen.q;
       }
