@@ -218,7 +218,9 @@ export async function runAndPersist(opts: RunOptions = {}): Promise<PersistedRun
             direction: p.direction,
             strategy: p.strategy,
             strikeHint: p.strike_hint,
-            expiryHint: p.expiry_hint,
+            // Zone trades are multi-day swings; force a 2-4 week expiry regardless
+            // of the model hint (never a 2-3 day lottery ticket).
+            expiryHint: variant === "news_plus_zones" ? "2-4 weeks" : p.expiry_hint,
             confidence: p.confidence.toString(),
             pricedInAssessment: p.priced_in_assessment,
             rationale: p.rationale,

@@ -95,24 +95,27 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
   let pick: OptionContract | null = null;
   let quote: OptionQuote | undefined;
 
-  // Cheap-contract targeting: quote a near-ATM -> OTM window and pick the
-  // priciest contract still under maxPrice (best odds among affordable cheap
-  // options). Falls back to the Brain's strike hint if nothing is priced.
+  // Near-the-money targeting: quote a tight window around spot (NOT deep OTM),
+  // require a REAL two-sided market (non-zero bid), and pick the priciest contract
+  // still under maxPrice. This avoids deep-OTM, no-bid lottery tickets that fill at
+  // the ask and instantly mark at a $0 bid. Falls back to the strike hint.
   if (input.maxPrice && input.maxPrice > 0) {
-    const lo = input.direction === "call" ? spot * 0.98 : spot * 0.6;
-    const hi = input.direction === "call" ? spot * 1.4 : spot * 1.02;
+    // At most ~8% OTM (and a little ITM), so the contract actually tracks the move.
+    const lo = input.direction === "call" ? spot * 0.97 : spot * 0.92;
+    const hi = input.direction === "call" ? spot * 1.08 : spot * 1.03;
     let candidates = poolAll.filter((c) => Number(c.strike_price) >= lo && Number(c.strike_price) <= hi);
     candidates.sort((a, b) =>
       input.direction === "call"
         ? Number(a.strike_price) - Number(b.strike_price)
         : Number(b.strike_price) - Number(a.strike_price),
     );
-    candidates = candidates.slice(0, 50);
+    candidates = candidates.slice(0, 60);
     if (candidates.length > 0) {
       const quotes = await getOptionQuotes(candidates.map((c) => c.symbol));
       const priced = candidates
-        .map((c) => ({ c, q: quotes[c.symbol], ask: quotes[c.symbol]?.ap ?? 0 }))
-        .filter((x) => x.ask > 0.05);
+        .map((c) => ({ c, q: quotes[c.symbol], ask: quotes[c.symbol]?.ap ?? 0, bid: quotes[c.symbol]?.bp ?? 0 }))
+        // Require a real market: non-zero bid AND a spread that isn't absurd.
+        .filter((x) => x.ask > 0.05 && x.bid > 0 && x.bid >= 0.4 * x.ask);
       const affordable = priced.filter((x) => x.ask <= input.maxPrice!);
       const chosen =
         affordable.length > 0

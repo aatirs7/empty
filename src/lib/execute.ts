@@ -83,6 +83,23 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     throw new ExecuteError(`No usable quote for ${resolved.symbol} (market closed or unpriced).`, "no_quote");
   }
 
+  // Live-price sanity check for zone trades: the daily scan is stale, so before
+  // buying, confirm the LIVE price hasn't crossed to the wrong side of the zone
+  // (e.g. a "call" whose stock has since broken down through the zone). If the
+  // premise is broken, skip rather than buy a stale wrong-way setup.
+  const zs = proposal.zoneSetup as { active_zone?: { bottom: number; top: number } } | null;
+  if (zs?.active_zone) {
+    const spot = resolved.underlyingPrice;
+    const brokeDown = direction === "call" && spot < zs.active_zone.bottom;
+    const brokeUp = direction === "put" && spot > zs.active_zone.top;
+    if (brokeDown || brokeUp) {
+      throw new ExecuteError(
+        `Setup invalidated: ${proposal.symbol} at ${spot} has crossed the zone [${zs.active_zone.bottom}-${zs.active_zone.top}] against a ${direction}.`,
+        "setup_invalidated",
+      );
+    }
+  }
+
   const limitPrice = resolved.price;
   // Buy as many cheap contracts as the per-trade budget allows (>=1, capped).
   const qty = Math.max(1, Math.min(maxContracts, Math.floor(perTradeBudget / (limitPrice * 100))));
