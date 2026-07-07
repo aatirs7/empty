@@ -48,10 +48,10 @@ export async function loadZoneWatchlist(): Promise<WatchlistItem[]> {
     .from(candidatesTable)
     .where(and(eq(candidatesTable.runDate, latest.runDate), eq(candidatesTable.setupValid, true)));
   return rows.map((r) => {
-    const z = r.zone as { type: string; bottom: number; top: number } | null;
+    const z = r.zone as { bottom: number; top: number } | null;
     return {
       symbol: r.symbol,
-      notes: z ? `valid ${r.direction} setup off a ${z.type} zone [${z.bottom}-${z.top}]` : `${r.direction} zone setup`,
+      notes: z ? `valid ${r.direction} setup at a zone edge [${z.bottom}-${z.top}]` : `${r.direction} zone setup`,
       zoneSetup: r.setup as ZoneSetup,
     };
   });

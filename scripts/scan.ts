@@ -22,9 +22,9 @@ async function main() {
   if (setups.length) {
     console.log("\nvalid setups (tapped this session):");
     for (const c of setups) {
-      const z = c.zone as { type: string; bottom: number; top: number } | null;
+      const z = c.zone as { bottom: number; top: number } | null;
       console.log(
-        `  ${c.symbol.padEnd(6)} ${c.direction}  ${c.approach}  ${z ? `${z.type}[${z.bottom}-${z.top}]` : ""}  ${c.distanceToEdgePct}% ${c.clearRunway ? "clear" : "BLOCKED"}`,
+        `  ${c.symbol.padEnd(6)} ${c.direction}  ${c.approach}  ${z ? `zone[${z.bottom}-${z.top}]` : ""}  ${c.distanceToEdgePct}% ${c.clearRunway ? "clear" : "BLOCKED"}`,
       );
     }
   }

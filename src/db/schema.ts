@@ -125,7 +125,7 @@ export const candidates = pgTable("candidates", {
   distanceToEdgePct: numeric("distance_to_edge_pct"),
   setupValid: boolean("setup_valid").notNull().default(false), // daily-scan tap fired
   price: numeric("price"),
-  zone: jsonb("zone").$type<{ type: string; bottom: number; top: number }>(),
+  zone: jsonb("zone").$type<{ bottom: number; top: number }>(),
   setup: jsonb("setup"), // full ZoneSetup (code-computed)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

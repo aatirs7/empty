@@ -1,18 +1,29 @@
 /**
- * Zone strategy layer (STRATEGY.md rules) on top of the raw zone engine.
- * Turns detected zones + recent price action into a tradeable `zone_setup`:
- * approach direction, the rejection rule (fade the approach), the white-space
- * hard gate, and daily-scan tap validity.
+ * Zone strategy layer (STRATEGY.md, locked). Turns detected zones + recent price
+ * into a tradeable `zone_setup`.
  *
- * GUARDRAIL: all code-computed. The model never produces a zone bound, distance,
- * or direction — it only reasons over this object.
+ * Rules (locked):
+ * - Zones are just support/resistance. Their top AND bottom are both levels; the
+ *   demand/supply formation label NEVER drives direction.
+ * - Direction is STATELESS: which side price is on relative to the tapped edge.
+ *     price above the edge (coming down into it)  => call
+ *     price below the edge (rising up into it)     => put
+ *   This makes the "flip" automatic: once price closes through a zone it is on the
+ *   other side, so the same rule yields the opposite trade on the next tap.
+ * - Trigger = first edge touched this session (trigger_edge = 'first_touch').
+ * - White space is a hard gate: no other zone between recent price and the tapped
+ *   edge in the direction of travel.
+ *
+ * GUARDRAIL: all code-computed. The model never produces an edge, bound, or direction.
  */
 import type { Bar } from "./alpaca";
 import { computeZones, type Zone, type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
 export interface ZoneSetup {
-  active_zone: { type: "demand" | "supply"; bottom: number; top: number } | null;
-  approach: "from_above" | "from_below" | "inside" | null;
+  active_zone: { bottom: number; top: number } | null; // no demand/supply label
+  tapped_edge: number | null; // the specific edge price is trading against
+  trigger_edge: "first_touch";
+  approach: "from_above" | "from_below" | null;
   direction: "call" | "put" | null;
   clear_runway: boolean;
   tap_granularity: "daily_scan";
@@ -22,29 +33,26 @@ export interface ZoneSetup {
 }
 
 export interface StrategyOptions {
-  proximityPct: number; // price must be within this % of a zone edge to be a candidate
-  slopeWindow: number; // bars used to read approach direction
+  proximityPct: number; // price must be within this % of an edge to be a candidate
+  approachWindow: number; // bars back used as "recent price" for the white-space gate
   zone: ZoneOptions;
 }
 
 export const DEFAULT_STRATEGY_OPTIONS: StrategyOptions = {
   proximityPct: 4,
-  slopeWindow: 3,
+  approachWindow: 5,
   zone: DEFAULT_ZONE_OPTIONS,
 };
 
-/** Net price change over the last `window` bars (sign = approach direction). */
-function recentSlope(bars: Bar[], window: number): number {
-  const n = bars.length;
-  const from = bars[Math.max(0, n - 1 - window)].c;
-  return bars[n - 1].c - from;
-}
+const overlaps = (bar: Bar, bottom: number, top: number): boolean => bar.h >= bottom && bar.l <= top;
 
 export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS): ZoneSetup {
-  const { active, lastBar } = computeZones(bars, opts.zone);
+  const { zones, lastBar } = computeZones(bars, opts.zone);
   const price = lastBar.c;
   const empty: ZoneSetup = {
     active_zone: null,
+    tapped_edge: null,
+    trigger_edge: "first_touch",
     approach: null,
     direction: null,
     clear_runway: false,
@@ -53,55 +61,71 @@ export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRA
     setup_valid: false,
     price,
   };
-  if (active.length === 0) return empty;
+  if (zones.length === 0) return empty;
 
-  const slope = recentSlope(bars, opts.slopeWindow);
-  const movingDown = slope < 0;
-  const movingUp = slope > 0;
+  const n = bars.length;
+  const recentPrice = bars[Math.max(0, n - 1 - opts.approachWindow)].c;
 
-  type Cand = { zone: Zone; approach: "from_above" | "from_below" | "inside"; nearEdge: number; distPct: number };
-  const cands: Cand[] = active.map((z) => {
-    if (price > z.top) return { zone: z, approach: "from_above", nearEdge: z.top, distPct: ((price - z.top) / price) * 100 };
-    if (price < z.bottom)
-      return { zone: z, approach: "from_below", nearEdge: z.bottom, distPct: ((z.bottom - price) / price) * 100 };
-    return { zone: z, approach: "inside", nearEdge: price, distPct: 0 };
+  interface Cand {
+    zone: Zone;
+    edge: number;
+    approach: "from_above" | "from_below";
+    direction: "call" | "put";
+    distPct: number;
+    tapped: boolean;
+  }
+
+  const cands: Cand[] = zones.map((z) => {
+    let edge: number;
+    let approach: "from_above" | "from_below";
+    let direction: "call" | "put";
+    if (price > z.top) {
+      // price above the zone: it falls to tap the TOP edge from above -> call
+      edge = z.top;
+      approach = "from_above";
+      direction = "call";
+    } else if (price < z.bottom) {
+      // price below the zone: it rises to tap the BOTTOM edge from below -> put
+      edge = z.bottom;
+      approach = "from_below";
+      direction = "put";
+    } else {
+      // price inside: side by which way it came over the approach window
+      if (price >= recentPrice) {
+        approach = "from_below";
+        direction = "put";
+        edge = z.bottom;
+      } else {
+        approach = "from_above";
+        direction = "call";
+        edge = z.top;
+      }
+    }
+    const distPct = (Math.abs(price - edge) / price) * 100;
+    const tapped = overlaps(lastBar, z.bottom, z.top) || (price >= z.bottom && price <= z.top);
+    return { zone: z, edge, approach, direction, distPct, tapped };
   });
 
-  // Keep only zones in the direction of travel (or ones price sits inside), within proximity.
-  const eligible = cands
-    .filter((c) => {
-      if (c.approach === "inside") return true;
-      if (c.approach === "from_above") return movingDown; // above a zone, falling toward it
-      return movingUp; // below a zone, rising toward it
-    })
-    .filter((c) => c.distPct <= opts.proximityPct);
+  // A tapped zone fires this session; otherwise the nearest zone within proximity is a candidate to watch.
+  const tappedCands = cands.filter((c) => c.tapped).sort((a, b) => a.distPct - b.distPct);
+  const nearCands = cands.filter((c) => !c.tapped && c.distPct <= opts.proximityPct).sort((a, b) => a.distPct - b.distPct);
+  const target = tappedCands[0] ?? nearCands[0];
+  if (!target) return empty;
 
-  if (eligible.length === 0) return empty;
-
-  eligible.sort((a, b) => a.distPct - b.distPct);
-  const target = eligible[0];
-
-  // Rejection rule: fade the approach. Tap from above -> call; from below -> put.
-  let direction: "call" | "put";
-  if (target.approach === "from_above") direction = "call";
-  else if (target.approach === "from_below") direction = "put";
-  else direction = movingDown ? "call" : "put";
-
-  // White space (hard gate): no OTHER active zone between price and the target near edge.
-  const lo = Math.min(price, target.nearEdge);
-  const hi = Math.max(price, target.nearEdge);
-  const blocking = active.some((z) => z !== target.zone && z.top >= lo && z.bottom <= hi);
+  // White space (hard gate): no OTHER zone between recent price and the tapped edge.
+  const lo = Math.min(recentPrice, target.edge);
+  const hi = Math.max(recentPrice, target.edge);
+  const blocking = zones.some((z) => z !== target.zone && z.top >= lo && z.bottom <= hi);
   const clearRunway = !blocking;
 
-  // Daily-scan tap validity: today's candle wicked into the zone, or price sits inside it.
-  const wicked = lastBar.h >= target.zone.bottom && lastBar.l <= target.zone.top;
-  const inside = target.approach === "inside";
-  const setupValid = clearRunway && (wicked || inside);
+  const setupValid = target.tapped && clearRunway;
 
   return {
-    active_zone: { type: target.zone.type, bottom: target.zone.bottom, top: target.zone.top },
+    active_zone: { bottom: target.zone.bottom, top: target.zone.top },
+    tapped_edge: Math.round(target.edge * 100) / 100,
+    trigger_edge: "first_touch",
     approach: target.approach,
-    direction,
+    direction: target.direction,
     clear_runway: clearRunway,
     tap_granularity: "daily_scan",
     distance_to_edge_pct: Math.round(target.distPct * 100) / 100,

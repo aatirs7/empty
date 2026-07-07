@@ -136,7 +136,7 @@ function buildUserMessage(watchlist: WatchlistItem[]): string {
       const base = `${w.symbol}, ${w.notes?.trim() || "no extra context"}`;
       const z = w.zoneSetup;
       if (z && z.active_zone) {
-        return `${base}\n   ZONE SETUP: direction=${z.direction} approach=${z.approach} ${z.active_zone.type} zone [${z.active_zone.bottom}-${z.active_zone.top}] price=${z.price} distance_to_edge=${z.distance_to_edge_pct}% clear_runway=${z.clear_runway} setup_valid=${z.setup_valid} (${z.tap_granularity})`;
+        return `${base}\n   ZONE SETUP: direction=${z.direction} (approach ${z.approach}, ${z.trigger_edge} at edge ${z.tapped_edge}) zone [${z.active_zone.bottom}-${z.active_zone.top}] price=${z.price} distance_to_edge=${z.distance_to_edge_pct}% clear_runway=${z.clear_runway} setup_valid=${z.setup_valid} (${z.tap_granularity})`;
       }
       return base;
     })
