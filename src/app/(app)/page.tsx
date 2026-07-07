@@ -68,9 +68,15 @@ export default async function TodayPage() {
                 </p>
               )}
 
-              <div className="text-xs text-muted">
-                {confidenceLabel(p.confidence)} · <span className="num">{Math.round(Number(p.confidence) * 100)}%</span> sure
-              </div>
+              {p.variant === "news_plus_zones" ? (
+                <div className="text-xs text-muted">
+                  Setup score <span className="num">{Math.round(Number(p.confidence) * 100)}</span>/100
+                </div>
+              ) : (
+                <div className="text-xs text-muted">
+                  {confidenceLabel(p.confidence)} · <span className="num">{Math.round(Number(p.confidence) * 100)}%</span> sure
+                </div>
+              )}
 
               {isTrade && p.status === "pending" ? (
                 <div className="pt-1 space-y-2">
