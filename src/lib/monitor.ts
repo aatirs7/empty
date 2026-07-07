@@ -128,7 +128,9 @@ export async function monitorTick(): Promise<Fire[]> {
           strategy: direction === "call" ? "long_call" : "long_put",
           strikeHint: "ATM",
           expiryHint: "2-4 weeks",
-          confidence: "1",
+          // The setup's code-computed quality score (0-100) as a 0-1 value — NOT a
+          // probability. Shown on Today so it isn't a misleading flat "100% sure".
+          confidence: String(pb.score / 100),
           pricedInAssessment: "unclear",
           rationale: `${alert} ${pb.reason}`,
           plainExplanation: `${c.symbol} just tapped its zone live (${pb.playbook}), betting on a ${direction === "call" ? "bounce up off support" : "rejection down off resistance"} over the next 1-2 weeks.`,
