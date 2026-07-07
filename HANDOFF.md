@@ -1,6 +1,16 @@
 # Vega — Project Handoff
 
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-07_
+
+## Zone strategy + measurement (I-series, current focus)
+Vega now has a real, testable strategy on top of the news engine: **Farrukh's order-block "zone" strategy** (ported from a TradingView Pine indicator; see `STRATEGY.md`). Highest-weight signal, above news.
+- **zones.ts** — daily order-block detection (Wilder ATR-50, 1.7x displacement, first-touch, 30/side FIFO).
+- **strategy.ts** — `buildZoneSetup`: approach direction, rejection rule (fall into a zone => call, rise into a zone => put), white-space hard gate, daily-scan tap validity.
+- **scanner.ts** — nightly scan over a ~200-name `universe` -> `candidates` table for the next session.
+- Brain integration: valid zone setups feed the Brain as the driver (direction fixed by the setup, news is confirm/caution), proposals carry `variant`, code-computed `zoneSetup`, and a model `zoneRead`.
+- **broker.ts** — `BrokerAdapter`/`AlpacaBroker` (paper-only) is the single execution choke point; a future live adapter plugs in here. **No live path exists** (guardrail #1 holds).
+- **shadow.ts + scorecard.ts** — paper-month measurement: every real-trade proposal gets a mechanical shadow (enter ask, mark bid, exit +50%/-40%/expiry) + a daily SPY baseline; `/scorecard` + `npm run scorecard` compute the go/no-go metrics.
+- Live monitor (I6) + live enablement (I7) are **gated behind the paper month** and NOT built.
 
 > Paste this file (or point a chat at it) to bring anyone fully up to speed on Vega's architecture, features, guardrails, and current state. **Keep it updated on every architecture/feature change.**
 
@@ -24,6 +34,8 @@ Next.js 16 (App Router, Turbopack) + TypeScript + Tailwind v4. Neon Postgres + D
 - `orders` — placed paper orders (contractSymbol, qty, limitPrice, executionMode manual|auto, code-computed maxLoss/breakeven/scenarios).
 - `positions_snapshots` — periodic P&L snapshots.
 - `settings` — single row: autoExecute, autoMinConfidence, maxAutoTradesPerDay, autoManage, weeklyGoal, riskTolerance, perTradeBudget, maxContracts, maxContractPrice.
+- `proposals` also carry: `variant` (news_only | news_plus_zones), `zoneSetup` (jsonb, code-computed), `zoneRead` (model one-liner).
+- `universe` — scanner symbol list (~200). `candidates` — nightly scan output (zone, direction, clearRunway, distanceToEdgePct, setupValid, full setup jsonb). `shadow_outcomes` — mechanical shadow per proposal + SPY baseline (entry/mark/exit premiums, returnPct, win, exitReason).
 
 ## Key files
 - `src/lib/anthropic.ts` — the Brain (system prompt, web search, zod validation, cost logging). `MAX_WEB_SEARCHES` default 8 (keeps cost ~$0.8/run by avoiding pause_turn re-sends).
@@ -56,17 +68,21 @@ Next.js 16 (App Router, Turbopack) + TypeScript + Tailwind v4. Neon Postgres + D
 DATABASE_URL, ANTHROPIC_API_KEY, RESEARCH_MODEL=claude-sonnet-5, ALPACA_API_KEY_ID, ALPACA_API_SECRET_KEY, ALPACA_BASE_URL=https://paper-api.alpaca.markets, ALPACA_DATA_URL=https://data.alpaca.markets, APP_PASSWORD, AUTH_SECRET, TRADING_MODE=paper, MAX_CONTRACTS_PER_ORDER=20, MAX_OPEN_POSITIONS=3, MAX_WEB_SEARCHES=8. Never commit .env.
 
 ## Workflows (GitHub Actions)
-- operation-vega.yml — dual-cron (12:30/13:30 UTC) with an ET-window guard; runs the morning research (+ auto-buy/manage when enabled).
-- manage.yml — every 30 min during market hours; runs auto-manage (no-op unless enabled).
+- operation-vega.yml — pre-market news research (+ auto-buy/manage when enabled).
+- manage.yml — every 30 min market hours; auto-manage (no-op unless enabled).
+- scanner.yml — after close (22:00 UTC); nightly zone scan -> candidates.
+- vega-zones.yml — pre-market (13:15 UTC); researches the latest scan's valid zone setups.
+- shadow.yml — 3x/day market hours; shadow-outcome tracker for the scorecard.
 
 ## Scripts
-`npm run vega` (research), `npm run manage` (auto-manage), `npm run smoke` (Alpaca smoke), `npm run inspect` (DB), `npm run seed` (watchlist).
+`npm run`: vega (news), vega:zones (zone research), scan, seed:universe, zones-check, zone-demo, manage, shadow, scorecard, smoke, inspect, seed.
 
-## Current state (2026-07-06)
-- All 6 milestones complete + deployed to Vercel.
-- Alpaca: now running the **$500 paper account "vega" (PA34D7UCJ09S)** for realism. (Old $100k account PA36XU2UR1ZR no longer used.)
+## Current state (2026-07-07)
+- M1–M6 + I1–I5 complete and deployed. Running the **$500 paper account "vega" (PA34D7UCJ09S)**.
+- Zone strategy (I1–I3), broker abstraction (I4, paper-only), paper-month scorecard (I5) all built and verified end-to-end.
+- **Zone math NOT yet confirmed against Farrukh's TradingView** — verify zone bounds/density and retune displacement/ATR if off. Zones are sparse by design (1.7x displacement): few candidates/valid taps per day.
+- Next: run the frozen paper month (auto OFF, freeze config), read `/scorecard`, then decide on I6 (live monitor) / I7 (live enablement) — both gated behind the paper month and NOT built. Wipe pre-month `shadow_outcomes` test rows before the clean month.
 - Position sizing tuned for a small account: cheap OTM contracts (< maxContractPrice), buy multiple to fit perTradeBudget.
-- Open direction from owner + a friend (Farrukh): cheap $1-2 contracts (done), $500 account (done), and a future upgrade to read charts/levels/patterns rather than only news (NOT built yet — highest-leverage next step).
 
 ## Conventions
 Mobile-first, calm decision surface. Plain English for a layman; downside gets equal billing with upside. No em dashes in UI copy (stripDash sanitizes model text). All dollar figures code-computed.

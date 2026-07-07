@@ -90,6 +90,15 @@ Never commit `.env`. Keep secrets out of the repo.
 - [x] M5: Execute endpoint — VERIFIED. Shared `src/lib/execute.ts` (paper assert + caps inside). Manual approve filled a real paper order (TSLA, order #1, $11.25), risk math stored, executionMode=manual, proposal→filled. Live resolve/quote/risk (`/preview`), risk unit-checked, guardrails (not_paper, already_actioned) confirmed. Auto-execute built (settings-gated, off by default) — reuses executeProposal; test via M6 toggle. Routes: approve/reject/preview/positions/settings. `npm run check:m5`, `npm run execute -- <id>`.
 - [x] M6: Dashboard + PWA + auth — VERIFIED at runtime. Screens: Today, Positions (w/ close-position), Log, P&L (net = trade P&L − API cost), proposal explainer (honest downside, live dollars-at-risk from /preview for pending), Settings (auto toggle + params + "auto is ON" banner + kill switch). Single-password auth (proxy.ts + HMAC cookie via APP_PASSWORD/AUTH_SECRET). PWA: manifest.ts + sw.js + generated icons. Auth flow, all pages, positions/preview/close/settings APIs verified live. Auto-execute dry-run: AUTO_EXECUTE_DRY_RUN=1.
 
+### I-series: zone strategy + measurement + live-ready architecture (see STRATEGY.md, HANDOFF.md)
+- [x] I1: Zone detection core — `src/lib/zones.ts` ports the Pine order-block math (Wilder ATR-50, 1.7x displacement, first-touch, 30/side FIFO). `alpaca.ts` bars → OHLCV + `getMultiStockBars`. `npm run zones-check`. NOTE: zone math NOT yet confirmed vs Farrukh's TradingView — verify + retune displacement/ATR if off. Sparse by design.
+- [x] I2: Nightly scanner + candidates — `strategy.ts` (buildZoneSetup: approach/rejection/white-space/tap-validity), `scanner.ts` over a ~200-name `universe` → `candidates`. `npm run scan`/`seed:universe`, scanner.yml after-close cron.
+- [x] I3: Zone setups into the Brain — zone_setup fed as highest-weight (direction fixed by setup, news = color); proposals persist `variant`/`zoneSetup`/`zoneRead`. `runZoneResearch`, `npm run vega:zones`, vega-zones.yml. Verified via `npm run zone-demo -- BA --force`.
+- [x] I4: Broker abstraction (PAPER-ONLY) — `src/lib/broker.ts` `BrokerAdapter`/`AlpacaBroker`; `getBroker()` is the single execution choke point (asserts paper). execute/manage/positions/close routed through it. No live path; `TRADING_MODE=live` refuses.
+- [x] I5: Paper month — `shadow_outcomes` + `shadow.ts` (enter ask, mark bid, exit +50%/-40%/expiry) + SPY baseline; `scorecard.ts` + `/scorecard` + `npm run scorecard`; shadow.yml cron. The go/no-go gate.
+- [ ] I6: Live intraday monitor — GATED behind I5. Persistent worker, SIP feed, live tap detection, push. Not built.
+- [ ] I7: Live enablement — GATED behind I5 + explicit owner call. Adds live half of the broker + rails (TRADING_MODE=live, ALPACA_LIVE_*, dollar caps, confirmations, auto-off-on-switch, LIVE banner). Would flip guardrail #1 to "paper default, live gated." Not built.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.
