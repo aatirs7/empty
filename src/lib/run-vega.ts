@@ -32,10 +32,11 @@ export async function loadActiveWatchlist(): Promise<WatchlistItem[]> {
   return rows.map((r) => ({ symbol: r.symbol, notes: r.notes }));
 }
 
-// Frozen config: the Brain researches only the top-N valid setups by
-// distance-to-edge (closest first). Purely mechanical rank, no discretion. This
-// feeds the Today screen + auto-buy. The scorecard never reads this subset.
-export const DISPLAY_TOP_N = 5;
+// Real-test config: the Brain researches the top-N valid setups by distance-to-edge
+// (closest first). Purely mechanical rank, no discretion. This feeds the Today
+// screen + auto-buy; buying power ($500 paper) is the real limiter. The scorecard
+// never reads this subset.
+export const DISPLAY_TOP_N = 25;
 
 /**
  * Build a watchlist from the latest scan's VALID zone setups, ranked mechanically

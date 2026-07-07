@@ -26,9 +26,9 @@ async function main() {
     autoExecute: true, // auto-buy ON
     autoManage: true, // auto-manage ON (structural close-through exits)
     autoMinConfidence: 0, // driven by the zone setups, not a Brain confidence gate
-    maxAutoTradesPerDay: 2, // new auto-buys per day (open-position cap still 3)
-    maxContracts: 1, // 1-contract sizing
-    weeklyGoal: 0, // disable goal-based exits; zone exits are close-through
+    maxAutoTradesPerDay: 100, // caps removed for the paper real-test
+    maxContracts: 100, // caps removed; per-trade budget + buying power size it
+    weeklyGoal: 0, // goal-based exits off; zone exits are close-through
   });
 
   const start = new Date().toISOString().slice(0, 10);

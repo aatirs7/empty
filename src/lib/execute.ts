@@ -46,8 +46,11 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   assertPaper();
   const broker = getBroker();
 
-  const perOrderCap = Number(process.env.MAX_CONTRACTS_PER_ORDER ?? 20);
-  const openCap = Number(process.env.MAX_OPEN_POSITIONS ?? 3);
+  // Position/sizing caps deliberately relaxed for the PAPER real-test (owner's
+  // call). The only backstop left is real buying power (Alpaca rejects when the
+  // paper account runs out). The PAPER-ONLY guardrail (assertPaper) is untouched.
+  const perOrderCap = Number(process.env.MAX_CONTRACTS_PER_ORDER ?? 100000);
+  const openCap = Number(process.env.MAX_OPEN_POSITIONS ?? 100000);
   const settings = await getSettings();
   const perTradeBudget = Number(settings.perTradeBudget);
   const maxContracts = Math.max(1, Math.min(settings.maxContracts, perOrderCap));
