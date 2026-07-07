@@ -9,7 +9,7 @@ import { universe as universeTable, candidates as candidatesTable } from "../db/
 import { getMultiStockBars, type Bar } from "./alpaca";
 import { buildZoneSetup } from "./strategy";
 
-const BARS_LOOKBACK_DAYS = 450; // ~300 trading bars, enough for ATR(50) + a zone set
+const BARS_LOOKBACK_DAYS = 4000; // full available daily history (zones persist for all time)
 const CHUNK = 40; // symbols per multi-bar request (respect free-tier limits)
 
 export async function loadUniverse(): Promise<string[]> {

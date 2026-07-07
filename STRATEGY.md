@@ -1,51 +1,62 @@
 # Vega — Strategy Reference (STRATEGY.md)
 
-Persistent strategy context for Claude Code. Read alongside `CLAUDE.md` every session. This describes the zone-based trading strategy Vega implements. If code and this doc disagree, stop and flag it.
+FINAL LOCKED VERSION for the paper month. This consolidates every confirmed rule from the strategy owner (Farrukh) and supersedes all earlier scattered rule notes. Do not change any rule in this file during the paper month without deliberately un-freezing the config and restarting the measurement. If code and this doc disagree, stop and flag it.
 
-## The one-line version
+## One-line
 
-Find a stock approaching a daily order-block zone through open space, and buy the rejection off it: falling into a zone means calls (expect a bounce up), rising into a zone means puts (expect a rejection down).
+Compute daily order-block zones across a stock's full history. Every zone's top and bottom are permanent support/resistance levels. When price taps a zone edge, trade the bounce: coming down into an edge means calls, rising up into an edge means puts. Enter at whichever edge is touched first.
 
-## Where the strategy came from
+## Zone detection (confirmed correct, unchanged)
 
-Ported from a TradingView indicator ("HTF OB Tap Signals — Real-Time", Pine v6) plus the discretionary entry rules of the person who trades it (Farrukh). The indicator is a supply/demand order-block detector. Vega replicates its zone math in code (no TradingView, no chart-image reading) and adds the entry/exit rules below.
+Ported from the Pine indicator "HTF OB Tap Signals". Settings: daily timeframe, ATR(50) with Wilder/RMA smoothing (matches TradingView ta.atr), displacement 1.7x.
 
-## The zones (order blocks)
+- Compute per daily bar: upImpulse = C>O and |C-O| > 1.7*ATR50; downImpulse = C<O and |C-O| > 1.7*ATR50.
+- Zone forms when a displacement candle follows an opposite-color candle:
+  - Bullish displacement after a bearish candle: zone = prior bearish candle's [low, open].
+  - Bearish displacement after a bullish candle: zone = prior bullish candle's [open, high].
+- Detection math and levels are verified against the owner's TradingView (bounds within ~50 cents, which is the IEX vs full-exchange data-feed difference, harmless for the paper month).
+- Pull FULL available daily history per symbol (not a trailing window). Keep all zones for all time; mark tapped ones as used but never drop historical zones. Old untapped zones persist and remain tradeable.
 
-Computed in code from daily bars (`src/lib/zones.ts`). Settings to match his: daily timeframe, ATR length 50, displacement 1.7x.
+## Zones are just support/resistance (no demand/supply distinction)
 
-- Demand zone (bullish, "green"): a bearish daily candle immediately followed by a bullish candle whose body `abs(close - open)` exceeds `1.7 x ATR50`. Zone bounds = the prior bearish candle's low (bottom) to its open (top). Demand zones sit below price and act as support.
-- Supply zone (bearish, "red"): a bullish daily candle followed by a bearish displacement candle over the same threshold. Zone bounds = the prior bullish candle's open (bottom) to its high (top). Supply zones sit above price and act as resistance.
-- Keep up to 30 zones per side, FIFO. First-touch-only per zone.
+Do not label zones demand or supply. The top and bottom of every zone are both major support/resistance levels, full stop. Zone type does not drive anything. Direction is set entirely by which side price approaches the tapped edge from.
 
-## The trade (rejection / fade the approach)
+## Direction and trigger
 
-The zone is a barrier price is expected to bounce off. You trade the OPPOSITE of the approach:
+- Direction is a function of approach side at the moment of the tap:
+  - Price coming DOWN into a zone edge (approaching from above) => CALLS (expect a bounce up).
+  - Price rising UP into a zone edge (approaching from below) => PUTS (expect a rejection down).
+- Trigger: each session, fire at whichever zone edge (top or bottom) price touches FIRST. Do not pre-compute the approach. The first edge touched, plus which side price came from, fully determines the trade.
 
-- Price moving DOWN into a zone and tapping it => CALLS (expecting a bounce up off the zone).
-- Price moving UP into a zone and tapping it => PUTS (expecting a rejection down off the zone).
+## The flip (falls out of the approach-side rule)
 
-This normally coincides with demand zones (below) giving calls and supply zones (above) giving puts. The approach direction is the determinant.
+If a setup's expected rejection fails, meaning a daily candle closes THROUGH the zone instead of rejecting off it, the next session's trade flips to the opposite direction. This does not need special-case state: once price closes through, it is now on the other side of the zone, so the same approach-side rule automatically produces the flipped direction on the next tap.
 
-## Required filter: white space
+Owner's example, worked through the rule: price tapped up into a zone from below (puts), but the day closed ABOVE the zone rather than rejecting. Price is now above the zone. Next session, price coming back down taps the top edge from above, which by the approach-side rule is CALLS. The flip is automatic.
 
-Only take a setup when the stock approaches the zone through open space, meaning no opposing zones sit in the immediate path, so the tapped zone is the first real barrier price meets. This is a hard filter, not a preference. No clear runway, no trade.
+Implementation note: prefer the stateless approach (direction = which side price is on relative to the tapped edge) over tracking a normal/flipped flag. Both must produce identical trades; the stateless version is simpler and less error-prone. Still expose trigger_edge: 'first_touch' and the resolved direction in the setup for auditability.
+
+## White-space filter (hard gate)
+
+Only take a setup when price approaches the zone through open space, with no opposing zone sitting between recent price and the tapped zone in the direction of travel, so the tapped zone is the first real barrier price meets. No clear runway, no setup. This remains a hard gate as last confirmed.
 
 ## Entry and exit
 
-- Entry: the tap into the zone edge, in the direction set by the rejection rule above.
-- Exit (for later auto-manage, not built yet): ride the rejection wave; exit when a daily candle closes back through the zone against the position (the rejection failed). Structural exit, no fixed profit target.
+- Entry: the first zone edge touched that session, direction per the approach-side rule.
+- Exit (structural, for auto-manage later; not built for the paper month): close when a daily candle closes back THROUGH the zone against the position. No fixed profit target. Note this is the same event as the flip trigger: a close-through both exits the current position and sets up the opposite trade next session.
 
-## The critical architecture caveat
+## Daily-scan approximation
 
-The original indicator alerts LIVE the moment price taps a zone intraday. Vega scans ONCE pre-market off daily bars. These do not line up. Vega approximates the tap in daily terms: a setup is valid when the prior daily candle wicked into the zone, or when the current pre-market price sits inside the zone at scan time. This is a once-a-day approximation of a live intraday trigger, not the same thing. Whether the daily-granularity version is good enough is an open question the paper month is meant to answer. Do not silently pretend it is equivalent.
+Vega scans once pre-market off daily bars, not live intraday. A setup is valid when the prior daily candle wicked the zone or current pre-market price sits in the zone. The owner confirmed that entering "a couple cents before" the exact tap is acceptable, so this approximation is fine for the paper month. Tag every setup tap_granularity='daily_scan'. Live intraday tap detection is a later, gated phase (I6).
 
-## How it fits Vega
+## Universe
 
-- The zone engine is the highest-weight signal fed to the Brain, alongside news and computed indicators.
-- Proposals from this path are tagged `variant='news_plus_zones'` so the scorecard can compare them against news-only.
-- All guardrails still apply: paper only, human approves every trade by default, no auto-execute off this signal, and every number (zone bounds, distances, risk) is code-computed, never model-generated.
+Nightly scanner runs across ~200 high-cap US names. Must include HOOD, TSLA, NVDA, AMZN. Owner's floor was 50 to 100 high-cap names; 200 satisfies it.
 
-## Discipline note
+## Guardrails (unchanged)
 
-This is an unproven hypothesis until the paper scorecard says otherwise. A live winning trade in progress is not proof. The whole reason to port it into code and paper trade it is to learn whether the mechanical rules have an edge, or whether the edge lived in human judgment about which setups to skip. Prove it on paper before any real money.
+Paper only for the paper month; no live path. Human approves every trade by default; no auto-execute off zone setups. All numbers (zone bounds, edges, distances, ATR, risk) are code-computed, never model-generated. Zones are computed in zones.ts, never read from a chart image or TradingView.
+
+## Frozen for the paper month
+
+This rule set is complete and confirmed by the owner. For the paper month: freeze this config and the universe, keep auto-buy and auto-manage OFF, approvals ON, and log every proposal (taken or skipped) plus its shadow outcome. The scorecard measures whether the strategy beats the SPY baseline and whether it has any real edge. Any new rule that surfaces mid-month gets parked, not merged, until the month completes, because changing rules mid-measurement invalidates the data.

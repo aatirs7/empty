@@ -192,7 +192,7 @@ export async function getStockBars(symbol: string, days = 90): Promise<Bar[]> {
       start: start.toISOString().slice(0, 10),
       feed: "iex",
       limit: "10000",
-      adjustment: "raw",
+      adjustment: "split",
     });
     if (pageToken) q.set("page_token", pageToken);
     const resp = await data<{ bars?: RawBar[]; next_page_token?: string | null }>(
@@ -221,7 +221,7 @@ export async function getMultiStockBars(symbols: string[], days = 450): Promise<
       start: start.toISOString().slice(0, 10),
       feed: "iex",
       limit: "10000",
-      adjustment: "raw",
+      adjustment: "split",
     });
     if (pageToken) q.set("page_token", pageToken);
     const resp = await data<{ bars?: Record<string, RawBar[]>; next_page_token?: string | null }>(

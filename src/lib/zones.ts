@@ -20,7 +20,6 @@ export interface Zone {
 export interface ZoneOptions {
   atrLength: number;
   displacement: number;
-  maxPerSide: number;
   firstTouchOnly: boolean;
   useFVG: boolean;
 }
@@ -28,7 +27,6 @@ export interface ZoneOptions {
 export const DEFAULT_ZONE_OPTIONS: ZoneOptions = {
   atrLength: 50,
   displacement: 1.7,
-  maxPerSide: 30,
   firstTouchOnly: true,
   useFVG: false,
 };
@@ -75,7 +73,7 @@ const overlaps = (bar: Bar, z: Zone): boolean => bar.h >= z.bottom && bar.l <= z
  * may form a new zone off a displacement candle.
  */
 export function computeZones(bars: Bar[], opts: ZoneOptions = DEFAULT_ZONE_OPTIONS): ZoneResult {
-  const { atrLength, displacement, maxPerSide, firstTouchOnly } = opts;
+  const { atrLength, displacement, firstTouchOnly } = opts;
   if (bars.length < atrLength + 2) {
     throw new Error(`computeZones: need >= ${atrLength + 2} bars, got ${bars.length}`);
   }
@@ -101,13 +99,13 @@ export function computeZones(bars: Bar[], opts: ZoneOptions = DEFAULT_ZONE_OPTIO
     const priorBearish = prior.c < prior.o;
     const priorBullish = prior.c > prior.o;
 
+    // Keep ALL zones for all time (full history, no FIFO drop). Old untapped
+    // zones persist and remain tradeable; tapped ones are marked used above.
     if (upImpulse && priorBearish) {
       demand.push({ type: "demand", bottom: prior.l, top: prior.o, formedAt: cur.t, used: false });
-      if (demand.length > maxPerSide) demand.shift();
     }
     if (downImpulse && priorBullish) {
       supply.push({ type: "supply", bottom: prior.o, top: prior.h, formedAt: cur.t, used: false });
-      if (supply.length > maxPerSide) supply.shift();
     }
     // useFVG is off by default; no FVG gate.
   }

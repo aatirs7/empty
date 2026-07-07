@@ -22,7 +22,7 @@ function fmt(z: Zone, price: number): string {
 async function main() {
   for (const sym of SYMBOLS) {
     try {
-      const bars = await getStockBars(sym, 450);
+      const bars = await getStockBars(sym, 4000); // full available daily history
       const res = computeZones(bars);
       let price = res.lastBar.c;
       try {
@@ -40,7 +40,7 @@ async function main() {
       activeDemand.slice(0, 6).forEach((z) => console.log("    ", fmt(z, price)));
       console.log(`  ACTIVE supply (resistance, ${activeSupply.length}):`);
       activeSupply.slice(0, 6).forEach((z) => console.log("    ", fmt(z, price)));
-      const recent = [...res.zones].sort((a, b) => b.formedAt.localeCompare(a.formedAt)).slice(0, 8);
+      const recent = [...res.zones].sort((a, b) => b.formedAt.localeCompare(a.formedAt)).slice(0, 14);
       console.log(`  most recent zones (any status):`);
       recent.forEach((z) => console.log("    ", fmt(z, price)));
     } catch (e) {
