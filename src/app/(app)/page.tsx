@@ -36,8 +36,8 @@ export default async function TodayPage() {
         </details>
       )}
 
-      <Link href="/operation-vega" className="block text-center text-xs text-accent">
-        See Operation Vega&apos;s full research &rarr;
+      <Link href="/setups" className="block text-center text-xs text-accent">
+        See the latest scan &amp; setups &rarr;
       </Link>
 
       <div className="space-y-3">

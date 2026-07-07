@@ -1,9 +1,34 @@
 /**
  * Server-side read helpers for the dashboard pages (run in server components).
  */
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
-import { researchRuns, proposals, orders, type ResearchRun, type ProposalRow, type OrderRow } from "../db/schema";
+import {
+  researchRuns,
+  proposals,
+  orders,
+  candidates,
+  type ResearchRun,
+  type ProposalRow,
+  type OrderRow,
+  type CandidateRow,
+} from "../db/schema";
+
+/** The latest zone scan: its date + all candidates (valid setups first, by distance). */
+export async function getLatestScan(): Promise<{ runDate: string; candidates: CandidateRow[] } | null> {
+  const [latest] = await db
+    .select({ runDate: candidates.runDate })
+    .from(candidates)
+    .orderBy(desc(candidates.runDate))
+    .limit(1);
+  if (!latest) return null;
+  const rows = await db
+    .select()
+    .from(candidates)
+    .where(eq(candidates.runDate, latest.runDate))
+    .orderBy(asc(candidates.distanceToEdgePct));
+  return { runDate: latest.runDate, candidates: rows };
+}
 
 export async function getLatestRun(): Promise<{ run: ResearchRun; proposals: ProposalRow[] } | null> {
   const [run] = await db.select().from(researchRuns).orderBy(desc(researchRuns.id)).limit(1);

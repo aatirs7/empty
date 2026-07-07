@@ -25,6 +25,14 @@ function Icon({ name }: { name: string }) {
         <path d="M4 20V10M12 20V4M20 20v-7" />
       </svg>
     );
+  if (name === "setups")
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="3" />
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+      </svg>
+    );
   if (name === "log")
     return (
       <svg {...common}>
@@ -41,6 +49,7 @@ function Icon({ name }: { name: string }) {
 
 const tabs = [
   { href: "/", label: "Today", icon: "today" },
+  { href: "/setups", label: "Setups", icon: "setups" },
   { href: "/positions", label: "Positions", icon: "positions" },
   { href: "/log", label: "Log", icon: "log" },
   { href: "/pnl", label: "P&L", icon: "pnl" },
@@ -50,7 +59,7 @@ export default function BottomNav() {
   const path = usePathname();
   return (
     <nav className="fixed bottom-0 inset-x-0 z-10 border-t border-border bg-background/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
-      <div className="max-w-xl mx-auto grid grid-cols-4">
+      <div className="max-w-xl mx-auto grid grid-cols-5">
         {tabs.map((t) => {
           const active = t.href === "/" ? path === "/" : path.startsWith(t.href);
           return (

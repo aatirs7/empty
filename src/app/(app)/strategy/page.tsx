@@ -81,16 +81,6 @@ export default function StrategyPage() {
           can spread across several ideas.
         </p>
       </Card>
-
-      <div className="bg-panel border border-accent/30 rounded-2xl p-4">
-        <p className="text-sm font-semibold">The honest part</p>
-        <p className="text-sm text-muted leading-relaxed mt-1">
-          This is an <b>unproven idea being tested with fake money</b> on a $500 practice account. It might not work.
-          Every setup is also tracked mechanically and scored against a dumb benchmark, just buying the S&amp;P 500 every
-          day. If the strategy can&apos;t beat that lazy option, it has no real edge and isn&apos;t worth using. That&apos;s
-          the whole point of the test. None of this is financial advice.
-        </p>
-      </div>
     </div>
   );
 }
