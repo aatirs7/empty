@@ -82,7 +82,8 @@ DATABASE_URL, ANTHROPIC_API_KEY, RESEARCH_MODEL=claude-sonnet-5, ALPACA_API_KEY_
 - Zone strategy (I1–I3), broker abstraction (I4, paper-only), paper-month scorecard (I5) all built and verified end-to-end.
 - **Zone math NOT yet confirmed against Farrukh's TradingView** — verify zone bounds/density (NVDA ~17 zones full-history split-adjusted) and retune displacement/ATR if off.
 - With full history + stateless edge model, a scan yields ~120 candidates / ~40 valid setups/day. OPEN DECISION before arming: 40 setups/day is a lot to research via the Brain (cost) — decide whether vega-zones researches all, caps to top-N, or shadows-only measure. Shadow tracker handles all 40 fine.
-- Next: run the frozen paper month (auto OFF, freeze config), read `/scorecard`, then decide on I6 (live monitor) / I7 (live enablement) — both gated behind the paper month and NOT built. Wipe pre-month `shadow_outcomes` test rows before the clean month.
+- **PAPER MONTH ARMED (config frozen 2026-07-07).** AUTO-TRADING the $500 paper account off zone setups: auto-buy top-5 valid setups by distance (up to 2/day), 1 contract, cheap OTM ≤$2.50, max 3 open; auto-manage exits ZONE positions on a daily close-through (structural) + near-expiry. Shadow tracker runs on ALL valid setups; `/scorecard` reads shadows-vs-SPY ONLY. DO NOT change config/universe/rules mid-month (invalidates the measurement) — see memory `vega-paper-month-armed`.
+- After the month: read `/scorecard`, then decide on I6 (live monitor) / I7 (live enablement) — both gated + NOT built.
 - Position sizing tuned for a small account: cheap OTM contracts (< maxContractPrice), buy multiple to fit perTradeBudget.
 
 ## Conventions
