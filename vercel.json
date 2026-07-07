@@ -2,5 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "installCommand": "npm install --no-audit --no-fund",
-  "crons": [{ "path": "/api/monitor", "schedule": "* * * * *" }]
+  "crons": [
+    { "path": "/api/monitor", "schedule": "* * * * *" },
+    { "path": "/api/scan", "schedule": "0 22 * * 1-5" }
+  ]
 }

@@ -1,5 +1,4 @@
 import Link from "next/link";
-import AutoBanner from "@/components/AutoBanner";
 import BottomNav from "@/components/BottomNav";
 import HeaderThemeToggle from "@/components/HeaderThemeToggle";
 
@@ -26,7 +25,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </Link>
         </div>
       </header>
-      <AutoBanner />
       <main className="flex-1 w-full max-w-xl mx-auto px-4 py-4">{children}</main>
       <BottomNav />
     </div>
