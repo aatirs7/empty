@@ -38,11 +38,11 @@ export default async function ScorecardPage() {
 
   return (
     <div className="space-y-4">
-      <PageTitle title="Scorecard" subtitle="paper-month go / no-go" />
+      <PageTitle title="Scorecard" subtitle="paper-month go / no-go (shadow-only)" />
 
-      {s.overall.n === 0 ? (
+      {s.strategy.n === 0 ? (
         <p className="text-sm text-muted text-center py-8">
-          No closed shadow trades yet. Metrics appear as shadow outcomes accumulate through the month.
+          No closed zone-setup shadows yet. Metrics appear as shadow outcomes accumulate through the month.
         </p>
       ) : (
         <>
@@ -50,7 +50,7 @@ export default async function ScorecardPage() {
             <p className="text-xs text-muted">Net after API cost</p>
             <p className={`text-3xl font-bold num mt-1 ${netTone}`}>{usd(s.netAfterCost)}</p>
             <p className="text-xs text-muted mt-1 num">
-              {usd(s.overall.netPnl)} shadows − ${s.apiCost.toFixed(2)} API
+              {usd(s.strategy.netPnl)} strategy − ${s.apiCost.toFixed(2)} API
             </p>
             <p className="text-sm mt-2">
               Beats dumb baseline:{" "}
@@ -60,30 +60,18 @@ export default async function ScorecardPage() {
             </p>
           </div>
 
-          <Card title="Overall" hint={`${s.overall.n} closed · win ${Math.round(s.overall.winRate * 100)}%`}>
+          <Card title="Strategy" hint={`${s.strategy.n} closed zone setups · win ${Math.round(s.strategy.winRate * 100)}%`}>
             <div className="flex justify-between text-sm">
               <span className="text-muted">avg winner</span>
-              <span className="num text-up">{pct(s.overall.avgWinnerPct)}</span>
+              <span className="num text-up">{pct(s.strategy.avgWinnerPct)}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted">avg loser</span>
-              <span className="num text-down">{pct(s.overall.avgLoserPct)}</span>
+              <span className="num text-down">{pct(s.strategy.avgLoserPct)}</span>
             </div>
           </Card>
 
-          <Card title="Priced-in read" hint="does 'underdone' beat 'priced in'?">
-            {s.pricedIn.map((b) => (
-              <BucketRow key={b.label} b={b} />
-            ))}
-          </Card>
-
-          <Card title="Confidence calibration" hint="higher confidence should win more">
-            {s.confidence.map((b) => (
-              <BucketRow key={b.label} b={b} />
-            ))}
-          </Card>
-
-          <Card title="By strategy variant">
+          <Card title="By variant">
             {s.variants.map((b) => (
               <BucketRow key={b.label} b={b} />
             ))}
@@ -96,9 +84,9 @@ export default async function ScorecardPage() {
       )}
 
       <p className="text-[11px] text-muted text-center">
-        {s.counts.totalProposals} proposals ({s.counts.realTrades} real, {s.counts.noTrades} no-trade) ·{" "}
-        {s.counts.openShadows} shadows still open. Shadows enter at the ask, exit at the bid on +50% / −40% / expiry.
-        Not financial advice.
+        Shadow-only measurement: every valid zone setup is shadowed mechanically (enter at the ask, exit at the bid on
+        +50% / −40% / expiry) and compared to a daily SPY baseline. This never reads the auto-bought or Brain-researched
+        trades. {s.counts.setupsShadowed} setups shadowed, {s.counts.openShadows} still open. Not financial advice.
       </p>
     </div>
   );

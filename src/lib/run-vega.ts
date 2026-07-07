@@ -7,7 +7,7 @@
  * is true; when on it places paper orders for high-confidence real-trade proposals,
  * bounded by its own caps + the shared execute guardrails.
  */
-import { and, count, desc, eq, gte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte } from "drizzle-orm";
 import { db } from "../db";
 import {
   watchlist as watchlistTable,
@@ -32,9 +32,15 @@ export async function loadActiveWatchlist(): Promise<WatchlistItem[]> {
   return rows.map((r) => ({ symbol: r.symbol, notes: r.notes }));
 }
 
+// Frozen config: the Brain researches only the top-N valid setups by
+// distance-to-edge (closest first). Purely mechanical rank, no discretion. This
+// feeds the Today screen + auto-buy. The scorecard never reads this subset.
+export const DISPLAY_TOP_N = 5;
+
 /**
- * Build a watchlist from the latest scan's VALID zone setups (the daily-scan
- * taps). Returns [] when the most recent scan produced no valid setups.
+ * Build a watchlist from the latest scan's VALID zone setups, ranked mechanically
+ * by distance-to-edge (closest first), capped to DISPLAY_TOP_N. Returns [] when
+ * the most recent scan produced no valid setups.
  */
 export async function loadZoneWatchlist(): Promise<WatchlistItem[]> {
   const [latest] = await db
@@ -46,7 +52,9 @@ export async function loadZoneWatchlist(): Promise<WatchlistItem[]> {
   const rows = await db
     .select()
     .from(candidatesTable)
-    .where(and(eq(candidatesTable.runDate, latest.runDate), eq(candidatesTable.setupValid, true)));
+    .where(and(eq(candidatesTable.runDate, latest.runDate), eq(candidatesTable.setupValid, true)))
+    .orderBy(asc(candidatesTable.distanceToEdgePct))
+    .limit(DISPLAY_TOP_N);
   return rows.map((r) => {
     const z = r.zone as { bottom: number; top: number } | null;
     return {

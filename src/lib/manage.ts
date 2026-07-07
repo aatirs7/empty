@@ -1,24 +1,29 @@
 /**
- * Goal-driven auto-management of open positions. PAPER-ONLY.
+ * Auto-management of open positions. PAPER-ONLY.
  *
- * When enabled, closes positions based on the user's risk tolerance and weekly
- * profit goal:
- *   - lock in gains once the weekly goal is reached
- *   - take profit / cut losses at tolerance thresholds
- *   - close positions about to expire
- * It never opens trades (that's auto-execute) and only ever closes — the worst
- * it can do on paper is exit a position.
+ * Two exit regimes:
+ *  - ZONE positions (opened off a zone setup): STRUCTURAL exit per STRATEGY.md —
+ *    close when a daily candle closes back THROUGH the zone against the position
+ *    (the rejection failed). No fixed profit target. Plus a near-expiry safety.
+ *  - Non-zone positions: the goal / take-profit / stop-loss / near-expiry rules.
+ *
+ * It never opens trades (that's auto-execute) and only ever closes.
  */
+import { and, desc, eq } from "drizzle-orm";
+import { db } from "../db";
+import { orders, proposals } from "../db/schema";
 import { getBroker } from "./broker";
+import { getStockBars } from "./alpaca";
 import { getSettings } from "./settings";
-import { optionExpiryFromOcc } from "./format";
+import { optionExpiryFromOcc, parseOcc } from "./format";
+import type { ZoneSetup } from "./strategy";
 
 export type RiskTolerance = "conservative" | "balanced" | "aggressive";
 
 interface Thresholds {
-  takeProfit: number; // e.g. 0.5 = +50%
-  stopLoss: number; // e.g. -0.4 = -40%
-  closeDays: number; // close when this many days (or fewer) to expiry
+  takeProfit: number;
+  stopLoss: number;
+  closeDays: number;
 }
 
 export const THRESHOLDS: Record<RiskTolerance, Thresholds> = {
@@ -37,6 +42,33 @@ export interface ManageSummary {
   weeklyPL?: number;
   goal?: number;
   actions: ManageAction[];
+}
+
+/** The zone a position was opened from (latest order -> proposal.zoneSetup), or null. */
+async function zoneOfPosition(occSymbol: string): Promise<{ bottom: number; top: number; direction: "call" | "put" } | null> {
+  const [ord] = await db
+    .select()
+    .from(orders)
+    .where(eq(orders.contractSymbol, occSymbol))
+    .orderBy(desc(orders.id))
+    .limit(1);
+  if (!ord?.proposalId) return null;
+  const [prop] = await db.select().from(proposals).where(eq(proposals.id, ord.proposalId)).limit(1);
+  const zs = prop?.zoneSetup as ZoneSetup | null;
+  if (!zs?.active_zone || (zs.direction !== "call" && zs.direction !== "put")) return null;
+  return { bottom: zs.active_zone.bottom, top: zs.active_zone.top, direction: zs.direction };
+}
+
+/** Most recent COMPLETED daily close of the underlying (excludes today's forming bar). */
+async function lastCompletedClose(underlying: string): Promise<number | null> {
+  try {
+    const bars = await getStockBars(underlying, 10);
+    const today = new Date().toISOString().slice(0, 10);
+    const completed = bars.filter((b) => b.t.slice(0, 10) < today);
+    return completed.length ? completed[completed.length - 1].c : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function autoManagePositions(): Promise<ManageSummary> {
@@ -61,10 +93,25 @@ export async function autoManagePositions(): Promise<ManageSummary> {
     const days = expiry ? Math.ceil((Date.parse(`${expiry}T00:00:00Z`) - Date.now()) / 86_400_000) : Infinity;
 
     let reason = "";
-    if (goalMet && plPc > 0) reason = "weekly goal reached, locking in the gain";
-    else if (plPc >= tol.takeProfit) reason = `hit take-profit (+${Math.round(plPc * 100)}%)`;
-    else if (plPc <= tol.stopLoss) reason = `hit stop-loss (${Math.round(plPc * 100)}%)`;
-    else if (days <= tol.closeDays) reason = "about to expire";
+    const zone = await zoneOfPosition(p.symbol);
+    if (zone) {
+      // Structural exit: a daily close back through the zone against the position.
+      const occ = parseOcc(p.symbol);
+      const lastClose = occ ? await lastCompletedClose(occ.underlying) : null;
+      if (lastClose != null && zone.direction === "call" && lastClose < zone.bottom) {
+        reason = `closed through the zone (${lastClose} < ${zone.bottom}); rejection failed`;
+      } else if (lastClose != null && zone.direction === "put" && lastClose > zone.top) {
+        reason = `closed through the zone (${lastClose} > ${zone.top}); rejection failed`;
+      } else if (days <= 1) {
+        reason = "about to expire";
+      }
+    } else {
+      // Non-zone position: goal / take-profit / stop-loss / near-expiry.
+      if (goalMet && plPc > 0) reason = "weekly goal reached, locking in the gain";
+      else if (plPc >= tol.takeProfit) reason = `hit take-profit (+${Math.round(plPc * 100)}%)`;
+      else if (plPc <= tol.stopLoss) reason = `hit stop-loss (${Math.round(plPc * 100)}%)`;
+      else if (days <= tol.closeDays) reason = "about to expire";
+    }
 
     if (reason) {
       try {

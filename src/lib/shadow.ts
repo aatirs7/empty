@@ -1,24 +1,24 @@
 /**
  * Shadow outcomes: the measurement backbone for the paper month.
  *
- * For EVERY real-trade proposal (approved or skipped) we record a mechanical
- * shadow trade: enter at the next open at the resolved contract's ask, mark to
- * the bid, and exit on a single fixed rule (TP +50% / SL -40% / expiry). We also
- * open a daily SPY ATM-call baseline. This measures what Vega proposed, not which
- * ideas the owner happened to like. PAPER/analysis only — no orders placed.
+ * SHADOW-ONLY MODE (frozen config): the experiment is the raw zone strategy. For
+ * EVERY valid zone setup from the latest scan we record a mechanical shadow trade
+ * (enter at the next open at the resolved contract's ask, mark to the bid, exit on
+ * TP +50% / SL -40% / expiry) plus a daily SPY ATM-call baseline. These shadows,
+ * and ONLY these, feed the scorecard. The Brain-researched top-N (Today screen) is
+ * display-only and is never shadowed or scored. PAPER/analysis only.
  *
  * GUARDRAIL: all prices come from the live Alpaca chain (code), never the model.
  */
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { proposals, shadowOutcomes } from "../db/schema";
+import { candidates, shadowOutcomes } from "../db/schema";
 import { resolveContract } from "./resolve";
 import { getOptionQuotes, getUnderlyingPrice, midPrice, type OptionQuote } from "./alpaca";
 import { getSettings } from "./settings";
 
 export const TAKE_PROFIT = 0.5; // +50%
 export const STOP_LOSS = -0.4; // -40%
-const MAX_AGE_HOURS = Number(process.env.SHADOW_MAX_AGE_HOURS ?? 36); // only shadow recent proposals
 
 /** Sellable price: bid preferred, else mid. */
 function sellable(q: OptionQuote | undefined): number | null {
@@ -27,36 +27,43 @@ function sellable(q: OptionQuote | undefined): number | null {
   return midPrice(q);
 }
 
-/** Open a shadow for each recent real-trade proposal that doesn't have one yet. */
-async function openProposalShadows(): Promise<number> {
-  const cutoff = new Date(Date.now() - MAX_AGE_HOURS * 3600_000);
-  const rows = await db
+/** Open a shadow for each VALID setup in the latest scan that doesn't have one yet. */
+async function openSetupShadows(): Promise<number> {
+  const [latest] = await db
+    .select({ runDate: candidates.runDate })
+    .from(candidates)
+    .orderBy(desc(candidates.runDate))
+    .limit(1);
+  if (!latest) return 0;
+
+  const setups = await db
     .select()
-    .from(proposals)
-    .where(and(sql`${proposals.strategy} <> 'no_trade'`, gte(proposals.createdAt, cutoff)));
+    .from(candidates)
+    .where(and(eq(candidates.runDate, latest.runDate), eq(candidates.setupValid, true)));
+
   const settings = await getSettings();
   const maxPrice = Number(settings.maxContractPrice);
   let opened = 0;
-  for (const p of rows) {
-    if (p.direction !== "call" && p.direction !== "put") continue;
-    const [existing] = await db.select().from(shadowOutcomes).where(eq(shadowOutcomes.proposalId, p.id)).limit(1);
+  for (const c of setups) {
+    if (c.direction !== "call" && c.direction !== "put") continue;
+    const [existing] = await db.select().from(shadowOutcomes).where(eq(shadowOutcomes.candidateId, c.id)).limit(1);
     if (existing) continue;
     try {
       const r = await resolveContract({
-        symbol: p.symbol,
-        direction: p.direction,
-        strikeHint: p.strikeHint ?? "ATM",
-        expiryHint: p.expiryHint ?? "nearest weekly",
+        symbol: c.symbol,
+        direction: c.direction,
+        strikeHint: "ATM",
+        expiryHint: "2-4 weeks",
         maxPrice: maxPrice > 0 ? maxPrice : undefined,
       });
       if (r.ask == null || r.ask <= 0) continue; // unpriced now; retry next run
       const now = new Date();
       await db.insert(shadowOutcomes).values({
-        proposalId: p.id,
-        kind: "proposal",
-        symbol: p.symbol,
-        variant: p.variant,
-        direction: p.direction,
+        candidateId: c.id,
+        kind: "setup",
+        symbol: c.symbol,
+        variant: "zones",
+        direction: c.direction,
         contractSymbol: r.symbol,
         strike: String(r.strike),
         expiry: r.expiry,
@@ -182,15 +189,15 @@ async function markShadows(): Promise<{ marked: number; closed: number }> {
 }
 
 export interface ShadowRun {
-  openedProposals: number;
+  openedSetups: number;
   openedBaseline: boolean;
   marked: number;
   closed: number;
 }
 
 export async function runShadow(): Promise<ShadowRun> {
-  const openedProposals = await openProposalShadows();
+  const openedSetups = await openSetupShadows();
   const openedBaseline = await openBaseline();
   const { marked, closed } = await markShadows();
-  return { openedProposals, openedBaseline, marked, closed };
+  return { openedSetups, openedBaseline, marked, closed };
 }

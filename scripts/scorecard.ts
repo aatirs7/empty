@@ -1,5 +1,5 @@
 /**
- * Print the paper-month scorecard to the terminal.
+ * Print the paper-month scorecard (shadow-only: zone setups vs SPY baseline).
  *
  * Run: npm run scorecard
  */
@@ -13,27 +13,21 @@ const line = (b: Bucket) =>
 
 async function main() {
   const s = await computeScorecard();
-  console.log("\n=== VEGA PAPER-MONTH SCORECARD ===\n");
-  console.log(`Proposals: ${s.counts.totalProposals} total, ${s.counts.realTrades} real, ${s.counts.noTrades} no_trade | open shadows: ${s.counts.openShadows}`);
+  console.log("\n=== VEGA PAPER-MONTH SCORECARD (shadow-only) ===\n");
+  console.log(`Zone setups shadowed: ${s.counts.setupsShadowed} (closed ${s.counts.closedShadows}, open ${s.counts.openShadows})`);
 
-  console.log("\n1) Overall (closed shadows)");
-  console.log(line(s.overall));
-  console.log(`  avg winner ${pct(s.overall.avgWinnerPct)} | avg loser ${pct(s.overall.avgLoserPct)}`);
+  console.log("\n1) Strategy (closed zone-setup shadows)");
+  console.log(line(s.strategy));
+  console.log(`  avg winner ${pct(s.strategy.avgWinnerPct)} | avg loser ${pct(s.strategy.avgLoserPct)}`);
 
-  console.log("\n2) Priced-in read (does 'underdone' beat 'priced_in'?)");
-  s.pricedIn.forEach((b) => console.log(line(b)));
-
-  console.log("\n3) Confidence calibration (higher should win more)");
-  s.confidence.forEach((b) => console.log(line(b)));
-
-  console.log("\n4) By variant");
+  console.log("\n2) By variant");
   s.variants.forEach((b) => console.log(line(b)));
 
-  console.log("\n5) Baseline (SPY ATM call)");
+  console.log("\n3) Baseline (SPY ATM call)");
   console.log(line(s.baseline));
 
-  console.log("\n6) Bottom line");
-  console.log(`  net P&L (shadows): ${usd(s.overall.netPnl)}   API cost: -$${s.apiCost.toFixed(2)}   NET AFTER COST: ${usd(s.netAfterCost)}`);
+  console.log("\n4) Bottom line");
+  console.log(`  strategy net: ${usd(s.strategy.netPnl)}   API cost: -$${s.apiCost.toFixed(2)}   NET AFTER COST: ${usd(s.netAfterCost)}`);
   console.log(`  beats dumb baseline: ${s.beatsBaseline == null ? "n/a (need data)" : s.beatsBaseline ? "YES" : "NO"}`);
   console.log("");
 }

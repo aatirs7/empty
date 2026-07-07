@@ -134,8 +134,9 @@ export const candidates = pgTable("candidates", {
 // what Vega PROPOSED, independent of which trades the owner approved.
 export const shadowOutcomes = pgTable("shadow_outcomes", {
   id: serial("id").primaryKey(),
-  proposalId: integer("proposal_id").references(() => proposals.id), // null for baseline
-  kind: text("kind").notNull().default("proposal"), // proposal | baseline
+  candidateId: integer("candidate_id").references(() => candidates.id), // the valid setup shadowed
+  proposalId: integer("proposal_id").references(() => proposals.id), // legacy; unused in shadow-only mode
+  kind: text("kind").notNull().default("setup"), // setup | baseline
   symbol: text("symbol").notNull(),
   variant: text("variant"), // copied from the proposal for grouping
   direction: text("direction"), // call | put

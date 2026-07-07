@@ -11,7 +11,7 @@ import { runShadow } from "../src/lib/shadow";
 async function main() {
   const r = await runShadow();
   console.log(
-    `shadow: opened ${r.openedProposals} proposal(s)${r.openedBaseline ? " + baseline" : ""}, marked ${r.marked}, closed ${r.closed}`,
+    `shadow: opened ${r.openedSetups} setup(s)${r.openedBaseline ? " + baseline" : ""}, marked ${r.marked}, closed ${r.closed}`,
   );
 }
 
