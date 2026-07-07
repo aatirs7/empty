@@ -112,10 +112,16 @@ export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRA
   const target = tappedCands[0] ?? nearCands[0];
   if (!target) return empty;
 
-  // White space (hard gate): no OTHER zone between recent price and the tapped edge.
-  const lo = Math.min(recentPrice, target.edge);
-  const hi = Math.max(recentPrice, target.edge);
-  const blocking = zones.some((z) => z !== target.zone && z.top >= lo && z.bottom <= hi);
+  // White space (hard gate) — SniperBot continuation-side: require clear room in
+  // the TRADE's direction. For a call (bounce up off support) there must be no
+  // nearby zone directly ABOVE; for a put (rejection down off resistance) no
+  // nearby zone directly BELOW. "Nearby" = within RUNWAY_PCT of price.
+  const RUNWAY_PCT = 4;
+  const band = price * (RUNWAY_PCT / 100);
+  const blocking =
+    target.direction === "call"
+      ? zones.some((z) => z !== target.zone && z.bottom > target.zone.top && z.bottom <= target.zone.top + band)
+      : zones.some((z) => z !== target.zone && z.top < target.zone.bottom && z.top >= target.zone.bottom - band);
   const clearRunway = !blocking;
 
   const setupValid = target.tapped && clearRunway;
