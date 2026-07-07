@@ -15,10 +15,16 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { candidates, monitorState, proposals, researchRuns } from "../db/schema";
-import { getLatestPrices, getStockBars } from "./alpaca";
+import { getLatestPrices, getStockBars, getOptionQuotes, midPrice } from "./alpaca";
+import { getBroker } from "./broker";
 import { getSettings } from "./settings";
 import { executeProposal } from "./execute";
 import { classifyAndScore, PLAYBOOK_MIN_SCORE } from "./playbook";
+import { parseOcc } from "./format";
+
+// Bank a winner when the option is up this much (env-tunable). Farrukh wants the
+// cheap contracts pushed to big % gains; this locks them in before they revert.
+const TAKE_PROFIT_PCT = Number(process.env.MONITOR_TAKE_PROFIT_PCT ?? 1.0); // +100%
 
 export interface Fire {
   symbol: string;
@@ -48,6 +54,39 @@ async function ensureMonitorRun(): Promise<number> {
 function tapCrossing(direction: "call" | "put", prev: number, cur: number, bottom: number, top: number): boolean {
   if (direction === "put") return prev < bottom && cur >= bottom; // rose into resistance from below
   return prev > top && cur <= top; // call: pulled into support from above
+}
+
+/** Intraday take-profit: sell any open position up >= TAKE_PROFIT_PCT (at the bid). */
+async function checkTakeProfit(): Promise<Fire[]> {
+  const broker = getBroker();
+  const positions = await broker.listPositions();
+  if (positions.length === 0) return [];
+  const quotes = await getOptionQuotes(positions.map((p) => p.symbol));
+  const out: Fire[] = [];
+  for (const p of positions) {
+    const entry = Number(p.avg_entry_price);
+    const q = quotes[p.symbol];
+    const bid = q?.bp && q.bp > 0 ? q.bp : midPrice(q);
+    if (!entry || entry <= 0 || bid == null) continue;
+    const ret = (bid - entry) / entry;
+    if (ret >= TAKE_PROFIT_PCT) {
+      const occ = parseOcc(p.symbol);
+      try {
+        await broker.closePosition(p.symbol);
+        out.push({
+          symbol: occ?.underlying ?? p.symbol,
+          direction: occ?.type ?? "call",
+          candidateId: 0,
+          price: bid,
+          placed: true,
+          detail: `SOLD take-profit +${Math.round(ret * 100)}%`,
+        });
+      } catch {
+        // ignore a single failed close; try again next tick
+      }
+    }
+  }
+  return out;
 }
 
 export async function monitorTick(): Promise<Fire[]> {
@@ -155,6 +194,15 @@ export async function monitorTick(): Promise<Fire[]> {
       }
     } catch {
       fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "proposal insert failed" });
+    }
+  }
+
+  // Intraday exits (take-profit). Close-through exits run in the overnight scan job.
+  if (settings.autoManage) {
+    try {
+      fires.push(...(await checkTakeProfit()));
+    } catch {
+      // best-effort
     }
   }
 
