@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getRunsLog, getCostTotals } from "@/lib/queries";
-import { usd, labelStrategy, stripDash } from "@/lib/format";
+import { usd, labelStrategy, stripDash, etTime } from "@/lib/format";
 import { Empty, PageTitle } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export default async function LogPage() {
             <details key={run.id} className="bg-panel border border-border rounded-2xl px-4 py-3">
               <summary className="flex items-center justify-between cursor-pointer list-none">
                 <span className="text-sm num">
-                  Run #{run.id} · {run.runDate}{" "}
+                  Run #{run.id} · {run.runDate} · {etTime(run.createdAt)}{" "}
                   <span className={run.status === "complete" ? "text-muted" : "text-down"}>({run.status})</span>
                 </span>
                 <span className="text-xs text-muted num">{usd(Number(run.costEstimate), 4)}</span>
