@@ -19,6 +19,7 @@
     "shadow": "tsx scripts/shadow.ts",
     "scorecard": "tsx scripts/scorecard.ts",
     "arm": "tsx scripts/arm-paper-month.ts",
+    "monitor": "tsx scripts/monitor.ts",
     "seed": "tsx scripts/seed-watchlist.ts",
     "inspect": "tsx scripts/inspect-db.ts",
     "check:m5": "tsx scripts/check-m5.ts",

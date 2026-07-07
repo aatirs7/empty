@@ -52,6 +52,7 @@ export const proposals = pgTable("proposals", {
   variant: text("variant").notNull().default("news_only"), // news_only | news_plus_zones | ...
   zoneSetup: jsonb("zone_setup"), // full code-computed ZoneSetup, when zone-driven
   zoneRead: text("zone_read"), // model's one-sentence read of the zone (qualitative)
+  candidateId: integer("candidate_id"), // the scan candidate this fired from (monitor dedup)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

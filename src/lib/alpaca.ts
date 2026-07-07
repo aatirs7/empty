@@ -327,6 +327,39 @@ export async function getUnderlyingPrice(symbol: string): Promise<number> {
   return resp.trade.p;
 }
 
+/**
+ * Latest prices for MANY symbols in one batched snapshot (for the live monitor).
+ * Feed is configurable via DATA_FEED (iex|sip); defaults to the free IEX feed.
+ * Returns a map symbol -> price (latest trade, falling back to the quote mid).
+ */
+export async function getLatestPrices(symbols: string[]): Promise<Record<string, number>> {
+  if (symbols.length === 0) return {};
+  const feed = process.env.DATA_FEED ?? "iex";
+  const out: Record<string, number> = {};
+  // Batch in chunks to keep URLs sane.
+  for (let i = 0; i < symbols.length; i += 100) {
+    const chunk = symbols.slice(i, i + 100);
+    const q = new URLSearchParams({ symbols: chunk.join(","), feed });
+    // The multi-symbol snapshots response is keyed directly by symbol.
+    const resp = await data<
+      Record<string, { latestTrade?: { p: number }; latestQuote?: { ap: number; bp: number } }>
+    >(`/v2/stocks/snapshots?${q.toString()}`);
+    for (const [sym, snap] of Object.entries(resp)) {
+      const trade = snap?.latestTrade?.p;
+      const quote = snap?.latestQuote;
+      const mid = quote && quote.ap > 0 && quote.bp > 0 ? (quote.ap + quote.bp) / 2 : undefined;
+      const price = trade && trade > 0 ? trade : mid;
+      if (price) out[sym] = price;
+    }
+  }
+  return out;
+}
+
+/** US market clock (is_open + next open/close). */
+export async function getClock(): Promise<{ is_open: boolean; next_open: string; next_close: string }> {
+  return trading<{ is_open: boolean; next_open: string; next_close: string }>("/v2/clock");
+}
+
 /** Latest option quotes for one or more OCC symbols. Uses the indicative feed (free tier). */
 export async function getOptionQuotes(occSymbols: string[]): Promise<Record<string, OptionQuote>> {
   if (occSymbols.length === 0) return {};

@@ -80,7 +80,10 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     maxPrice: maxContractPrice > 0 ? maxContractPrice : undefined,
   });
   if (resolved.price == null || resolved.price <= 0) {
-    throw new ExecuteError(`No usable quote for ${resolved.symbol} (market closed or unpriced).`, "no_quote");
+    throw new ExecuteError(
+      `No affordable + liquid contract for ${proposal.symbol} within the price cap (or market closed).`,
+      "no_quote",
+    );
   }
 
   // Live-price sanity check for zone trades: the daily scan is stale, so before

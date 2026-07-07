@@ -240,12 +240,12 @@ export async function runAndPersist(opts: RunOptions = {}): Promise<PersistedRun
         });
     }
 
-    // Auto-buy is ZONE-ONLY during the paper month: only the zone run trades.
-    // Any other run (e.g. the news watchlist) persists proposals but never buys.
-    const auto =
-      variant === "news_plus_zones"
-        ? await maybeAutoExecute(inserted)
-        : { enabled: false as const, placed: [] };
+    // Trading is handled LIVE by the intraday monitor (I6), which fires on real
+    // zone taps. Research runs are DISPLAY-ONLY now (they populate proposals for
+    // the Today screen but never place orders), so we don't double-trade off a
+    // stale pre-market snapshot. `inserted` is unused here by design.
+    void inserted;
+    const auto = { enabled: false as const, placed: [] };
     let manage: ManageSummary = { enabled: false, actions: [] };
     try {
       manage = await autoManagePositions();
