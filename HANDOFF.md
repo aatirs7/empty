@@ -5,7 +5,7 @@ _Last updated: 2026-07-07_
 ## Zone strategy + measurement (I-series, current focus)
 Vega now has a real, testable strategy on top of the news engine: **Farrukh's order-block "zone" strategy** (ported from a TradingView Pine indicator; see `STRATEGY.md`). Highest-weight signal, above news.
 - **zones.ts** — daily order-block detection (Wilder ATR-50, 1.7x displacement, first-touch, 30/side FIFO).
-- **strategy.ts** — `buildZoneSetup`: approach direction, rejection rule (fall into a zone => call, rise into a zone => put), white-space hard gate, daily-scan tap validity.
+- **strategy.ts** — `buildZoneSetup`: STATELESS edge-based model. Direction = which side price is on relative to the tapped edge (above => call, below => put), so the flip-on-close-through is automatic. `trigger_edge='first_touch'` + `tapped_edge` exposed; demand/supply labels never drive direction. White-space hard gate. Zones use FULL history + split-adjusted bars.
 - **scanner.ts** — nightly scan over a ~200-name `universe` -> `candidates` table for the next session.
 - Brain integration: valid zone setups feed the Brain as the driver (direction fixed by the setup, news is confirm/caution), proposals carry `variant`, code-computed `zoneSetup`, and a model `zoneRead`.
 - **broker.ts** — `BrokerAdapter`/`AlpacaBroker` (paper-only) is the single execution choke point; a future live adapter plugs in here. **No live path exists** (guardrail #1 holds).
@@ -80,7 +80,8 @@ DATABASE_URL, ANTHROPIC_API_KEY, RESEARCH_MODEL=claude-sonnet-5, ALPACA_API_KEY_
 ## Current state (2026-07-07)
 - M1–M6 + I1–I5 complete and deployed. Running the **$500 paper account "vega" (PA34D7UCJ09S)**.
 - Zone strategy (I1–I3), broker abstraction (I4, paper-only), paper-month scorecard (I5) all built and verified end-to-end.
-- **Zone math NOT yet confirmed against Farrukh's TradingView** — verify zone bounds/density and retune displacement/ATR if off. Zones are sparse by design (1.7x displacement): few candidates/valid taps per day.
+- **Zone math NOT yet confirmed against Farrukh's TradingView** — verify zone bounds/density (NVDA ~17 zones full-history split-adjusted) and retune displacement/ATR if off.
+- With full history + stateless edge model, a scan yields ~120 candidates / ~40 valid setups/day. OPEN DECISION before arming: 40 setups/day is a lot to research via the Brain (cost) — decide whether vega-zones researches all, caps to top-N, or shadows-only measure. Shadow tracker handles all 40 fine.
 - Next: run the frozen paper month (auto OFF, freeze config), read `/scorecard`, then decide on I6 (live monitor) / I7 (live enablement) — both gated behind the paper month and NOT built. Wipe pre-month `shadow_outcomes` test rows before the clean month.
 - Position sizing tuned for a small account: cheap OTM contracts (< maxContractPrice), buy multiple to fit perTradeBudget.
 
