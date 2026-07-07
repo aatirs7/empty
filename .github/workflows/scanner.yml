@@ -1,0 +1,24 @@
+name: Vega Scanner
+
+# Nightly zone scan over the universe -> next session's candidates table.
+# Runs after the US close (year-round; daily bars are finalized by then).
+on:
+  schedule:
+    - cron: "0 22 * * 1-5" # 22:00 UTC = 17:00 ET (EST) / 18:00 ET (EDT), after close
+  workflow_dispatch: {}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run scan
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}

@@ -101,6 +101,31 @@ export const settings = pgTable("settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// The nightly scanner universe (editable list of symbols to scan for zones).
+export const universe = pgTable("universe", {
+  id: serial("id").primaryKey(),
+  symbol: text("symbol").notNull(),
+  active: boolean("active").notNull().default(true),
+  rank: integer("rank"), // optional market-cap rank
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Nightly scanner output: symbols with a zone setup for the next session.
+export const candidates = pgTable("candidates", {
+  id: serial("id").primaryKey(),
+  runDate: date("run_date").notNull(),
+  symbol: text("symbol").notNull(),
+  direction: text("direction"), // call | put (implied by the rejection rule)
+  approach: text("approach"), // from_above | from_below | inside
+  clearRunway: boolean("clear_runway").notNull().default(false),
+  distanceToEdgePct: numeric("distance_to_edge_pct"),
+  setupValid: boolean("setup_valid").notNull().default(false), // daily-scan tap fired
+  price: numeric("price"),
+  zone: jsonb("zone").$type<{ type: string; bottom: number; top: number }>(),
+  setup: jsonb("setup"), // full ZoneSetup (code-computed)
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Periodic P&L snapshots for history/charts.
 export const positionsSnapshots = pgTable("positions_snapshots", {
   id: serial("id").primaryKey(),
@@ -113,3 +138,5 @@ export type ResearchRun = typeof researchRuns.$inferSelect;
 export type ProposalRow = typeof proposals.$inferSelect;
 export type OrderRow = typeof orders.$inferSelect;
 export type Settings = typeof settings.$inferSelect;
+export type UniverseRow = typeof universe.$inferSelect;
+export type CandidateRow = typeof candidates.$inferSelect;
