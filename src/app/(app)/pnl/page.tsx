@@ -62,6 +62,10 @@ export default async function PnlPage() {
 
       {plError && <p className="text-xs text-muted">Trade P&amp;L unavailable right now ({plError}).</p>}
 
+      <a href="/scorecard" className="block text-center text-xs text-accent">
+        See the paper-month scorecard &rarr;
+      </a>
+
       <p className="text-xs text-muted">
         Paper account. Trade P&amp;L is your paper equity change since the account started (realized + unrealized) from
         Alpaca. API cost is the summed estimate of every research run. Net is simply one minus the other, both

@@ -130,6 +130,33 @@ export const candidates = pgTable("candidates", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Mechanical shadow outcome per proposal (and a daily SPY baseline). Measures
+// what Vega PROPOSED, independent of which trades the owner approved.
+export const shadowOutcomes = pgTable("shadow_outcomes", {
+  id: serial("id").primaryKey(),
+  proposalId: integer("proposal_id").references(() => proposals.id), // null for baseline
+  kind: text("kind").notNull().default("proposal"), // proposal | baseline
+  symbol: text("symbol").notNull(),
+  variant: text("variant"), // copied from the proposal for grouping
+  direction: text("direction"), // call | put
+  contractSymbol: text("contract_symbol"), // resolved OCC contract
+  strike: numeric("strike"),
+  expiry: date("expiry"),
+  entryAt: timestamp("entry_at", { withTimezone: true }),
+  entryUnderlying: numeric("entry_underlying"),
+  entryPremium: numeric("entry_premium"), // ask at entry (spread baked in)
+  markPremium: numeric("mark_premium"), // last mark (bid)
+  markAt: timestamp("mark_at", { withTimezone: true }),
+  exitAt: timestamp("exit_at", { withTimezone: true }),
+  exitUnderlying: numeric("exit_underlying"),
+  exitPremium: numeric("exit_premium"), // bid at exit / intrinsic at expiry
+  returnPct: numeric("return_pct"),
+  win: boolean("win"),
+  status: text("status").notNull().default("open"), // open | closed
+  exitReason: text("exit_reason"), // take_profit | stop_loss | expiry
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Periodic P&L snapshots for history/charts.
 export const positionsSnapshots = pgTable("positions_snapshots", {
   id: serial("id").primaryKey(),
@@ -144,3 +171,4 @@ export type OrderRow = typeof orders.$inferSelect;
 export type Settings = typeof settings.$inferSelect;
 export type UniverseRow = typeof universe.$inferSelect;
 export type CandidateRow = typeof candidates.$inferSelect;
+export type ShadowOutcomeRow = typeof shadowOutcomes.$inferSelect;

@@ -43,6 +43,13 @@
       "when": 1783384926529,
       "tag": "0005_swift_firestar",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783385603810,
+      "tag": "0006_tearful_molecule_man",
+      "breakpoints": true
     }
   ]
 }

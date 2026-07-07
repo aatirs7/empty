@@ -1,0 +1,28 @@
+name: Vega Shadow
+
+# Shadow-outcome tracker for the paper month: opens shadows for real-trade
+# proposals + a daily SPY baseline, marks to the bid, and closes on the fixed
+# exit rule. Runs a few times through the US market day.
+on:
+  schedule:
+    - cron: "45 14 * * 1-5" # ~after the open (records entries)
+    - cron: "0 18 * * 1-5" # midday mark
+    - cron: "45 20 * * 1-5" # ~near close mark/close
+  workflow_dispatch: {}
+
+jobs:
+  shadow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run shadow
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          TRADING_MODE: paper
