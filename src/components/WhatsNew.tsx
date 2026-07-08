@@ -82,11 +82,11 @@ export default function WhatsNew() {
         mounted &&
         createPortal(
           <div
-            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
             onClick={close}
           >
             <div
-              className="bg-panel border border-border w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl overflow-hidden"
+              className="bg-panel border border-border w-full max-w-sm rounded-3xl overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               {/* header */}
