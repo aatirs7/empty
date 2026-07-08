@@ -1,7 +1,7 @@
 /**
  * SniperBot playbook classifier + swing scorer (see SNIPERBOT-RULES.md and the
  * playbook-classifier spec). Given a live zone tap, it CODE-computes:
- *   - the playbook type (Support Bounce, Breakout Retest, Failed Breakout, ...)
+ *   - the playbook type (Support Bounce, Support Reclaim, Breakout Rejection, ...)
  *   - safe/extended swing targets (from daily swing highs/lows, not the zone)
  *   - a historical-reaction read at the level
  *   - a 0-100 quality score
@@ -53,12 +53,12 @@ function classifyPlaybook(bars: Bar[], zone: { bottom: number; top: number }, di
   const anyBelow = recent.some((c) => c < zone.bottom);
   const anyAbove = recent.some((c) => c > zone.top);
   if (direction === "call") {
-    if (anyBelow && last > zone.top) return "Failed Breakdown";
-    if (recent.some((c) => c <= zone.top) && last > zone.top) return "Breakout Retest";
+    if (anyBelow && last > zone.top) return "Support Reclaim"; // dipped below, reclaimed = bullish
+    if (recent.some((c) => c <= zone.top) && last > zone.top) return "Support Retest";
     return "Support Bounce";
   }
-  if (anyAbove && last < zone.bottom) return "Failed Breakout";
-  if (recent.some((c) => c >= zone.bottom) && last < zone.bottom) return "Breakdown Retest";
+  if (anyAbove && last < zone.bottom) return "Breakout Rejection"; // popped above, rejected = bearish
+  if (recent.some((c) => c >= zone.bottom) && last < zone.bottom) return "Resistance Retest";
   return "Resistance Rejection";
 }
 
