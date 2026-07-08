@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getLatestRun, getLatestScanRun } from "@/lib/queries";
+import { getLatestRun, getLatestScanRun, getLatestScan } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
 import GoalProgress from "@/components/GoalProgress";
 import { StatusPill, Empty, PageTitle } from "@/components/ui";
@@ -8,10 +8,14 @@ import { plainVerdict, confidenceLabel, stripDash, etDateTime } from "@/lib/form
 export const dynamic = "force-dynamic";
 
 export default async function TodayPage() {
-  const [data, scanRun] = await Promise.all([getLatestRun(), getLatestScanRun()]);
+  const [data, scanRun, scan] = await Promise.all([getLatestRun(), getLatestScanRun(), getLatestScan()]);
   const proposals = (data?.proposals ?? []).filter((p) => p.status !== "expired");
   const runDate = data?.run.runDate ?? scanRun?.runDate ?? "";
   const trades = proposals.filter((p) => p.strategy !== "no_trade");
+  const topSetups = (scan?.candidates ?? [])
+    .filter((c) => c.setupValid)
+    .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
+    .slice(0, 5);
 
   return (
     <div className="space-y-5">
@@ -99,6 +103,34 @@ export default async function TodayPage() {
           );
         })}
       </div>
+
+      {trades.length === 0 && topSetups.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-center text-xs text-muted leading-relaxed">
+            No trades placed yet today. Vega is watching these top setups live and will auto-buy the moment one taps its
+            zone.
+          </p>
+          {topSetups.map((c) => {
+            const isCall = c.direction === "call";
+            return (
+              <Link
+                key={c.id}
+                href={`/setup/${c.id}`}
+                className="flex items-center justify-between bg-panel border border-border rounded-2xl px-4 py-3"
+              >
+                <span className="text-sm">
+                  <span className="font-medium">{c.symbol}</span>{" "}
+                  <span className={isCall ? "text-up" : "text-down"}>{isCall ? "bounce up" : "push down"}</span>
+                </span>
+                <span className="text-xs text-muted num">{c.score != null ? `${c.score}/100` : ""}</span>
+              </Link>
+            );
+          })}
+          <Link href="/setups" className="block text-center text-xs text-accent pt-1">
+            See all setups →
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

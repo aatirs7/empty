@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { usd, parseOcc, companyName, positionRecommendation } from "@/lib/format";
+import { usd, parseOcc, companyName, positionRecommendation, etDateTime } from "@/lib/format";
 
 interface Pos {
   symbol: string;
@@ -11,6 +11,8 @@ interface Pos {
   unrealized_pl: string | null;
   unrealized_plpc: string | null;
   current_price: string | null;
+  placedAt: string | null;
+  filledAt: string | null;
 }
 interface Data {
   ok: boolean;
@@ -77,6 +79,9 @@ export default function PositionsView() {
                     {p.qty} @ {usd(p.avg_entry_price)}
                     {occ && ` · target ${usd(occ.strike, 0)}`}
                   </p>
+                  {(p.filledAt || p.placedAt) && (
+                    <p className="text-[11px] text-muted num mt-0.5">Placed {etDateTime(p.filledAt || p.placedAt)}</p>
+                  )}
                 </div>
                 <div className="text-right shrink-0">
                   <p className={`num font-semibold ${pl >= 0 ? "text-up" : "text-down"}`}>
