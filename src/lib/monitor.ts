@@ -14,7 +14,7 @@
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
-import { candidates, monitorState, positionState, proposals, researchRuns } from "../db/schema";
+import { candidates, monitorState, orders, proposals, researchRuns } from "../db/schema";
 import { getLatestPrices, getStockBars, getOptionQuotes, midPrice } from "./alpaca";
 import { getBroker } from "./broker";
 import { getSettings } from "./settings";
@@ -22,14 +22,10 @@ import { executeProposal } from "./execute";
 import { classifyAndScore, PLAYBOOK_MIN_SCORE } from "./playbook";
 import { parseOcc } from "./format";
 
-// Farrukh's exit ladder + ratcheting stop.
-// - Trim ~20% of the original size at each of +25/50/75/100% (when qty allows).
-// - Sell everything remaining at +150% (final target).
-// - Stop starts at -40%; once peak >= +75% the stop ratchets to breakeven; once
-//   peak >= +100% it ratchets to +25% locked profit.
-const TRIM_LEVELS = [0.25, 0.5, 0.75, 1.0];
-const FINAL_TP = 1.5; // +150% sell-all
-const STOP_LEVELS = [-0.4, 0.0, 0.25]; // stop return by stage: -40% / breakeven / +25%
+// Farrukh's simplified test exit: sell the whole (1-contract) position at +100%,
+// or stop out at -30%. Env-tunable.
+const TAKE_PROFIT = Number(process.env.MONITOR_TAKE_PROFIT_PCT ?? 1.0); // +100%
+const STOP_LOSS = Number(process.env.MONITOR_STOP_PCT ?? -0.3); // -30%
 
 export interface Fire {
   symbol: string;
@@ -69,8 +65,7 @@ function tapCrossing(direction: "call" | "put", prev: number, cur: number, botto
   return prev > top && cur <= top; // call: pulled into support from above
 }
 
-/** Farrukh's exit engine: ratcheting stop + scaled trims + +150% final target.
- *  Runs each tick during market hours over every open position. */
+/** Farrukh's simple exit: sell at +100%, stop at -30%. Runs each tick in-hours. */
 async function manageExits(): Promise<Fire[]> {
   const broker = getBroker();
   const positions = await broker.listPositions();
@@ -80,77 +75,34 @@ async function manageExits(): Promise<Fire[]> {
 
   for (const p of positions) {
     const entry = Number(p.avg_entry_price);
-    const qtyNow = Math.abs(Number(p.qty));
     const q = quotes[p.symbol];
     const bid = q?.bp && q.bp > 0 ? q.bp : midPrice(q);
-    if (!entry || entry <= 0 || bid == null || qtyNow < 1) continue;
+    if (!entry || entry <= 0 || bid == null) continue;
     const ret = (bid - entry) / entry;
+    if (ret < TAKE_PROFIT && ret > STOP_LOSS) continue;
+
     const occ = parseOcc(p.symbol);
-    const dir = occ?.type ?? "call";
-    const sym = occ?.underlying ?? p.symbol;
-
-    // Per-position exit state (records the original qty for tranche sizing).
-    let [st] = await db.select().from(positionState).where(eq(positionState.contractSymbol, p.symbol)).limit(1);
-    if (!st) {
-      [st] = await db
-        .insert(positionState)
-        .values({ contractSymbol: p.symbol, entryPremium: String(entry), entryQty: qtyNow, peakPct: String(ret), stopStage: 0, trims: [] })
-        .returning();
+    try {
+      await broker.closePosition(p.symbol);
+      // Mark the originating proposal closed so Today reconciles with Positions.
+      const [ord] = await db
+        .select({ pid: orders.proposalId })
+        .from(orders)
+        .where(eq(orders.contractSymbol, p.symbol))
+        .orderBy(desc(orders.id))
+        .limit(1);
+      if (ord) await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
+      out.push({
+        symbol: occ?.underlying ?? p.symbol,
+        direction: occ?.type ?? "call",
+        candidateId: 0,
+        price: bid,
+        placed: true,
+        detail: ret >= TAKE_PROFIT ? `SOLD +${Math.round(ret * 100)}% (target)` : `STOPPED ${Math.round(ret * 100)}%`,
+      });
+    } catch {
+      /* retry next tick */
     }
-
-    // Ratchet high-water mark + stop stage (monotonic; never loosens).
-    const peak = Math.max(Number(st.peakPct), ret);
-    const stage = peak >= 1.0 ? 2 : peak >= 0.75 ? 1 : 0;
-    const stopLevel = STOP_LEVELS[stage];
-    const trims: number[] = (st.trims as number[]) ?? [];
-
-    // 1) Stop hit (initial -40%, or ratcheted to breakeven / +25%) → sell all.
-    if (ret <= stopLevel) {
-      try {
-        await broker.closePosition(p.symbol);
-        await db.delete(positionState).where(eq(positionState.id, st.id));
-        const label = stage === 0 ? `STOP -40% (${Math.round(ret * 100)}%)` : stage === 1 ? `STOP breakeven (peaked +${Math.round(peak * 100)}%)` : `STOP +25% locked (peaked +${Math.round(peak * 100)}%)`;
-        out.push({ symbol: sym, direction: dir, candidateId: 0, price: bid, placed: true, detail: label });
-      } catch {
-        /* retry next tick */
-      }
-      continue;
-    }
-
-    // 2) Final target +150% → sell all remaining.
-    if (ret >= FINAL_TP) {
-      try {
-        await broker.closePosition(p.symbol);
-        await db.delete(positionState).where(eq(positionState.id, st.id));
-        out.push({ symbol: sym, direction: dir, candidateId: 0, price: bid, placed: true, detail: `SOLD ALL +${Math.round(ret * 100)}% (final target)` });
-      } catch {
-        /* retry next tick */
-      }
-      continue;
-    }
-
-    // 3) Scale-out: trim ~20% of the ORIGINAL size at each new level crossed.
-    const trimSize = Math.floor(Number(st.entryQty) * 0.2);
-    let newTrims = trims;
-    if (trimSize >= 1) {
-      for (const level of TRIM_LEVELS) {
-        if (ret >= level && !trims.includes(level)) {
-          const sellQty = Math.min(trimSize, qtyNow);
-          if (sellQty >= 1) {
-            try {
-              await broker.closePosition(p.symbol, sellQty);
-              newTrims = [...newTrims, level];
-              out.push({ symbol: sym, direction: dir, candidateId: 0, price: bid, placed: true, detail: `TRIMMED ${sellQty} at +${Math.round(level * 100)}%` });
-            } catch {
-              /* retry next tick */
-            }
-          }
-          break; // one trim per tick keeps qty accounting simple
-        }
-      }
-    }
-
-    await db.update(positionState).set({ peakPct: String(peak), stopStage: stage, trims: newTrims }).where(eq(positionState.id, st.id));
   }
   return out;
 }
@@ -234,7 +186,7 @@ export async function monitorTick(): Promise<Fire[]> {
           direction,
           strategy: direction === "call" ? "long_call" : "long_put",
           strikeHint: "ATM",
-          expiryHint: "weekly",
+          expiryHint: "friday",
           // The setup's code-computed quality score (0-100) as a 0-1 value — NOT a
           // probability. Shown on Today so it isn't a misleading flat "100% sure".
           confidence: String(pb.score / 100),

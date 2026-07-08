@@ -32,10 +32,12 @@ export function StatusPill({ status }: { status: string }) {
     pending: "text-muted",
     approved: "text-amber-400",
     filled: "text-up",
+    closed: "text-muted",
     rejected: "text-muted",
     expired: "text-muted",
   };
-  return <span className={`text-xs ${map[status] ?? "text-muted"}`}>{status}</span>;
+  const label = status === "filled" ? "open" : status;
+  return <span className={`text-xs ${map[status] ?? "text-muted"}`}>{label}</span>;
 }
 
 export function Empty({ children }: { children: React.ReactNode }) {

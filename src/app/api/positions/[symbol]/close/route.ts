@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { desc, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { orders, proposals } from "@/db/schema";
 import { getBroker } from "@/lib/broker";
 
 export const runtime = "nodejs";
@@ -12,6 +15,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ symbol
   }
   try {
     const order = await getBroker().closePosition(symbol);
+    // Mark the originating proposal closed so Today reconciles with Positions.
+    const [ord] = await db
+      .select({ pid: orders.proposalId })
+      .from(orders)
+      .where(eq(orders.contractSymbol, symbol))
+      .orderBy(desc(orders.id))
+      .limit(1);
+    if (ord) await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
     return NextResponse.json({ ok: true, orderId: order.id, status: order.status });
   } catch (err) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : "error" }, { status: 502 });

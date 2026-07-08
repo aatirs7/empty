@@ -11,6 +11,8 @@ export default async function TodayPage() {
   const [proposals, scanRun, scan] = await Promise.all([getTodayMonitorTrades(), getLatestScanRun(), getLatestScan()]);
   const runDate = scanRun?.runDate ?? new Date().toISOString().slice(0, 10);
   const trades = proposals.filter((p) => p.strategy !== "no_trade");
+  const openTrades = trades.filter((p) => p.status !== "closed");
+  const closedTrades = trades.filter((p) => p.status === "closed");
   const topSetups = (scan?.candidates ?? [])
     .filter((c) => c.setupValid)
     .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
@@ -30,7 +32,8 @@ export default async function TodayPage() {
           <>
             {" "}
             <span className="text-foreground font-medium">
-              {trades.length} trade{trades.length === 1 ? "" : "s"} placed so far today.
+              {trades.length} trade{trades.length === 1 ? "" : "s"} today — {openTrades.length} open, {closedTrades.length}{" "}
+              closed.
             </span>
           </>
         )}
@@ -103,11 +106,12 @@ export default async function TodayPage() {
         })}
       </div>
 
-      {trades.length === 0 && topSetups.length > 0 && (
+      {openTrades.length === 0 && topSetups.length > 0 && (
         <div className="space-y-2">
           <p className="text-center text-xs text-muted leading-relaxed">
-            No trades placed yet today. Vega is watching these top setups live and will auto-buy the moment one taps its
-            zone.
+            {closedTrades.length > 0
+              ? "No open trades right now. Vega is watching these top setups live and will auto-buy the moment one taps its zone."
+              : "No trades placed yet today. Vega is watching these top setups live and will auto-buy the moment one taps its zone."}
           </p>
           {topSetups.map((c) => {
             const isCall = c.direction === "call";

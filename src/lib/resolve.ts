@@ -42,9 +42,13 @@ function daysFromToday(dateStr: string): number {
   return Math.round((Date.parse(`${dateStr}T00:00:00Z`) - today) / 86_400_000);
 }
 
-/** "2-4 weeks" / "monthly" -> ~21 days; "weekly"/default -> this week or next
- *  (~7 days out, >=3 days of life so it isn't about to expire). Farrukh's rule:
- *  weekly or next-week contracts. */
+function isFriday(dateStr: string): boolean {
+  return new Date(`${dateStr}T12:00:00Z`).getUTCDay() === 5;
+}
+
+/** "2-4 weeks" / "monthly" -> ~21 days; "friday"/"weekly"/default -> this week's
+ *  Friday (nearest upcoming Friday, >=1 day out). Farrukh's rule: Friday contracts
+ *  of that week. */
 function pickExpiry(expiries: string[], hint: string): string {
   const uniqueSorted = [...new Set(expiries)].sort();
   const h = hint.toLowerCase();
@@ -55,11 +59,12 @@ function pickExpiry(expiries: string[], hint: string): string {
     const chooseFrom = pool.length ? pool : uniqueSorted;
     return chooseFrom.reduce((best, e) => (Math.abs(daysFromToday(e) - 21) < Math.abs(daysFromToday(best) - 21) ? e : best));
   }
-  // Weekly / next-week: nearest expiry to ~7 days, requiring >=3 days of life.
-  const weekly = uniqueSorted.filter((e) => daysFromToday(e) >= 3 && daysFromToday(e) <= 16);
-  const pool = weekly.length ? weekly : uniqueSorted.filter((e) => daysFromToday(e) >= 2);
-  const chooseFrom = pool.length ? pool : uniqueSorted;
-  return chooseFrom.reduce((best, e) => (Math.abs(daysFromToday(e) - 7) < Math.abs(daysFromToday(best) - 7) ? e : best));
+  // Friday of that week: the nearest upcoming Friday (>=1 day out).
+  const fridays = uniqueSorted.filter((e) => daysFromToday(e) >= 1 && isFriday(e));
+  if (fridays.length) return fridays[0];
+  // Fallback (no Friday listed): nearest expiry >=1 day out.
+  const pool = uniqueSorted.filter((e) => daysFromToday(e) >= 1);
+  return (pool.length ? pool : uniqueSorted)[0];
 }
 
 /** "ATM" -> spot; "~N% OTM" -> N% above spot (call) / below (put). */
@@ -127,8 +132,8 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
       // are near enough to be pushed into the money on a good zone-tap move — those
       // give the big % gains. Target ~$0.70, within [floor, cap], liquid only. No
       // expensive (near the cap) or sub-floor deep-OTM lottery contracts.
-      const PRICE_FLOOR = 0.5;
-      const PRICE_IDEAL = 0.75;
+      const PRICE_FLOOR = 0.35;
+      const PRICE_IDEAL = 0.5;
       const inBand = priced.filter((x) => x.ask >= PRICE_FLOOR && x.ask <= input.maxPrice!);
       if (inBand.length > 0) {
         const chosen = inBand.reduce((best, x) =>
