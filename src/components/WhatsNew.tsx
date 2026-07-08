@@ -2,37 +2,38 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
-// Bump when there are new updates to announce; the modal auto-opens once per version.
-const VERSION = "2026-07-08-v2";
+// Bump when there are new updates to announce; the modal auto-opens once per
+// version. Keep this list current — add an entry whenever a feature ships.
+const VERSION = "2026-07-08-v3";
 
 const UPDATES: { title: string; body: string }[] = [
   {
-    title: "A cheaper universe",
-    body: "The scan list swapped its ~200 mega-caps for ~110 cheap, liquid stocks priced $5–65. The old names cost more per contract than the whole account, so almost nothing could be traded. Now Vega has setups it can actually afford.",
+    title: "Desktop layout",
+    body: "Vega now has a proper laptop/desktop view — a left sidebar for navigation and a wider, calmer canvas. Your phone view is completely unchanged.",
+  },
+  {
+    title: "Friday-contract test config",
+    body: "Each alert now buys 1 contract around $0.50 expiring this Friday, then sells at +100% or stops out at −30%. Simple, and a clean bridge toward real money.",
+  },
+  {
+    title: "Open & Closed positions",
+    body: "Positions now has an Open / Closed toggle. Closed trades show what you sold for, the profit or loss, why it closed, and a realized-P&L total.",
   },
   {
     title: "Confidence ranking",
-    body: "Every setup now gets a 0–100 score. The Setups page lists the strongest first and marks the best one as the Top pick, so high-conviction ideas rise to the front.",
-  },
-  {
-    title: "Weekly contracts",
-    body: "Entries target weekly or next-week options priced $0.50–$1.00 — the cheap ones that can run 100%+ on a clean zone bounce. The price matters, not the strike.",
-  },
-  {
-    title: "Smarter exits",
-    body: "Profit is taken in steps as a trade climbs, and the stop tightens with it: it starts at −40%, moves to breakeven once you're up +75%, then locks +25% once you're up +100%. Everything is out by +150%.",
+    body: "Every setup gets a 0–100 score. Setups are listed strongest-first with a Top pick, and the auto-buy bar is set at 70+.",
   },
   {
     title: "Clearer alerts",
-    body: "Each alert now shows the exact date and time it fired, and names which edge of the zone was tapped and at what price — so you can judge its timing and accuracy.",
+    body: "Each alert shows the exact date and time it fired, and names which edge of the zone was tapped and at what price — so you can judge timing and accuracy.",
   },
   {
-    title: "Hands-off auto mode",
-    body: "In full-auto mode Vega decides everything itself. It no longer leaves trades on the homepage asking you to approve or skip.",
+    title: "A cheaper universe",
+    body: "The scan list swapped ~200 mega-caps for ~110 cheap, liquid stocks ($5–65), so a $0.50–$1 contract can actually get pushed in-the-money on a bounce. Big names were too pricey for the account.",
   },
   {
     title: "Always up to date",
-    body: "Pull down on any page to refresh, and screens update on their own every 30 seconds. The Log shows whether the live monitor is running and counts down to the next scan.",
+    body: "Pull down on any page to refresh, screens update every 30 seconds, and the Log shows whether the live monitor is running with a countdown to the next scan.",
   },
 ];
 
