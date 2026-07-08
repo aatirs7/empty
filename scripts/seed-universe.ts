@@ -1,34 +1,29 @@
 /**
- * Seed the scanner universe with ~200 large-cap, liquid US names. Idempotent:
- * clears and re-inserts. Edit the list here or manage `universe` rows directly.
- *
- * Run: npm run seed:universe
+ * Seed the scanner universe with ~110 cheap, liquid, optionable US names ($5-65),
+ * chosen so a $0.50-$1.50 near-the-money contract exists and can be pushed ITM on a
+ * zone bounce — the fit for Farrukh's cheap-contract strategy on the $500 account.
+ * Mega-caps were dropped: their contracts cost more than the whole account.
+ * Idempotent: clears and re-inserts. Run: npm run seed:universe
  */
 import "dotenv/config";
 import { db } from "../src/db";
 import { universe } from "../src/db/schema";
 
 const SYMBOLS = [
-  // Mega-cap tech / comms
-  "AAPL","MSFT","NVDA","AMZN","GOOGL","GOOG","META","AVGO","TSLA","NFLX","ORCL","CRM","ADBE","AMD","CSCO","INTC","QCOM","TXN","IBM","NOW","INTU","AMAT","MU","LRCX","KLAC","ADI","SNPS","CDNS","MRVL","PANW","CRWD","FTNT","DDOG","SNOW","PLTR","UBER","ABNB","SHOP","SQ","PYPL","MDB","NET","ANET","DELL","HPQ","SMCI","ARM","MSTR",
-  // Comm/media/consumer internet
-  "DIS","CMCSA","T","VZ","TMUS","WBD","SPOT","ROKU","PINS","SNAP",
-  // Consumer disc / retail
-  "HD","LOW","NKE","SBUX","MCD","CMG","BKNG","MAR","TGT","COST","WMT","DG","DLTR","ROST","TJX","LULU","ORLY","AZO","YUM","F","GM","RIVN","LCID",
-  // Consumer staples
-  "PG","KO","PEP","PM","MO","MDLZ","CL","KMB","GIS","KHC","STZ","MNST","KDP","HSY",
-  // Financials
-  "JPM","BAC","WFC","C","GS","MS","SCHW","BLK","AXP","V","MA","SPGI","CB","PGR","USB","PNC","TFC","COF","BX","KKR","AMP","MET","AIG","ICE","CME","COIN","HOOD",
-  // Health care
-  "UNH","JNJ","LLY","PFE","MRK","ABBV","TMO","ABT","DHR","BMY","AMGN","GILD","CVS","CI","ELV","ISRG","MDT","SYK","BSX","REGN","VRTX","ZTS","HCA","MRNA","BIIB",
-  // Industrials / transport
-  "CAT","DE","BA","GE","HON","UNP","UPS","FDX","LMT","RTX","GD","NOC","MMM","EMR","ETN","ITW","CSX","NSC","WM","PH","ROP","GEV","PCAR",
-  // Energy
-  "XOM","CVX","COP","SLB","EOG","MPC","PSX","VLO","OXY","WMB","KMI","HAL","DVN","FANG",
-  // Materials / utilities / real estate
-  "LIN","SHW","APD","FCX","NEM","NUE","DOW","NEE","DUK","SO","AEP","D","EXC","SRE","AMT","PLD","EQIX","CCI","SPG","O",
-  // Broad ETFs (context + SPY baseline)
-  "SPY","QQQ","IWM","DIA",
+  // Tech / semis / software (cheaper, liquid options)
+  "INTC","CSCO","HPQ","HPE","WDC","PLTR","PATH","SOUN","BBAI","IONQ","RGTI","U","RBLX","PINS","SNAP","DBX","NU","AFRM","UPST","PYPL","XYZ",
+  // Financials (cheaper)
+  "F","GM","BAC","WFC","C","KEY","HBAN","RF","USB","ALLY","SOFI","HOOD","FITB","KMI","ET",
+  // Consumer / retail / travel (cheaper)
+  "CCL","NCLH","AAL","UAL","DAL","LUV","JBLU","KSS","M","WBA","CVS","KHC","CAG","TAP",
+  // Comm / media
+  "T","VZ","WBD","PARA","CMCSA","FUBO",
+  // Energy / materials (cheaper, good volatility)
+  "KGC","GOLD","NEM","FCX","CLF","AA","X","VALE","RIG","HAL","SLB","DVN","MOS","AR","CVE","SU","OXY","APA","WMB","BTU","RRC",
+  // High-volatility / momentum names (cheap contracts, big % moves)
+  "GME","AMC","TLRY","CGC","MARA","RIOT","CLSK","HUT","WULF","PLUG","RUN","CHPT","QS","RIVN","LCID","NIO","XPEV","LI","GRAB","JOBY","ACHR","RKLB","ASTS",
+  // Liquid sector/commodity ETFs (clean zones) + SPY (baseline only)
+  "GDX","GDXJ","SLV","EEM","FXI","EWZ","KRE","ARKK","XLF","UNG","SPY",
 ];
 
 async function main() {
