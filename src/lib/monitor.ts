@@ -195,7 +195,14 @@ export async function monitorTick(): Promise<Fire[]> {
           const r = await executeProposal(prop.id, "auto");
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: true, detail: `order #${r.orderId} ${r.orderStatus}` });
         } catch (e) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: e instanceof Error ? e.message.slice(0, 70) : "execute error" });
+          // Full-auto: a skipped buy (e.g. no cheap contract) must NOT sit pending
+          // asking the owner to approve — the bot already decided. Mark it auto-skipped.
+          const why = e instanceof Error ? e.message.slice(0, 90) : "execute error";
+          await db
+            .update(proposals)
+            .set({ status: "expired", zoneRead: `${alert} Auto-skip: ${why}` })
+            .where(eq(proposals.id, prop.id));
+          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: why });
         }
       } else {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "proposal created (auto-buy off)" });
