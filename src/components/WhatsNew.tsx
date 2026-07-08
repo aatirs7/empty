@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per version.
 const VERSION = "2026-07-08";
@@ -45,8 +46,10 @@ const UPDATES: { title: string; body: string }[] = [
 
 export default function WhatsNew() {
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     try {
       if (localStorage.getItem("vega_whatsnew") !== VERSION) setOpen(true);
     } catch {
@@ -73,7 +76,7 @@ export default function WhatsNew() {
         ?
       </button>
 
-      {open && (
+      {open && mounted && createPortal(
         <div
           className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
           onClick={close}
@@ -115,7 +118,8 @@ export default function WhatsNew() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

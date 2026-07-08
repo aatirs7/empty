@@ -1,7 +1,7 @@
 /**
  * Server-side read helpers for the dashboard pages (run in server components).
  */
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   researchRuns,
@@ -48,6 +48,23 @@ export async function getRunWithProposals(
   if (!run) return null;
   const props = await db.select().from(proposals).where(eq(proposals.runId, id)).orderBy(desc(proposals.confidence));
   return { run, proposals: props };
+}
+
+/** Today's actual trades from the live monitor (filled or working), newest first.
+ *  Independent of which run is "latest" — a scan run must not hide today's trades. */
+export async function getTodayMonitorTrades(): Promise<ProposalRow[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const runs = await db
+    .select({ id: researchRuns.id })
+    .from(researchRuns)
+    .where(and(eq(researchRuns.model, "monitor"), eq(researchRuns.runDate, today)));
+  if (runs.length === 0) return [];
+  const ids = runs.map((r) => r.id);
+  return db
+    .select()
+    .from(proposals)
+    .where(and(inArray(proposals.runId, ids), ne(proposals.status, "expired")))
+    .orderBy(desc(proposals.createdAt));
 }
 
 export async function getCandidateById(id: number): Promise<CandidateRow | null> {

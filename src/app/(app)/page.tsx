@@ -1,16 +1,15 @@
 import Link from "next/link";
-import { getLatestRun, getLatestScanRun, getLatestScan } from "@/lib/queries";
+import { getTodayMonitorTrades, getLatestScanRun, getLatestScan } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
 import GoalProgress from "@/components/GoalProgress";
-import { StatusPill, Empty, PageTitle } from "@/components/ui";
+import { StatusPill, PageTitle } from "@/components/ui";
 import { plainVerdict, confidenceLabel, stripDash, etDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function TodayPage() {
-  const [data, scanRun, scan] = await Promise.all([getLatestRun(), getLatestScanRun(), getLatestScan()]);
-  const proposals = (data?.proposals ?? []).filter((p) => p.status !== "expired");
-  const runDate = data?.run.runDate ?? scanRun?.runDate ?? "";
+  const [proposals, scanRun, scan] = await Promise.all([getTodayMonitorTrades(), getLatestScanRun(), getLatestScan()]);
+  const runDate = scanRun?.runDate ?? new Date().toISOString().slice(0, 10);
   const trades = proposals.filter((p) => p.strategy !== "no_trade");
   const topSetups = (scan?.candidates ?? [])
     .filter((c) => c.setupValid)

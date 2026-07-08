@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getPosition, getStockBars } from "@/lib/alpaca";
+import { getPosition, getStockBars, getUnderlyingPrice } from "@/lib/alpaca";
 import { parseOcc, companyName, usd, longDate, daysUntil, positionRecommendation } from "@/lib/format";
 import StockChart from "@/components/StockChart";
 import ClosePositionButton from "@/components/ClosePositionButton";
@@ -24,6 +24,7 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
   const occ = parseOcc(symbol);
   const bars = occ ? await getStockBars(occ.underlying, 90).catch(() => []) : [];
   const closes = bars.map((b) => b.c);
+  const spot = occ ? await getUnderlyingPrice(occ.underlying).catch(() => closes[closes.length - 1] ?? null) : null;
 
   const pl = pos.unrealized_pl ? Number(pos.unrealized_pl) : 0;
   const plPc = pos.unrealized_plpc != null ? Number(pos.unrealized_plpc) : null;
@@ -58,6 +59,45 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
           predicting {company} will {dirWord} <span className="num text-foreground">{usd(occ.strike)}</span> by{" "}
           <span className="text-foreground">{longDate(occ.expiry)}</span> ({daysUntil(occ.expiry)} days left).
         </p>
+      )}
+
+      {occ && spot != null && (
+        <div className="bg-panel border border-border rounded-2xl p-4 text-center space-y-2">
+          <div>
+            <p className="text-xs text-muted">{occ.underlying} is now</p>
+            <p className="text-2xl font-bold num">{usd(spot)}</p>
+          </div>
+          {(() => {
+            const isCall = occ.type === "call";
+            const target = occ.strike;
+            const dist = isCall ? target - spot : spot - target; // >0 = still needed in the bet's direction
+            const distPct = spot > 0 ? Math.abs(dist / spot) * 100 : 0;
+            const be = isCall ? target + entry : target - entry;
+            const beDist = isCall ? be - spot : spot - be; // >0 = still needed to reach breakeven
+            return (
+              <div className="space-y-1 text-sm">
+                <p>
+                  Your target:{" "}
+                  <span className="num text-foreground">
+                    {isCall ? "above" : "below"} {usd(target)}
+                  </span>{" "}
+                  {dist <= 0 ? (
+                    <span className="text-up">— already past it ✓</span>
+                  ) : (
+                    <span className="text-muted num">
+                      — needs {isCall ? "+" : "−"}
+                      {usd(Math.abs(dist))} ({distPct.toFixed(1)}%)
+                    </span>
+                  )}
+                </p>
+                <p className="text-[11px] text-muted num">
+                  Breakeven at expiry {usd(be)}{" "}
+                  {beDist <= 0 ? "(you're in profit territory ✓)" : `· ${usd(Math.abs(beDist))} to go`}
+                </p>
+              </div>
+            );
+          })()}
+        </div>
       )}
 
       {occ && <StockChart closes={closes} strike={occ.strike} />}
