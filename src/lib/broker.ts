@@ -31,7 +31,7 @@ export interface BrokerAdapter {
   getPosition(symbol: string): Promise<Position | null>;
   placeOptionOrder(input: PlaceOptionOrderInput): Promise<Order>;
   waitForFill(orderId: string, timeoutMs?: number, intervalMs?: number): Promise<Order>;
-  closePosition(symbol: string): Promise<Order>;
+  closePosition(symbol: string, qty?: number): Promise<Order>;
   getPortfolioPL(): Promise<PortfolioPL>;
   getWeeklyPL(): Promise<{ weeklyPL: number; currentEquity: number }>;
 }

@@ -8,6 +8,7 @@ import { db } from "../db";
 import { universe as universeTable, candidates as candidatesTable, researchRuns } from "../db/schema";
 import { getMultiStockBars, type Bar } from "./alpaca";
 import { buildZoneSetup } from "./strategy";
+import { classifyAndScore } from "./playbook";
 
 const BARS_LOOKBACK_DAYS = 4000; // full available daily history (zones persist for all time)
 const CHUNK = 40; // symbols per multi-bar request (respect free-tier limits)
@@ -47,6 +48,20 @@ export async function runScan(runDate = new Date().toISOString().slice(0, 10)): 
     }
     // A candidate is a symbol approaching an active zone in its travel direction.
     if (!setup.active_zone || setup.distance_to_edge_pct == null) continue;
+
+    // Code-computed confidence score, so the app can rank high-conviction setups first.
+    let score: number | null = null;
+    let playbook: string | null = null;
+    if ((setup.direction === "call" || setup.direction === "put") && setup.active_zone) {
+      try {
+        const pb = classifyAndScore(bars, setup.active_zone, setup.direction, Number(setup.price));
+        score = pb.score;
+        playbook = pb.playbook;
+      } catch {
+        score = null;
+      }
+    }
+
     rows.push({
       runDate,
       symbol: sym,
@@ -58,6 +73,8 @@ export async function runScan(runDate = new Date().toISOString().slice(0, 10)): 
       price: String(setup.price),
       zone: setup.active_zone,
       setup,
+      score,
+      playbook,
     });
   }
 

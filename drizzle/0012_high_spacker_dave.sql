@@ -1,0 +1,1 @@
+ALTER TABLE "position_state" ADD COLUMN "entry_qty" integer DEFAULT 1 NOT NULL;

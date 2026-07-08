@@ -4,7 +4,7 @@ import { getProposalById } from "@/lib/queries";
 import RiskExplainer from "@/components/RiskExplainer";
 import PendingRisk from "@/components/PendingRisk";
 import { PricedInTag, Confidence } from "@/components/ui";
-import { labelStrategy, usd, plainPricedIn, stripDash } from "@/lib/format";
+import { labelStrategy, usd, plainPricedIn, stripDash, etDateTime } from "@/lib/format";
 import type { Scenario } from "@/lib/risk";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +40,9 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
             <PricedInTag value={p.pricedInAssessment} />
           )}
         </div>
+        {isZone && p.createdAt && (
+          <p className="text-[11px] text-muted mt-1 num">Alerted {etDateTime(p.createdAt)}</p>
+        )}
       </div>
 
       <section>

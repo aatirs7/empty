@@ -16,8 +16,9 @@ export default async function SetupsPage() {
     );
   }
 
-  const valid = scan.candidates.filter((c) => c.setupValid);
-  const watching = scan.candidates.filter((c) => !c.setupValid);
+  const byScore = (a: { score: number | null }, b: { score: number | null }) => (b.score ?? -1) - (a.score ?? -1);
+  const valid = scan.candidates.filter((c) => c.setupValid).sort(byScore);
+  const watching = scan.candidates.filter((c) => !c.setupValid).sort(byScore);
 
   return (
     <div className="space-y-5">
@@ -36,21 +37,35 @@ export default async function SetupsPage() {
         <Empty>No ready setups from the latest scan. That&apos;s normal on quiet days.</Empty>
       ) : (
         <div className="space-y-3">
-          {valid.map((c) => {
+          {valid.map((c, i) => {
             const z = c.zone as { bottom: number; top: number } | null;
             const isCall = c.direction === "call";
+            const strong = (c.score ?? 0) >= 80;
             return (
               <Link
                 key={c.id}
                 href={`/setup/${c.id}`}
-                className="block bg-panel border border-accent/30 rounded-2xl p-4 text-center space-y-1"
+                className={`block bg-panel border rounded-2xl p-4 text-center space-y-1 ${strong ? "border-accent" : "border-accent/30"}`}
               >
-                <div className="text-lg font-bold tracking-tight">
-                  {c.symbol} <span className="text-sm text-muted font-normal">{companyName(c.symbol)}</span>
+                <div className="flex items-center justify-center gap-2">
+                  {i === 0 && c.score != null && (
+                    <span className="text-[10px] uppercase tracking-wide text-accent font-semibold">Top pick</span>
+                  )}
+                  <div className="text-lg font-bold tracking-tight">
+                    {c.symbol} <span className="text-sm text-muted font-normal">{companyName(c.symbol)}</span>
+                  </div>
                 </div>
                 <div className={`text-sm font-medium ${isCall ? "text-up" : "text-down"}`}>
                   {isCall ? `Bet ${c.symbol} bounces up` : `Bet ${c.symbol} gets pushed down`}
                 </div>
+                {c.score != null && (
+                  <div className="text-xs num">
+                    <span className={strong ? "text-accent font-medium" : "text-muted"}>
+                      Confidence {c.score}/100
+                    </span>
+                    {c.playbook ? <span className="text-muted"> · {c.playbook}</span> : null}
+                  </div>
+                )}
                 {z && (
                   <div className="text-xs text-muted num">
                     zone {z.bottom}–{z.top} · {Number(c.distanceToEdgePct).toFixed(2)}% from the edge · details →
@@ -74,6 +89,7 @@ export default async function SetupsPage() {
                 <Link key={c.id} href={`/setup/${c.id}`} className="flex justify-between text-xs num">
                   <span>
                     {c.symbol} <span className="text-muted">{c.direction}</span>
+                    {c.score != null && <span className="text-muted"> · {c.score}/100</span>}
                   </span>
                   <span className="text-muted">
                     {z ? `${z.bottom}–${z.top}` : ""} · {Number(c.distanceToEdgePct).toFixed(1)}%

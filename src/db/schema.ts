@@ -128,6 +128,8 @@ export const candidates = pgTable("candidates", {
   price: numeric("price"),
   zone: jsonb("zone").$type<{ bottom: number; top: number }>(),
   setup: jsonb("setup"), // full ZoneSetup (code-computed)
+  score: integer("score"), // playbook quality score 0-100 (code-computed at scan time)
+  playbook: text("playbook"), // playbook classification name
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -137,6 +139,19 @@ export const monitorState = pgTable("monitor_state", {
   id: serial("id").primaryKey(),
   prices: jsonb("prices").$type<Record<string, number>>().notNull().default({}),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Per-open-position exit state: high-water mark + which trailing-stop stage and
+// scale-out tranches have fired. Drives Farrukh's ratcheting-stop exit model.
+export const positionState = pgTable("position_state", {
+  id: serial("id").primaryKey(),
+  contractSymbol: text("contract_symbol").notNull().unique(),
+  entryPremium: numeric("entry_premium"),
+  entryQty: integer("entry_qty").notNull().default(1), // original contract count (for tranche sizing)
+  peakPct: numeric("peak_pct").notNull().default("0"), // best gain seen (0.75 = +75%)
+  stopStage: integer("stop_stage").notNull().default(0), // 0=-40%, 1=breakeven, 2=+25%
+  trims: jsonb("trims").$type<number[]>().notNull().default([]), // tranche levels already trimmed
+  openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // Mechanical shadow outcome per proposal (and a daily SPY baseline). Measures
@@ -182,3 +197,4 @@ export type Settings = typeof settings.$inferSelect;
 export type UniverseRow = typeof universe.$inferSelect;
 export type CandidateRow = typeof candidates.$inferSelect;
 export type ShadowOutcomeRow = typeof shadowOutcomes.$inferSelect;
+export type PositionStateRow = typeof positionState.$inferSelect;

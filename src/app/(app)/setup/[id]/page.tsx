@@ -67,6 +67,10 @@ export default async function SetupDetailPage({ params }: { params: Promise<{ id
 
       <Card title="The zone">
         <Row label="Zone (support/resistance)" value={`${z.bottom} – ${z.top}`} />
+        <Row
+          label="Zone tap"
+          value={isCall ? `top zone tapped ${z.top}` : `bottom zone tapped ${z.bottom}`}
+        />
         <Row label="Price now" value={c.price} />
         <Row label="Distance to the edge" value={`${Number(c.distanceToEdgePct).toFixed(2)}%`} />
         <Row label="Approach" value={(c.approach ?? "").replace(/_/g, " ")} />

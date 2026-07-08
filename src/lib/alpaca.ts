@@ -373,11 +373,13 @@ export async function getOptionQuotes(occSymbols: string[]): Promise<Record<stri
 }
 
 /** Close (liquidate) an entire position by symbol. PAPER-ONLY. Returns the closing order. */
-export async function closePosition(symbol: string): Promise<Order> {
+export async function closePosition(symbol: string, qty?: number): Promise<Order> {
   if (process.env.TRADING_MODE !== "paper") {
     throw new Error(`GUARDRAIL: TRADING_MODE must be "paper", got "${process.env.TRADING_MODE}".`);
   }
-  return trading<Order>(`/v2/positions/${encodeURIComponent(symbol)}`, { method: "DELETE" });
+  // qty present => partial close (scale-out tranche); absent => close the whole position.
+  const q = qty && qty > 0 ? `?qty=${Math.floor(qty)}` : "";
+  return trading<Order>(`/v2/positions/${encodeURIComponent(symbol)}${q}`, { method: "DELETE" });
 }
 
 export interface PortfolioPL {

@@ -3,7 +3,7 @@ import { getLatestRun, getLatestScanRun } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
 import GoalProgress from "@/components/GoalProgress";
 import { StatusPill, Empty, PageTitle } from "@/components/ui";
-import { plainVerdict, confidenceLabel, stripDash } from "@/lib/format";
+import { plainVerdict, confidenceLabel, stripDash, etDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +68,7 @@ export default async function TodayPage() {
               {p.variant === "news_plus_zones" ? (
                 <div className="text-xs text-muted">
                   Setup score <span className="num">{Math.round(Number(p.confidence) * 100)}</span>/100
+                  {p.createdAt && <span className="num"> · alerted {etDateTime(p.createdAt)}</span>}
                 </div>
               ) : (
                 <div className="text-xs text-muted">
