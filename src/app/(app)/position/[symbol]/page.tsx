@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { getPosition, getStockBars, getUnderlyingPrice } from "@/lib/alpaca";
+import { getProposalForContract } from "@/lib/queries";
+import { classifyAndScore } from "@/lib/playbook";
 import { parseOcc, companyName, usd, longDate, daysUntil, positionRecommendation } from "@/lib/format";
 import StockChart from "@/components/StockChart";
 import ClosePositionButton from "@/components/ClosePositionButton";
@@ -22,9 +24,22 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
   }
 
   const occ = parseOcc(symbol);
-  const bars = occ ? await getStockBars(occ.underlying, 90).catch(() => []) : [];
+  const bars = occ ? await getStockBars(occ.underlying, 250).catch(() => []) : [];
   const closes = bars.map((b) => b.c);
   const spot = occ ? await getUnderlyingPrice(occ.underlying).catch(() => closes[closes.length - 1] ?? null) : null;
+
+  // Timing estimate: how long the move typically takes at this zone (past taps).
+  const proposal = occ ? await getProposalForContract(symbol).catch(() => null) : null;
+  const zone = (proposal?.zoneSetup as { active_zone?: { bottom: number; top: number } } | null)?.active_zone ?? null;
+  let avgDays: number | null = null;
+  if (occ && zone && spot != null && bars.length > 30) {
+    try {
+      avgDays = classifyAndScore(bars, zone, occ.type as "call" | "put", spot).historical.avgDays || null;
+    } catch {
+      avgDays = null;
+    }
+  }
+  const daysLeft = occ ? daysUntil(occ.expiry) : 0;
 
   const pl = pos.unrealized_pl ? Number(pos.unrealized_pl) : 0;
   const plPc = pos.unrealized_plpc != null ? Number(pos.unrealized_plpc) : null;
@@ -100,7 +115,27 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
         </div>
       )}
 
-      {occ && <StockChart closes={closes} strike={occ.strike} />}
+      {occ && <StockChart closes={closes.slice(-90)} strike={occ.strike} />}
+
+      {occ && (
+        <div className="bg-panel border border-border rounded-2xl p-4 text-center space-y-1">
+          <p className="text-xs uppercase tracking-wide text-muted mb-1">Timing</p>
+          <p className="text-sm leading-relaxed">
+            The plan is to hold until it hits the profit target (sell at +100%) or the option expires{" "}
+            <span className="num text-foreground">{longDate(occ.expiry)}</span> — <span className="num">{daysLeft}</span>{" "}
+            {daysLeft === 1 ? "day" : "days"} left. Whichever comes first (or the −30% stop).
+          </p>
+          {avgDays != null && avgDays > 0 && (
+            <p className="text-xs text-muted leading-relaxed">
+              If it plays out like past moves off this level, it should turn profitable in about{" "}
+              <span className="num">{avgDays}</span> {avgDays === 1 ? "day" : "days"}
+              {avgDays > daysLeft
+                ? " — that's tighter than the time left, so it needs to move faster than usual to pay off before expiry."
+                : ", well inside the time left."}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="bg-panel border border-border rounded-2xl p-4 grid grid-cols-2 gap-3 text-center">
         <div>

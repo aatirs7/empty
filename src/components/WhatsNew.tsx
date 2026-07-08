@@ -17,7 +17,7 @@ const UPDATES: { title: string; body: string }[] = [
   },
   {
     title: "Open & Closed positions",
-    body: "Positions now has an Open / Closed toggle. Closed trades show what you sold for, the profit or loss, why it closed, and a realized-P&L total.",
+    body: "Positions now has an Open / Closed toggle. Closed trades show what you sold for, the profit or loss, why it closed, and a realized-P&L total. Each open position also shows a hold-time estimate — how long the move usually takes and how many days are left.",
   },
   {
     title: "Confidence ranking",

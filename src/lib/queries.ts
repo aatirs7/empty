@@ -67,6 +67,20 @@ export async function getTodayMonitorTrades(): Promise<ProposalRow[]> {
     .orderBy(desc(proposals.createdAt));
 }
 
+/** The originating proposal for an open contract (via its order) — carries the
+ *  zone setup used for the timing estimate on the position page. */
+export async function getProposalForContract(contractSymbol: string): Promise<ProposalRow | null> {
+  const [o] = await db
+    .select({ pid: orders.proposalId })
+    .from(orders)
+    .where(eq(orders.contractSymbol, contractSymbol))
+    .orderBy(desc(orders.id))
+    .limit(1);
+  if (!o) return null;
+  const [p] = await db.select().from(proposals).where(eq(proposals.id, o.pid)).limit(1);
+  return p ?? null;
+}
+
 /** Closed (sold) trades, newest first — for the Positions "Closed" tab. */
 export async function getClosedTrades(limit = 60): Promise<OrderRow[]> {
   return db.select().from(orders).where(isNotNull(orders.exitAt)).orderBy(desc(orders.exitAt)).limit(limit);

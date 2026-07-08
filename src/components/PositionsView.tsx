@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { usd, parseOcc, companyName, positionRecommendation, etDateTime } from "@/lib/format";
+import { usd, parseOcc, companyName, positionRecommendation, etDateTime, daysUntil } from "@/lib/format";
 
 interface Pos {
   symbol: string;
@@ -130,7 +130,10 @@ function OpenView({ data, closing, onClose }: { data: Data | null; closing: stri
                       {occ && ` · target ${usd(occ.strike, 0)}`}
                     </p>
                     {(p.filledAt || p.placedAt) && (
-                      <p className="text-[11px] text-muted num mt-0.5">Placed {etDateTime(p.filledAt || p.placedAt)}</p>
+                      <p className="text-[11px] text-muted num mt-0.5">
+                        Placed {etDateTime(p.filledAt || p.placedAt)}
+                        {occ && ` · exp ${occ.expiry} (${daysUntil(occ.expiry)}d)`}
+                      </p>
                     )}
                   </div>
                   <div className="text-right shrink-0">
