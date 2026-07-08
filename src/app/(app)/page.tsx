@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { getLatestRun } from "@/lib/queries";
+import { getLatestRun, getLatestScanRun } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
-import PullToRefresh from "@/components/PullToRefresh";
 import GoalProgress from "@/components/GoalProgress";
 import { StatusPill, Empty, PageTitle } from "@/components/ui";
 import { plainVerdict, confidenceLabel, stripDash } from "@/lib/format";
@@ -9,32 +8,30 @@ import { plainVerdict, confidenceLabel, stripDash } from "@/lib/format";
 export const dynamic = "force-dynamic";
 
 export default async function TodayPage() {
-  const data = await getLatestRun();
-  if (!data) return <Empty>No research yet. Vega runs each weekday, early in the morning.</Empty>;
-  const { run, proposals } = data;
+  const [data, scanRun] = await Promise.all([getLatestRun(), getLatestScanRun()]);
+  const proposals = (data?.proposals ?? []).filter((p) => p.status !== "expired");
+  const runDate = data?.run.runDate ?? scanRun?.runDate ?? "";
   const trades = proposals.filter((p) => p.strategy !== "no_trade");
 
   return (
     <div className="space-y-5">
-      <PullToRefresh />
-      <PageTitle title="Today" subtitle={run.runDate} />
+      <PageTitle title="Today" subtitle={runDate} />
 
       <GoalProgress />
 
       <p className="text-center text-sm text-muted leading-relaxed">
-        Vega looked at {proposals.length} {proposals.length === 1 ? "stock" : "stocks"} this morning and found{" "}
-        <span className="text-foreground font-medium">
-          {trades.length === 0 ? "no clear opportunities" : `${trades.length} possible ${trades.length === 1 ? "trade" : "trades"}`}
-        </span>
-        .{trades.length === 0 && " That's normal, most days there's no edge, and sitting out is a fine choice."}
+        {scanRun?.marketContext
+          ? stripDash(scanRun.marketContext)
+          : "Vega scans the market each morning for zone setups."}
+        {trades.length > 0 && (
+          <>
+            {" "}
+            <span className="text-foreground font-medium">
+              {trades.length} trade{trades.length === 1 ? "" : "s"} placed so far today.
+            </span>
+          </>
+        )}
       </p>
-
-      {run.marketContext && (
-        <details className="bg-panel border border-border rounded-2xl p-4 text-center">
-          <summary className="text-xs text-muted cursor-pointer list-none select-none">Today&apos;s market mood ▾</summary>
-          <p className="text-sm text-muted mt-2 leading-relaxed">{stripDash(run.marketContext)}</p>
-        </details>
-      )}
 
       <Link href="/setups" className="block text-center text-xs text-accent">
         See the latest scan &amp; setups &rarr;

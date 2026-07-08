@@ -50,6 +50,22 @@ export async function getRunWithProposals(
   return { run, proposals: props };
 }
 
+export async function getCandidateById(id: number): Promise<CandidateRow | null> {
+  const [c] = await db.select().from(candidates).where(eq(candidates.id, id)).limit(1);
+  return c ?? null;
+}
+
+/** The most recent scan run (model='scan') — its marketContext summarizes the scan. */
+export async function getLatestScanRun(): Promise<ResearchRun | null> {
+  const [run] = await db
+    .select()
+    .from(researchRuns)
+    .where(eq(researchRuns.model, "scan"))
+    .orderBy(desc(researchRuns.id))
+    .limit(1);
+  return run ?? null;
+}
+
 export async function getLatestRunId(): Promise<number | null> {
   const [run] = await db.select({ id: researchRuns.id }).from(researchRuns).orderBy(desc(researchRuns.id)).limit(1);
   return run?.id ?? null;

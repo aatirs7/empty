@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { monitorTick } from "@/lib/monitor";
+import { monitorTick, heartbeat } from "@/lib/monitor";
 import { getClock } from "@/lib/alpaca";
 
 export const runtime = "nodejs";
@@ -16,6 +16,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "not paper mode" }, { status: 403 });
   }
   try {
+    await heartbeat(); // stamp "alive" every invocation, even when closed
     const clock = await getClock();
     if (!clock.is_open) return NextResponse.json({ ok: true, skipped: "market closed", nextOpen: clock.next_open });
     const fires = await monitorTick();

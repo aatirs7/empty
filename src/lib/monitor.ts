@@ -35,6 +35,14 @@ export interface Fire {
   detail: string;
 }
 
+/** Heartbeat: stamp monitor_state.updatedAt every cron invocation (even when the
+ *  market is closed) so the app can tell "live" from "down". */
+export async function heartbeat(): Promise<void> {
+  const [row] = await db.select({ id: monitorState.id }).from(monitorState).limit(1);
+  if (row) await db.update(monitorState).set({ updatedAt: new Date() }).where(eq(monitorState.id, row.id));
+  else await db.insert(monitorState).values({});
+}
+
 async function ensureMonitorRun(): Promise<number> {
   const runDate = new Date().toISOString().slice(0, 10);
   const [existing] = await db

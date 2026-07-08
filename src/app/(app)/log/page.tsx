@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getRunsLog, getCostTotals } from "@/lib/queries";
 import { usd, labelStrategy, stripDash, etTime } from "@/lib/format";
 import { Empty, PageTitle } from "@/components/ui";
+import LogStatus from "@/components/LogStatus";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,8 @@ export default async function LogPage() {
   return (
     <div className="space-y-5">
       <PageTitle title="Log" subtitle={`Month-to-date cost ${usd(cost.monthToDate)}`} />
+
+      <LogStatus />
 
       {runs.length === 0 ? (
         <Empty>No runs yet.</Empty>
@@ -47,8 +50,8 @@ export default async function LogPage() {
                 <div className="text-[11px] text-muted num">
                   {run.searchCount ?? 0} searches · {run.inputTokens ?? 0} in / {run.outputTokens ?? 0} out
                 </div>
-                <Link href={`/operation-vega/${run.id}`} className="block text-xs text-accent">
-                  Full breakdown &rarr;
+                <Link href={run.model === "scan" ? "/setups" : `/operation-vega/${run.id}`} className="block text-xs text-accent">
+                  {run.model === "scan" ? "See setups" : "Full breakdown"} &rarr;
                 </Link>
               </div>
             </details>

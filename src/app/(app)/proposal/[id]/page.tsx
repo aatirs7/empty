@@ -15,6 +15,7 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
   if (!data) notFound();
   const { proposal: p, order } = data;
   const isTrade = p.strategy !== "no_trade" && !!p.direction && p.direction !== "none";
+  const isZone = p.variant === "news_plus_zones";
   const plain = stripDash(p.plainExplanation || p.rationale);
 
   return (
@@ -31,7 +32,13 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
           </p>
         )}
         <div className="mt-2 flex justify-center">
-          <PricedInTag value={p.pricedInAssessment} />
+          {isZone ? (
+            <span className="text-xs text-accent">
+              Zone setup · Score {Math.round(Number(p.confidence) * 100)}/100
+            </span>
+          ) : (
+            <PricedInTag value={p.pricedInAssessment} />
+          )}
         </div>
       </div>
 
@@ -43,8 +50,14 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
       <section>
         <h2 className="text-sm font-semibold mb-1 text-center">Why Vega picked it</h2>
         <p className="text-sm text-muted text-center leading-relaxed">
-          Vega thinks <span className="text-foreground">{plainPricedIn(p.pricedInAssessment)}</span>
-          {p.plainExplanation && p.rationale ? `. ${stripDash(p.rationale)}` : "."}
+          {isZone ? (
+            stripDash(p.zoneRead || p.rationale)
+          ) : (
+            <>
+              Vega thinks <span className="text-foreground">{plainPricedIn(p.pricedInAssessment)}</span>
+              {p.plainExplanation && p.rationale ? `. ${stripDash(p.rationale)}` : "."}
+            </>
+          )}
         </p>
       </section>
 
@@ -77,8 +90,12 @@ export default async function ProposalPage({ params }: { params: Promise<{ id: s
 
       <section className="border-t border-border pt-4">
         <div className="flex items-center justify-between">
-          <span className="text-sm text-muted">Confidence</span>
-          <Confidence value={p.confidence} />
+          <span className="text-sm text-muted">{isZone ? "Setup score" : "Confidence"}</span>
+          {isZone ? (
+            <span className="num text-sm font-medium">{Math.round(Number(p.confidence) * 100)}/100</span>
+          ) : (
+            <Confidence value={p.confidence} />
+          )}
         </div>
         <p className="text-xs text-muted mt-2">
           This is one idea, not a guarantee. Vega is often deliberately low-confidence, most mornings the honest answer

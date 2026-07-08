@@ -2,10 +2,10 @@
 
 /* Light is the default; dark applies via system preference or an explicit toggle. */
 :root {
-  --background: #f5f5f7;
-  --panel: #ffffff;
-  --panel-2: #eeeef1;
-  --border: #e3e3e8;
+  --background: #e4e4e9;
+  --panel: #f0f0f3;
+  --panel-2: #dcdce2;
+  --border: #cfcfd7;
   --foreground: #17171a;
   --muted: #6b6b76;
   --accent: #d4383d;

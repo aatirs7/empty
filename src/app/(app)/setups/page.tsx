@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getLatestScan } from "@/lib/queries";
 import { PageTitle, Empty } from "@/components/ui";
 import { companyName } from "@/lib/format";
@@ -39,7 +40,11 @@ export default async function SetupsPage() {
             const z = c.zone as { bottom: number; top: number } | null;
             const isCall = c.direction === "call";
             return (
-              <div key={c.id} className="bg-panel border border-accent/30 rounded-2xl p-4 text-center space-y-1">
+              <Link
+                key={c.id}
+                href={`/setup/${c.id}`}
+                className="block bg-panel border border-accent/30 rounded-2xl p-4 text-center space-y-1"
+              >
                 <div className="text-lg font-bold tracking-tight">
                   {c.symbol} <span className="text-sm text-muted font-normal">{companyName(c.symbol)}</span>
                 </div>
@@ -48,10 +53,10 @@ export default async function SetupsPage() {
                 </div>
                 {z && (
                   <div className="text-xs text-muted num">
-                    zone {z.bottom}–{z.top} · {Number(c.distanceToEdgePct).toFixed(2)}% from the edge
+                    zone {z.bottom}–{z.top} · {Number(c.distanceToEdgePct).toFixed(2)}% from the edge · details →
                   </div>
                 )}
-              </div>
+              </Link>
             );
           })}
         </div>
@@ -66,14 +71,14 @@ export default async function SetupsPage() {
             {watching.slice(0, 50).map((c) => {
               const z = c.zone as { bottom: number; top: number } | null;
               return (
-                <div key={c.id} className="flex justify-between text-xs num">
+                <Link key={c.id} href={`/setup/${c.id}`} className="flex justify-between text-xs num">
                   <span>
                     {c.symbol} <span className="text-muted">{c.direction}</span>
                   </span>
                   <span className="text-muted">
                     {z ? `${z.bottom}–${z.top}` : ""} · {Number(c.distanceToEdgePct).toFixed(1)}%
                   </span>
-                </div>
+                </Link>
               );
             })}
           </div>

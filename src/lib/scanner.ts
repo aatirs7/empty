@@ -5,7 +5,7 @@
  */
 import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { universe as universeTable, candidates as candidatesTable } from "../db/schema";
+import { universe as universeTable, candidates as candidatesTable, researchRuns } from "../db/schema";
 import { getMultiStockBars, type Bar } from "./alpaca";
 import { buildZoneSetup } from "./strategy";
 
@@ -65,10 +65,19 @@ export async function runScan(runDate = new Date().toISOString().slice(0, 10)): 
   await db.delete(candidatesTable).where(eq(candidatesTable.runDate, runDate));
   if (rows.length) await db.insert(candidatesTable).values(rows);
 
-  return {
+  const validSetups = rows.filter((r) => r.setupValid).length;
+
+  // Log the scan as a run so it shows on the Log page with its time.
+  await db.insert(researchRuns).values({
     runDate,
-    scanned: symbols.length,
-    candidates: rows.length,
-    validSetups: rows.filter((r) => r.setupValid).length,
-  };
+    status: "complete",
+    model: "scan",
+    marketContext: `Scanned ${symbols.length} stocks and found ${rows.length} approaching zones, ${validSetups} live setups to watch today.`,
+    searchCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    costEstimate: "0",
+  });
+
+  return { runDate, scanned: symbols.length, candidates: rows.length, validSetups };
 }
