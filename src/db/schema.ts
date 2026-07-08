@@ -200,6 +200,15 @@ export type ProposalRow = typeof proposals.$inferSelect;
 export type OrderRow = typeof orders.$inferSelect;
 export type Settings = typeof settings.$inferSelect;
 export type UniverseRow = typeof universe.$inferSelect;
+// Web Push subscriptions (one row per device/browser that opted in).
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: serial("id").primaryKey(),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type CandidateRow = typeof candidates.$inferSelect;
 export type ShadowOutcomeRow = typeof shadowOutcomes.$inferSelect;
 export type PositionStateRow = typeof positionState.$inferSelect;

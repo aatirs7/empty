@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-08-v3";
+const VERSION = "2026-07-08-v4";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "Trade notifications",
+    body: "Vega can now push a notification to your phone the moment it places or sells a trade — even when the app is closed. Turn it on in Settings → Trade notifications (on iPhone, add Vega to your home screen first).",
+  },
   {
     title: "Desktop layout",
     body: "Vega now has a proper laptop/desktop view — a left sidebar for navigation and a wider, calmer canvas. Your phone view is completely unchanged.",

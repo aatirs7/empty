@@ -21,6 +21,7 @@ import { getSettings } from "./settings";
 import { executeProposal } from "./execute";
 import { classifyAndScore, PLAYBOOK_MIN_SCORE } from "./playbook";
 import { parseOcc } from "./format";
+import { sendPush } from "./push";
 
 // Farrukh's simplified test exit: sell the whole (1-contract) position at +100%,
 // or stop out at -30%. Env-tunable.
@@ -101,14 +102,20 @@ async function manageExits(): Promise<Fire[]> {
           .where(eq(orders.id, ord.id));
         await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
       }
+      const sym = occ?.underlying ?? p.symbol;
       out.push({
-        symbol: occ?.underlying ?? p.symbol,
+        symbol: sym,
         direction: occ?.type ?? "call",
         candidateId: 0,
         price: bid,
         placed: true,
         detail: ret >= TAKE_PROFIT ? `SOLD +${Math.round(ret * 100)}% (target)` : `STOPPED ${Math.round(ret * 100)}%`,
       });
+      await sendPush(
+        ret >= TAKE_PROFIT ? `Sold ${sym} for +${Math.round(ret * 100)}%` : `Stopped out of ${sym} (${Math.round(ret * 100)}%)`,
+        ret >= TAKE_PROFIT ? "Hit the +100% profit target." : "Hit the -30% stop.",
+        "/positions",
+      ).catch(() => {});
     } catch {
       /* retry next tick */
     }
@@ -215,6 +222,11 @@ export async function monitorTick(): Promise<Fire[]> {
         try {
           const r = await executeProposal(prop.id, "auto");
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: true, detail: `order #${r.orderId} ${r.orderStatus}` });
+          await sendPush(
+            `Bought ${c.symbol} ${direction === "call" ? "call" : "put"}`,
+            `${pb.playbook} — tapped ${tapBoundary} zone at ${cur}. Score ${pb.score}/100.`,
+            "/positions",
+          ).catch(() => {});
         } catch (e) {
           // Full-auto: a skipped buy (e.g. no cheap contract) must NOT sit pending
           // asking the owner to approve — the bot already decided. Mark it auto-skipped.
