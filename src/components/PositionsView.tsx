@@ -50,7 +50,7 @@ export default function PositionsView() {
 
   return (
     <div className="space-y-3">
-      <div className="bg-panel border border-border rounded-2xl p-5 text-center">
+      <div className="bg-panel border border-border rounded-2xl p-5 text-center lg:p-6">
         <p className="text-xs text-muted">Total unrealized P&amp;L</p>
         <p className={`text-3xl font-bold num mt-1 ${data.totalUnrealizedPl >= 0 ? "text-up" : "text-down"}`}>
           {data.totalUnrealizedPl >= 0 ? "+" : ""}
@@ -59,6 +59,7 @@ export default function PositionsView() {
         <p className="text-xs text-muted num mt-1">Market value {usd(data.totalMarketValue)}</p>
       </div>
 
+      <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3">
       {data.positions.map((p) => {
         const pl = p.unrealized_pl ? Number(p.unrealized_pl) : 0;
         const plPc = p.unrealized_plpc != null ? Number(p.unrealized_plpc) : null;
@@ -107,6 +108,7 @@ export default function PositionsView() {
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

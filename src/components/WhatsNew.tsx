@@ -48,12 +48,14 @@ export default function WhatsNew() {
     } catch {
       /* ignore */
     }
+    const openFn = () => {
+      setStep(0);
+      setOpen(true);
+    };
+    window.addEventListener("vega:whatsnew", openFn);
+    return () => window.removeEventListener("vega:whatsnew", openFn);
   }, []);
 
-  const openModal = () => {
-    setStep(0);
-    setOpen(true);
-  };
   const close = () => {
     try {
       localStorage.setItem("vega_whatsnew", VERSION);
@@ -70,14 +72,6 @@ export default function WhatsNew() {
 
   return (
     <>
-      <button
-        onClick={openModal}
-        aria-label="What's new"
-        className="text-muted h-7 w-7 grid place-items-center rounded-full border border-border text-sm font-semibold leading-none"
-      >
-        ?
-      </button>
-
       {open &&
         mounted &&
         createPortal(

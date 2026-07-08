@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-function Icon({ name }: { name: string }) {
+export function NavIcon({ name, className = "h-6 w-6" }: { name: string; className?: string }) {
   const common = {
     viewBox: "0 0 24 24",
     fill: "none",
@@ -10,7 +10,7 @@ function Icon({ name }: { name: string }) {
     strokeWidth: 1.75,
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
-    className: "h-6 w-6",
+    className,
   };
   if (name === "today")
     return (
@@ -47,7 +47,7 @@ function Icon({ name }: { name: string }) {
   );
 }
 
-const tabs = [
+export const navTabs = [
   { href: "/", label: "Today", icon: "today" },
   { href: "/setups", label: "Setups", icon: "setups" },
   { href: "/positions", label: "Positions", icon: "positions" },
@@ -55,13 +55,17 @@ const tabs = [
   { href: "/pnl", label: "P&L", icon: "pnl" },
 ];
 
+export function isActive(path: string, href: string): boolean {
+  return href === "/" ? path === "/" : path.startsWith(href);
+}
+
 export default function BottomNav() {
   const path = usePathname();
   return (
-    <nav className="fixed bottom-0 inset-x-0 z-10 border-t border-border bg-background/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
+    <nav className="lg:hidden fixed bottom-0 inset-x-0 z-10 border-t border-border bg-background/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
       <div className="max-w-xl mx-auto grid grid-cols-5">
-        {tabs.map((t) => {
-          const active = t.href === "/" ? path === "/" : path.startsWith(t.href);
+        {navTabs.map((t) => {
+          const active = isActive(path, t.href);
           return (
             <Link
               key={t.href}
@@ -70,7 +74,7 @@ export default function BottomNav() {
                 active ? "text-accent" : "text-muted"
               }`}
             >
-              <Icon name={t.icon} />
+              <NavIcon name={t.icon} />
               <span className={`text-xs ${active ? "font-medium" : ""}`}>{t.label}</span>
             </Link>
           );

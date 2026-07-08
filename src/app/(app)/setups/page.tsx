@@ -36,7 +36,7 @@ export default async function SetupsPage() {
       {valid.length === 0 ? (
         <Empty>No ready setups from the latest scan. That&apos;s normal on quiet days.</Empty>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3">
           {valid.map((c, i) => {
             const z = c.zone as { bottom: number; top: number } | null;
             const isCall = c.direction === "call";

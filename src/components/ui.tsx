@@ -44,9 +44,9 @@ export function Empty({ children }: { children: React.ReactNode }) {
 
 export function PageTitle({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
-    <div className="text-center">
-      <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-      {subtitle && <p className="text-xs text-muted num mt-1">{subtitle}</p>}
+    <div className="text-center lg:mb-2">
+      <h1 className="text-xl lg:text-3xl font-semibold tracking-tight">{title}</h1>
+      {subtitle && <p className="text-xs lg:text-sm text-muted num mt-1">{subtitle}</p>}
     </div>
   );
 }
