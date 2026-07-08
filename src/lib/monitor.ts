@@ -84,14 +84,23 @@ async function manageExits(): Promise<Fire[]> {
     const occ = parseOcc(p.symbol);
     try {
       await broker.closePosition(p.symbol);
-      // Mark the originating proposal closed so Today reconciles with Positions.
+      // Record the exit (price, P&L, reason) and mark the proposal closed so the
+      // Closed tab + Today reconcile with reality.
       const [ord] = await db
-        .select({ pid: orders.proposalId })
+        .select({ id: orders.id, pid: orders.proposalId, qty: orders.qty })
         .from(orders)
         .where(eq(orders.contractSymbol, p.symbol))
         .orderBy(desc(orders.id))
         .limit(1);
-      if (ord) await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
+      if (ord) {
+        const qty = ord.qty ?? (Math.abs(Number(p.qty)) || 1);
+        const realizedPl = Math.round((bid - entry) * 100 * qty * 100) / 100;
+        await db
+          .update(orders)
+          .set({ exitPrice: String(bid), exitAt: new Date(), realizedPl: String(realizedPl), exitReason: ret >= TAKE_PROFIT ? "target" : "stop" })
+          .where(eq(orders.id, ord.id));
+        await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
+      }
       out.push({
         symbol: occ?.underlying ?? p.symbol,
         direction: occ?.type ?? "call",

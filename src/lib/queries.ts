@@ -1,7 +1,7 @@
 /**
  * Server-side read helpers for the dashboard pages (run in server components).
  */
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   researchRuns,
@@ -65,6 +65,11 @@ export async function getTodayMonitorTrades(): Promise<ProposalRow[]> {
     .from(proposals)
     .where(and(inArray(proposals.runId, ids), ne(proposals.status, "expired")))
     .orderBy(desc(proposals.createdAt));
+}
+
+/** Closed (sold) trades, newest first — for the Positions "Closed" tab. */
+export async function getClosedTrades(limit = 60): Promise<OrderRow[]> {
+  return db.select().from(orders).where(isNotNull(orders.exitAt)).orderBy(desc(orders.exitAt)).limit(limit);
 }
 
 export async function getCandidateById(id: number): Promise<CandidateRow | null> {

@@ -87,6 +87,11 @@ export const orders = pgTable("orders", {
   scenarios: jsonb("scenarios").$type<Scenario[]>(),
   submittedAt: timestamp("submitted_at", { withTimezone: true }),
   filledAt: timestamp("filled_at", { withTimezone: true }),
+  // Exit (recorded when the position is sold/closed).
+  exitPrice: numeric("exit_price"), // sell premium per share
+  exitAt: timestamp("exit_at", { withTimezone: true }),
+  realizedPl: numeric("realized_pl"), // (exit - entry) * 100 * qty
+  exitReason: text("exit_reason"), // target | stop | manual | close_through
 });
 
 // Single-row app settings. PAPER-ONLY; automation off by default.

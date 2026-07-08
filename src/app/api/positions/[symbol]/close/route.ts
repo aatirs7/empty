@@ -14,15 +14,27 @@ export async function POST(_req: Request, { params }: { params: Promise<{ symbol
     return NextResponse.json({ ok: false, error: "not paper mode" }, { status: 403 });
   }
   try {
-    const order = await getBroker().closePosition(symbol);
-    // Mark the originating proposal closed so Today reconciles with Positions.
+    const broker = getBroker();
+    const pos = await broker.getPosition(symbol).catch(() => null);
+    const order = await broker.closePosition(symbol);
+    // Record the exit (price, P&L) and mark the proposal closed.
     const [ord] = await db
-      .select({ pid: orders.proposalId })
+      .select({ id: orders.id, pid: orders.proposalId, qty: orders.qty })
       .from(orders)
       .where(eq(orders.contractSymbol, symbol))
       .orderBy(desc(orders.id))
       .limit(1);
-    if (ord) await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
+    if (ord) {
+      if (pos) {
+        const exit = pos.current_price ? Number(pos.current_price) : Number(pos.avg_entry_price);
+        const realizedPl = pos.unrealized_pl != null ? Math.round(Number(pos.unrealized_pl) * 100) / 100 : null;
+        await db
+          .update(orders)
+          .set({ exitPrice: String(exit), exitAt: new Date(), realizedPl: realizedPl != null ? String(realizedPl) : null, exitReason: "manual" })
+          .where(eq(orders.id, ord.id));
+      }
+      await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
+    }
     return NextResponse.json({ ok: true, orderId: order.id, status: order.status });
   } catch (err) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : "error" }, { status: 502 });

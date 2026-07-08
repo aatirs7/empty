@@ -21,7 +21,7 @@ export interface PlaybookResult {
   alert: boolean;
 }
 
-export const PLAYBOOK_MIN_SCORE = Number(process.env.PLAYBOOK_MIN_SCORE ?? 80);
+export const PLAYBOOK_MIN_SCORE = Number(process.env.PLAYBOOK_MIN_SCORE ?? 70);
 const HOLD = 10; // swing horizon in trading days
 
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
