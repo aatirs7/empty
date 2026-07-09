@@ -12,7 +12,8 @@ import type { Bar } from "./alpaca";
 
 export interface PlaybookResult {
   playbook: string;
-  score: number; // 0-100
+  score: number; // 0-100 — the LIVE auto-buy gate score (monitor.ts). Do not change its scale.
+  displayScore: number; // 0-100 — UI-only, non-saturating so setups actually rank. Not a gate.
   safeTarget: number | null;
   extendedTarget: number | null;
   riskReward: number | null;
@@ -131,11 +132,24 @@ export function classifyAndScore(
   const targetScore = safeTarget != null ? 5 : 0;
   const score = Math.round(tap + clarity + whiteSpace + confirm + histScore + rrScore + targetScore);
 
+  // DISPLAY score (UI ranking only — never a gate). The gate `score` above pins
+  // at 100 because its two differentiators saturate almost immediately; this one
+  // uses wider, non-saturating scales so setups spread across a real range and a
+  // mediocre level no longer looks identical to a great one.
+  const strongPlaybook = playbook === "Support Reclaim" || playbook === "Breakout Rejection";
+  const dispBase = 8; // it's a real named zone level on the watch list
+  const dispPlaybook = strongPlaybook ? 12 : 6;
+  const dispHist = clamp(hist.respected * 2 + hist.avgMovePct * 1.2, 0, 40);
+  const dispRR = riskReward != null ? clamp(Math.log2(1 + riskReward) * 10, 0, 30) : 0; // log so a far target doesn't peg it
+  const dispConfirm = closeConfirm ? 10 : 0;
+  const displayScore = Math.round(clamp(dispBase + dispPlaybook + dispHist + dispRR + dispConfirm, 0, 100));
+
   const reason = `${playbook}; ${hist.reactions} prior taps (${hist.respected} respected, avg +${hist.avgMovePct}% in ~${hist.avgDays}d); R/R ~${riskReward ?? "?"}.`;
 
   return {
     playbook,
     score,
+    displayScore,
     safeTarget: safeTarget != null ? Math.round(safeTarget * 100) / 100 : null,
     extendedTarget: extendedTarget != null ? Math.round(extendedTarget * 100) / 100 : null,
     riskReward,

@@ -243,7 +243,7 @@ export async function monitorTick(): Promise<Fire[]> {
     const zoneWord = direction === "call" ? "support" : "resistance";
     const tapBoundary = direction === "call" ? "top" : "bottom"; // call taps top (from above), put taps bottom (from below)
     const tapPrice = direction === "call" ? z.top : z.bottom;
-    const alert = `${direction.toUpperCase()}S: ${c.symbol} — ${pb.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb.safeTarget ?? "?"}, extended ${pb.extendedTarget ?? "?"}. Score ${pb.score}/100.${confirmReason}${sniperSummary}`;
+    const alert = `${direction.toUpperCase()}S: ${c.symbol} — ${pb.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb.safeTarget ?? "?"}, extended ${pb.extendedTarget ?? "?"}. Score ${pb.displayScore}/100.${confirmReason}${sniperSummary}`;
     try {
       const runId = await ensureMonitorRun();
       const [prop] = await db
@@ -278,7 +278,7 @@ export async function monitorTick(): Promise<Fire[]> {
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: true, detail: `order #${r.orderId} ${r.orderStatus}` });
           await sendPush(
             `Bought ${c.symbol} ${direction === "call" ? "call" : "put"}`,
-            `${pb.playbook} — tapped ${tapBoundary} zone at ${cur}. Score ${pb.score}/100.`,
+            `${pb.playbook} — tapped ${tapBoundary} zone at ${cur}. Score ${pb.displayScore}/100.`,
             "/positions",
           ).catch(() => {});
         } catch (e) {

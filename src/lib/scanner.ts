@@ -74,7 +74,7 @@ async function scanTimeframe(
     if ((setup.direction === "call" || setup.direction === "put") && setup.active_zone) {
       try {
         const pb = classifyAndScore(bars, setup.active_zone, setup.direction, Number(setup.price));
-        score = pb.score;
+        score = pb.displayScore; // UI ranking score (non-saturating); the live gate uses pb.score in monitor.ts
         playbook = pb.playbook;
       } catch {
         score = null;

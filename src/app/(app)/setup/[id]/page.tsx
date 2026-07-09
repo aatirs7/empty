@@ -54,7 +54,7 @@ export default async function SetupDetailPage({ params }: { params: Promise<{ id
         </p>
         {pb && (
           <p className="text-xs text-accent mt-1">
-            {pb.playbook} · Score {pb.score}/100 {c.setupValid ? "· tapped" : "· approaching"}
+            {pb.playbook} · Score {pb.displayScore}/100 {c.setupValid ? "· tapped" : "· approaching"}
           </p>
         )}
       </div>
