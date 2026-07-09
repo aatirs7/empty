@@ -4,7 +4,7 @@
  * writes the next session's candidate list tagged with the profile id.
  * PAPER/analysis only — no orders here.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "../db";
 import { universe as universeTable, candidates as candidatesTable, researchRuns } from "../db/schema";
 import { getMultiStockBars, getIntradayBars, type Bar } from "./alpaca";
@@ -116,6 +116,12 @@ export async function scanProfile(profile: Profile, runDate: string): Promise<Sc
   const symbols = await loadUniverse(profile.id);
   const base: ScanResult = { profileId: profile.id, runDate, scanned: symbols.length, candidates: 0, validSetups: 0 };
   if (symbols.length === 0) return base;
+  // Purge candidates from timeframes this profile no longer scans (e.g. QQQ's old
+  // daily rows after the intraday switch) so the monitor never trades a stale tf.
+  const keepTfs = profile.zoneTimeframes.map((z) => z.timeframe);
+  await db
+    .delete(candidatesTable)
+    .where(and(eq(candidatesTable.runDate, runDate), eq(candidatesTable.profileId, profile.id), notInArray(candidatesTable.timeframe, keepTfs)));
   let candidates = 0;
   let validSetups = 0;
   for (const ztf of profile.zoneTimeframes) {

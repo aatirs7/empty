@@ -282,6 +282,13 @@ export function getOrder(id: string): Promise<Order> {
   return trading<Order>(`/v2/orders/${id}`);
 }
 
+/** Recent CLOSED orders for a symbol (used to recover an exit fill price when a
+ *  position was closed at the broker but we never recorded it). */
+export function getClosedOrders(symbol: string, limit = 20): Promise<Order[]> {
+  const q = new URLSearchParams({ status: "closed", symbols: symbol, limit: String(limit), direction: "desc" });
+  return trading<Order[]>(`/v2/orders?${q.toString()}`);
+}
+
 export interface ListContractsParams {
   underlyingSymbol: string;
   type?: "call" | "put";

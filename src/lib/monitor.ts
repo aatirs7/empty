@@ -12,7 +12,7 @@
  * `monitor_state` DB row, so this works identically from a persistent worker loop
  * OR a stateless serverless cron tick. Dedup is durable (proposals.candidateId).
  */
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { candidates, monitorState, orders, proposals, researchRuns } from "../db/schema";
 import { getLatestPrices, getStockBars, getOptionQuotes, midPrice, getClock } from "./alpaca";
@@ -149,6 +149,44 @@ async function refreshIntradayScans(): Promise<void> {
         /* keep the tick alive even if a rescan fails */
       }
     }
+  }
+}
+
+/** Heal DB/broker drift: if a filled order's contract is no longer held at the
+ *  broker but we never recorded an exit, mark it closed (recovering the exit fill
+ *  from Alpaca). Without this, a position closed outside our close path stays
+ *  "open" on Today while Positions (broker-truth) shows nothing. */
+export async function reconcileClosedPositions(profileId: string): Promise<void> {
+  const broker = getBroker(profileId);
+  const held = new Set((await broker.listPositions()).map((p) => p.symbol));
+  const rows = await db
+    .select({ oid: orders.id, sym: orders.contractSymbol, qty: orders.qty, entry: orders.filledPrice, pid: orders.proposalId })
+    .from(orders)
+    .innerJoin(proposals, eq(orders.proposalId, proposals.id))
+    .where(and(eq(proposals.profileId, profileId), isNull(orders.exitAt), eq(orders.status, "filled")));
+  for (const r of rows) {
+    if (!r.sym || held.has(r.sym)) continue; // still open — leave it
+    let exitPrice: number | null = null;
+    try {
+      const closed = await broker.getClosedOrders(r.sym);
+      const sell = closed.find((o) => o.side === "sell" && o.status === "filled" && o.filled_avg_price);
+      if (sell?.filled_avg_price) exitPrice = Number(sell.filled_avg_price);
+    } catch {
+      /* best effort — still mark closed below so Today/Positions agree */
+    }
+    const entry = r.entry != null ? Number(r.entry) : null;
+    const qty = r.qty ?? 1;
+    const realizedPl = exitPrice != null && entry != null ? Math.round((exitPrice - entry) * 100 * qty * 100) / 100 : null;
+    await db
+      .update(orders)
+      .set({
+        exitPrice: exitPrice != null ? String(exitPrice) : null,
+        exitAt: new Date(),
+        realizedPl: realizedPl != null ? String(realizedPl) : null,
+        exitReason: "reconciled (closed at broker)",
+      })
+      .where(eq(orders.id, r.oid));
+    await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, r.pid));
   }
 }
 
@@ -339,6 +377,15 @@ export async function monitorTick(): Promise<Fire[]> {
       nearClose = new Date(clock.next_close).getTime() - Date.now() < 25 * 60_000;
     } catch {
       /* keep false */
+    }
+    // Sync DB with broker truth every tick for ALL profiles (heals orphaned
+    // "open" trades), including shelved zones_legacy on the shared account.
+    for (const p of activeProfiles()) {
+      try {
+        await reconcileClosedPositions(p.id);
+      } catch {
+        // best-effort
+      }
     }
     for (const pid of ["sniper_swing", "qqq_0dte"]) {
       try {

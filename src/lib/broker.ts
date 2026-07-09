@@ -13,6 +13,7 @@ import {
   placeOptionOrder,
   waitForFill,
   closePosition,
+  getClosedOrders,
   getPortfolioPL,
   getWeeklyPL,
   withAccount,
@@ -32,6 +33,7 @@ export interface BrokerAdapter {
   placeOptionOrder(input: PlaceOptionOrderInput): Promise<Order>;
   waitForFill(orderId: string, timeoutMs?: number, intervalMs?: number): Promise<Order>;
   closePosition(symbol: string, qty?: number): Promise<Order>;
+  getClosedOrders(symbol: string): Promise<Order[]>;
   getPortfolioPL(): Promise<PortfolioPL>;
   getWeeklyPL(): Promise<{ weeklyPL: number; currentEquity: number }>;
 }
@@ -58,6 +60,7 @@ class AlpacaBroker implements BrokerAdapter {
   placeOptionOrder = (input: PlaceOptionOrderInput) => this.run(() => placeOptionOrder(input));
   waitForFill = (orderId: string, timeoutMs?: number, intervalMs?: number) => this.run(() => waitForFill(orderId, timeoutMs, intervalMs));
   closePosition = (symbol: string, qty?: number) => this.run(() => closePosition(symbol, qty));
+  getClosedOrders = (symbol: string) => this.run(() => getClosedOrders(symbol));
   getPortfolioPL = () => this.run(() => getPortfolioPL());
   getWeeklyPL = () => this.run(() => getWeeklyPL());
 }
