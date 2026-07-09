@@ -1,35 +1,42 @@
-import { getUnderlyingPrice, getStockBars, getIntradayBars } from "@/lib/alpaca";
-import { buildZoneSetup } from "@/lib/strategy";
+import { getUnderlyingPrice } from "@/lib/alpaca";
 import { predict } from "@/lib/predict";
 import { selectByEV, type EvContract } from "@/lib/ev";
 import { getProfile, contractForTimeframe } from "@/lib/profiles";
-import { ALPACA_TF, SCAN_LOOKBACK_MIN } from "@/lib/timeframes";
+import { getLatestScan } from "@/lib/queries";
 
-// Live QQQ prediction: predict the underlying first (from the reaction DB, per
-// timeframe), then show the expected-value contracts. All numbers carry a sample
-// size; nothing is model-generated.
+// Live QQQ prediction. Reads the zones the scanner ALREADY computed (fast DB
+// read) rather than re-fetching months of intraday bars on every page load — the
+// prior version did 3 paginated bar pulls + zone builds and took ~28s, which
+// timed out on Vercel. Predictions + one EV lookup are quick. All numbers come
+// from the reaction DB with a sample size; nothing is model-generated.
 export default async function QqqPrediction() {
   const profile = getProfile("qqq_0dte");
-  const spot = await getUnderlyingPrice("QQQ").catch(() => null);
+  const [spot, scan] = await Promise.all([
+    getUnderlyingPrice("QQQ").catch(() => null),
+    getLatestScan("qqq_0dte"),
+  ]);
   if (spot == null) {
     return <p className="text-xs text-muted text-center">QQQ quote unavailable right now.</p>;
   }
 
-  const rows: { tf: string; dir: "call" | "put"; distance: number; pred: Awaited<ReturnType<typeof predict>> }[] = [];
-  for (const ztf of profile.zoneTimeframes) {
-    try {
-      const bars =
-        ztf.timeframe === "daily"
-          ? await getStockBars("QQQ", 4000)
-          : await getIntradayBars("QQQ", ALPACA_TF[ztf.timeframe], SCAN_LOOKBACK_MIN[ztf.timeframe]);
-      const setup = buildZoneSetup(bars, { ...profile.strategy, zone: ztf.opts });
-      if (!setup.direction || !setup.active_zone) continue;
-      const pred = await predict("QQQ", spot, ztf.timeframe, setup.direction, setup.approach ?? "", 0);
-      rows.push({ tf: ztf.timeframe, dir: setup.direction, distance: setup.distance_to_edge_pct ?? 999, pred });
-    } catch {
-      /* skip this timeframe */
-    }
+  // One candidate per timeframe (nearest to its edge), with a real direction+zone.
+  const cands = (scan?.candidates ?? []).filter((c) => (c.direction === "call" || c.direction === "put") && c.zone);
+  const byTf = new Map<string, (typeof cands)[number]>();
+  for (const c of cands) {
+    const prev = byTf.get(c.timeframe);
+    if (!prev || Number(c.distanceToEdgePct) < Number(prev.distanceToEdgePct)) byTf.set(c.timeframe, c);
   }
+  // Keep the profile's timeframe order (15min, 1h, 4h).
+  const ordered = profile.zoneTimeframes.map((z) => byTf.get(z.timeframe)).filter((c): c is (typeof cands)[number] => !!c);
+
+  const rows = await Promise.all(
+    ordered.map(async (c) => ({
+      tf: c.timeframe,
+      dir: c.direction as "call" | "put",
+      distance: Number(c.distanceToEdgePct),
+      pred: await predict("QQQ", spot, c.timeframe, c.direction as "call" | "put", c.approach ?? "", 0),
+    })),
+  );
   if (rows.length === 0) return <p className="text-xs text-muted text-center">No QQQ zone in play right now.</p>;
 
   const primary = [...rows].sort((a, b) => a.distance - b.distance)[0];
@@ -39,6 +46,8 @@ export default async function QqqPrediction() {
   } catch {
     ev = null;
   }
+
+  const roleOf = (tf: string) => (tf === "4h" ? "next-day swing" : "same-day 0DTE");
 
   const contract = (label: string, c: EvContract | null) =>
     c && (
@@ -60,8 +69,9 @@ export default async function QqqPrediction() {
       {rows.map((r) => (
         <div key={r.tf} className="bg-panel border border-border rounded-2xl p-4 space-y-1">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium capitalize">
-              {r.tf} · {r.pred.bias.replace(/_/g, " ")}
+            <p className="text-sm font-medium">
+              <span className="capitalize">{r.tf}</span> · {r.pred.bias.replace(/_/g, " ")}
+              <span className="text-[10px] text-muted"> · {roleOf(r.tf)}</span>
             </p>
             <span className={`text-xs num ${r.pred.lowConfidence ? "text-muted" : "text-accent"}`}>
               {r.pred.probability}% · n={r.pred.sampleSize}
@@ -79,7 +89,7 @@ export default async function QqqPrediction() {
 
       {ev && (ev.primary || ev.aggressive || ev.conservative) && (
         <div className="bg-panel border border-border rounded-2xl p-4">
-          <p className="text-sm font-medium mb-1">Best-value 0DTE contracts</p>
+          <p className="text-sm font-medium mb-1">Best-value contracts ({roleOf(primary.tf)})</p>
           {contract("Primary", ev.primary)}
           {contract("Aggressive", ev.aggressive)}
           {contract("Conservative", ev.conservative)}
