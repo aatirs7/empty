@@ -46,7 +46,10 @@ export const DEFAULT_STRATEGY_OPTIONS: StrategyOptions = {
 
 const overlaps = (bar: Bar, bottom: number, top: number): boolean => bar.h >= bottom && bar.l <= top;
 
-export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS): ZoneSetup {
+/** Build up to `limit` tradeable setups from the nearest zones (tapped first,
+ *  then nearest within proximity). Single-ticker profiles (QQQ) watch several
+ *  levels per timeframe instead of just the closest one. */
+export function buildZoneSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS, limit = 1): ZoneSetup[] {
   const { zones, lastBar } = computeZones(bars, opts.zone);
   const price = lastBar.c;
   const empty: ZoneSetup = {
@@ -61,7 +64,7 @@ export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRA
     setup_valid: false,
     price,
   };
-  if (zones.length === 0) return empty;
+  if (zones.length === 0) return [empty];
 
   const n = bars.length;
   const recentPrice = bars[Math.max(0, n - 1 - opts.approachWindow)].c;
@@ -106,36 +109,52 @@ export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRA
     return { zone: z, edge, approach, direction, distPct, tapped };
   });
 
-  // A tapped zone fires this session; otherwise the nearest zone within proximity is a candidate to watch.
+  // A tapped zone fires this session; otherwise the nearest zones within proximity
+  // are candidates to watch. Tapped first, then nearest-first.
   const tappedCands = cands.filter((c) => c.tapped).sort((a, b) => a.distPct - b.distPct);
   const nearCands = cands.filter((c) => !c.tapped && c.distPct <= opts.proximityPct).sort((a, b) => a.distPct - b.distPct);
-  const target = tappedCands[0] ?? nearCands[0];
-  if (!target) return empty;
+  const ordered = [...tappedCands, ...nearCands];
+  if (ordered.length === 0) return [empty];
 
-  // White space (hard gate) — SniperBot continuation-side: require clear room in
-  // the TRADE's direction. For a call (bounce up off support) there must be no
-  // nearby zone directly ABOVE; for a put (rejection down off resistance) no
+  // White space (hard gate) — require clear room in the TRADE's direction. For a
+  // call (bounce up off support) no nearby zone directly ABOVE; for a put no
   // nearby zone directly BELOW. "Nearby" = within RUNWAY_PCT of price.
   const RUNWAY_PCT = 4;
   const band = price * (RUNWAY_PCT / 100);
-  const blocking =
-    target.direction === "call"
-      ? zones.some((z) => z !== target.zone && z.bottom > target.zone.top && z.bottom <= target.zone.top + band)
-      : zones.some((z) => z !== target.zone && z.top < target.zone.bottom && z.top >= target.zone.bottom - band);
-  const clearRunway = !blocking;
-
-  const setupValid = target.tapped && clearRunway;
-
-  return {
-    active_zone: { bottom: target.zone.bottom, top: target.zone.top },
-    tapped_edge: Math.round(target.edge * 100) / 100,
-    trigger_edge: "first_touch",
-    approach: target.approach,
-    direction: target.direction,
-    clear_runway: clearRunway,
-    tap_granularity: "daily_scan",
-    distance_to_edge_pct: Math.round(target.distPct * 100) / 100,
-    setup_valid: setupValid,
-    price,
+  const toSetup = (target: Cand): ZoneSetup => {
+    const blocking =
+      target.direction === "call"
+        ? zones.some((z) => z !== target.zone && z.bottom > target.zone.top && z.bottom <= target.zone.top + band)
+        : zones.some((z) => z !== target.zone && z.top < target.zone.bottom && z.top >= target.zone.bottom - band);
+    const clearRunway = !blocking;
+    return {
+      active_zone: { bottom: target.zone.bottom, top: target.zone.top },
+      tapped_edge: Math.round(target.edge * 100) / 100,
+      trigger_edge: "first_touch",
+      approach: target.approach,
+      direction: target.direction,
+      clear_runway: clearRunway,
+      tap_granularity: "daily_scan",
+      distance_to_edge_pct: Math.round(target.distPct * 100) / 100,
+      setup_valid: target.tapped && clearRunway,
+      price,
+    };
   };
+
+  // De-dup by zone bounds, take the nearest `limit`.
+  const seen = new Set<string>();
+  const out: ZoneSetup[] = [];
+  for (const c of ordered) {
+    const key = `${c.zone.bottom.toFixed(4)}-${c.zone.top.toFixed(4)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(toSetup(c));
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** Backward-compatible single-setup builder (the nearest/best zone). */
+export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS): ZoneSetup {
+  return buildZoneSetups(bars, opts, 1)[0];
 }

@@ -72,6 +72,8 @@ export interface Profile {
   confirmation: ConfirmationConfig;
   requireClearRunway?: boolean; // white-space gate (default true). Off for intraday
   // 0DTE where zones sit close together and the confirmation candle is the real gate.
+  watchPerTimeframe?: number; // how many nearest zones to watch per symbol/timeframe
+  // (default 1). Single-ticker profiles (QQQ) watch several levels above+below price.
   minScore: number; // playbook/confidence gate
   contract: ContractConfig;
   caps: ProfileCaps;
@@ -120,6 +122,7 @@ const QQQ_0DTE: Profile = {
   zoneTimeframes: [Q_15M, Q_1H, Q_4H_SWING],
   confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 },
   requireClearRunway: false, // intraday zones sit close; the confirmation candle gates instead
+  watchPerTimeframe: 4, // single ticker — watch the nearest 4 levels per timeframe, not 1
   minScore: 80, // stricter: 0DTE punishes marginal setups
   contract: {
     expiryKind: "zeroDte", // default; the 4H swing tf overrides to oneDay

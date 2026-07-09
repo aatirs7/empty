@@ -8,7 +8,7 @@ import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "../db";
 import { universe as universeTable, candidates as candidatesTable, researchRuns } from "../db/schema";
 import { getMultiStockBars, getIntradayBars, type Bar } from "./alpaca";
-import { buildZoneSetup } from "./strategy";
+import { buildZoneSetups } from "./strategy";
 import { classifyAndScore } from "./playbook";
 import { activeProfiles, type Profile, type ZoneTimeframe } from "./profiles";
 import { ALPACA_TF, SCAN_LOOKBACK_MIN } from "./timeframes";
@@ -61,46 +61,49 @@ async function scanTimeframe(
   }
 
   const strat = { ...profile.strategy, zone: ztf.opts };
+  const watch = profile.watchPerTimeframe ?? 1; // nearest N zones per symbol/tf
   const rows: (typeof candidatesTable.$inferInsert)[] = [];
   for (const sym of symbols) {
     const bars = barsBySymbol[sym];
     if (!bars || bars.length < 60) continue;
-    let setup;
+    let setups;
     try {
-      setup = buildZoneSetup(bars, strat);
+      setups = buildZoneSetups(bars, strat, watch);
     } catch {
       continue;
     }
-    if (!setup.active_zone || setup.distance_to_edge_pct == null) continue;
+    for (const setup of setups) {
+      if (!setup.active_zone || setup.distance_to_edge_pct == null) continue;
 
-    let score: number | null = null;
-    let playbook: string | null = null;
-    if ((setup.direction === "call" || setup.direction === "put") && setup.active_zone) {
-      try {
-        const pb = classifyAndScore(bars, setup.active_zone, setup.direction, Number(setup.price));
-        score = pb.displayScore; // UI ranking score (non-saturating); the live gate uses pb.score in monitor.ts
-        playbook = pb.playbook;
-      } catch {
-        score = null;
+      let score: number | null = null;
+      let playbook: string | null = null;
+      if ((setup.direction === "call" || setup.direction === "put") && setup.active_zone) {
+        try {
+          const pb = classifyAndScore(bars, setup.active_zone, setup.direction, Number(setup.price));
+          score = pb.displayScore; // UI ranking score (non-saturating); the live gate uses pb.score in monitor.ts
+          playbook = pb.playbook;
+        } catch {
+          score = null;
+        }
       }
-    }
 
-    rows.push({
-      runDate,
-      symbol: sym,
-      direction: setup.direction,
-      approach: setup.approach,
-      clearRunway: setup.clear_runway,
-      distanceToEdgePct: String(setup.distance_to_edge_pct),
-      setupValid: setup.setup_valid,
-      price: String(setup.price),
-      zone: setup.active_zone,
-      setup,
-      score,
-      playbook,
-      profileId: profile.id,
-      timeframe: ztf.timeframe,
-    });
+      rows.push({
+        runDate,
+        symbol: sym,
+        direction: setup.direction,
+        approach: setup.approach,
+        clearRunway: setup.clear_runway,
+        distanceToEdgePct: String(setup.distance_to_edge_pct),
+        setupValid: setup.setup_valid,
+        price: String(setup.price),
+        zone: setup.active_zone,
+        setup,
+        score,
+        playbook,
+        profileId: profile.id,
+        timeframe: ztf.timeframe,
+      });
+    }
   }
 
   // Replace this profile+timeframe's candidates for the runDate (idempotent).
