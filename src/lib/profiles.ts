@@ -68,6 +68,8 @@ export interface Profile {
   strategy: StrategyOptions;
   zoneTimeframes: ZoneTimeframe[]; // zone timeframes to scan (QQQ = Daily + 4H)
   confirmation: ConfirmationConfig;
+  requireClearRunway?: boolean; // white-space gate (default true). Off for intraday
+  // 0DTE where zones sit close together and the confirmation candle is the real gate.
   minScore: number; // playbook/confidence gate
   contract: ContractConfig;
   caps: ProfileCaps;
@@ -115,6 +117,7 @@ const QQQ_0DTE: Profile = {
   // against a same-day option.
   zoneTimeframes: [Q_15M, Q_1H, Q_4H_SWING],
   confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 },
+  requireClearRunway: false, // intraday zones sit close; the confirmation candle gates instead
   minScore: 80, // stricter: 0DTE punishes marginal setups
   contract: {
     expiryKind: "zeroDte", // default; the 4H swing tf overrides to oneDay

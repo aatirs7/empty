@@ -201,9 +201,13 @@ export async function monitorTick(): Promise<Fire[]> {
     .limit(1);
   if (!latest) return [];
 
-  const cands = (
-    await db.select().from(candidates).where(and(eq(candidates.runDate, latest.d), eq(candidates.clearRunway, true)))
-  ).filter((c) => (c.direction === "call" || c.direction === "put") && c.zone);
+  const cands = (await db.select().from(candidates).where(eq(candidates.runDate, latest.d))).filter((c) => {
+    if (!(c.direction === "call" || c.direction === "put") || !c.zone) return false;
+    // Clear-runway (white space) is required unless the profile opts out (QQQ 0DTE
+    // relies on its confirmation candle instead — intraday zones sit too close).
+    if (getProfile(c.profileId).requireClearRunway !== false && !c.clearRunway) return false;
+    return true;
+  });
   if (cands.length === 0) return [];
 
   // Durable crossing state.
