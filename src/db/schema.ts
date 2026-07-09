@@ -49,6 +49,23 @@ export const apiCosts = pgTable("api_costs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Every monitor decision (a zone crossing that was BOUGHT, SOLD, or SKIPPED with a
+// reason) — so the daily report can explain not just what the bot did but what it
+// considered and passed on. Skips are otherwise ephemeral.
+export const activityLog = pgTable("activity_log", {
+  id: serial("id").primaryKey(),
+  runDate: date("run_date").notNull(),
+  profileId: text("profile_id"),
+  symbol: text("symbol"),
+  kind: text("kind").notNull(), // buy | sell | skip
+  direction: text("direction"),
+  price: numeric("price"),
+  candidateId: integer("candidate_id"),
+  detail: text("detail"), // the reason / summary
+  meta: jsonb("meta"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Individual trade ideas from a run.
 export const proposals = pgTable("proposals", {
   id: serial("id").primaryKey(),

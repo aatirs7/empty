@@ -134,6 +134,13 @@
       "when": 1783570768993,
       "tag": "0018_same_nick_fury",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783622598097,
+      "tag": "0019_powerful_frightful_four",
+      "breakpoints": true
     }
   ]
 }

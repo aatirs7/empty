@@ -5,6 +5,7 @@
   "crons": [
     { "path": "/api/monitor", "schedule": "* * * * *" },
     { "path": "/api/scan", "schedule": "0 4 * * 1-5" },
-    { "path": "/api/shadow", "schedule": "0 15 * * 1-5" }
+    { "path": "/api/shadow", "schedule": "0 15 * * 1-5" },
+    { "path": "/api/daily-report", "schedule": "15 21 * * 1-5" }
   ]
 }

@@ -28,6 +28,7 @@ import { confirmEntry } from "./confirm";
 import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
 import { predict } from "./predict";
 import { checkCatalyst } from "./catalyst";
+import { logActivity, fireKind } from "./activity";
 import type { Bar } from "./alpaca";
 
 export interface Fire {
@@ -37,6 +38,7 @@ export interface Fire {
   price: number;
   placed: boolean;
   detail: string;
+  profileId?: string; // set for exits (which know their account); else derived from the candidate
 }
 
 /** Heartbeat: stamp monitor_state.updatedAt every cron invocation (even when the
@@ -112,7 +114,7 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
       }
       const sym = occ?.underlying ?? p.symbol;
       const label = ret >= tp ? `SOLD +${Math.round(ret * 100)}% (target)` : ret <= sl ? `STOPPED ${Math.round(ret * 100)}%` : `CLOSED ${Math.round(ret * 100)}% (0DTE)`;
-      out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: bid, placed: true, detail: label });
+      out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: bid, placed: true, detail: label, profileId });
       await sendPush(
         ret >= tp ? `Sold ${sym} for +${Math.round(ret * 100)}%` : `Closed ${sym} (${ret >= 0 ? "+" : ""}${Math.round(ret * 100)}%)`,
         ret >= tp ? "Hit the profit target." : ret <= sl ? "Hit the stop." : "0DTE end-of-day flatten.",
@@ -398,5 +400,22 @@ export async function monitorTick(): Promise<Fire[]> {
   }
 
   await db.update(monitorState).set({ prices: nextPrices, updatedAt: new Date() }).where(eq(monitorState.id, row.id));
+
+  // Persist every decision this tick (buys, sells, and skips-with-reason) for the
+  // daily report. candidateId 0 (exits) is stored as null.
+  await logActivity(
+    fires.map((f) => {
+      const cand = f.candidateId ? cands.find((c) => c.id === f.candidateId) : undefined;
+      return {
+        profileId: f.profileId ?? cand?.profileId ?? null,
+        symbol: f.symbol,
+        kind: fireKind(f.placed, f.detail),
+        direction: f.direction,
+        price: f.price,
+        candidateId: f.candidateId || null,
+        detail: f.detail,
+      };
+    }),
+  );
   return fires;
 }
