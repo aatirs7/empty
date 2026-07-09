@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { usd, parseOcc, companyName, positionRecommendation, etDateTime, daysUntil } from "@/lib/format";
+import { usd, parseOcc, companyName, etDateTime, daysUntil } from "@/lib/format";
 
 interface Pos {
   symbol: string;
@@ -116,11 +116,9 @@ function OpenView({ data, closing, onClose }: { data: Data | null; closing: stri
       <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3">
         {data.positions.map((p) => {
           const pl = p.unrealized_pl ? Number(p.unrealized_pl) : 0;
-          const plPc = p.unrealized_plpc != null ? Number(p.unrealized_plpc) : null;
           const occ = parseOcc(p.symbol);
           const company = occ ? companyName(occ.underlying) : p.symbol;
           const dir = occ?.type === "call" ? "up" : "down";
-          const rec = positionRecommendation(p.symbol, plPc);
           return (
             <div key={p.symbol} className="bg-panel border border-border rounded-2xl p-4 space-y-3">
               <Link href={`/position/${encodeURIComponent(p.symbol)}`} className="block">
@@ -149,10 +147,6 @@ function OpenView({ data, closing, onClose }: { data: Data | null; closing: stri
                   </div>
                 </div>
               </Link>
-
-              <div className={`text-xs text-center ${rec.tone === "up" ? "text-up" : rec.tone === "down" ? "text-down" : "text-muted"}`}>
-                {rec.text}
-              </div>
 
               <button
                 onClick={() => onClose(p.symbol)}

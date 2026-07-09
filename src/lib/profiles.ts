@@ -96,7 +96,7 @@ const SNIPER_SWING: Profile = {
     priceCap: 1.0,
     liquiditySpread: 0.6,
   },
-  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3 },
+  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 10 }, // owner raised 3 -> 10 (2026-07-09)
   exit: { takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: true, // owner chose to auto-trade SniperBot on the paper account
   baselineSymbol: "SPY",
