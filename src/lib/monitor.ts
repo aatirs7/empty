@@ -26,6 +26,7 @@ import { getProfile } from "./profiles";
 import { getProfileSettings } from "./profile-settings";
 import { confirmEntry } from "./confirm";
 import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
+import { predict } from "./predict";
 import { checkCatalyst } from "./catalyst";
 import type { Bar } from "./alpaca";
 
@@ -230,7 +231,10 @@ export async function monitorTick(): Promise<Fire[]> {
     let sniperConfidence = pb.score / 100;
     let sniperSummary = "";
     if (profile.confirmation.enabled) {
-      const ev = evaluateSniper(pb, bars, direction, execScore, c.clearRunway, marketCtx);
+      // Reaction-DB prediction (probability / expected move / targets from history).
+      const marketAlign = ((marketCtx.spy + marketCtx.qqq) / 2) * (direction === "call" ? 1 : -1);
+      const pred = await predict(c.symbol, cur, c.timeframe, direction, c.approach ?? "", marketAlign);
+      const ev = evaluateSniper(pb, bars, direction, execScore, c.clearRunway, marketCtx, pred);
       if (!ev.passed) {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
         continue;
@@ -241,7 +245,7 @@ export async function monitorTick(): Promise<Fire[]> {
         continue;
       }
       sniperConfidence = ev.overall / 100;
-      sniperSummary = ` ${ev.summary}${cat.checked ? "" : " (catalyst unchecked)"}`;
+      sniperSummary = ` ${pred.reason} ${ev.summary}${cat.checked ? "" : " (catalyst unchecked)"}`;
     }
 
     const zoneWord = direction === "call" ? "support" : "resistance";

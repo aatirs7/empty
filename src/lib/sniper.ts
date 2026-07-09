@@ -9,6 +9,7 @@
  */
 import type { Bar } from "./alpaca";
 import type { classifyAndScore } from "./playbook";
+import type { Prediction } from "./predict";
 
 type Playbook = ReturnType<typeof classifyAndScore>;
 
@@ -74,9 +75,14 @@ export function evaluateSniper(
   execScore: number,
   clearRunway: boolean,
   market: MarketContext,
+  pred?: Prediction, // persisted reaction-DB prediction (preferred over in-memory)
 ): SniperEval {
   const h = pb.historical;
-  const respectedRate = h.reactions > 0 ? h.respected / h.reactions : 0;
+  // Prefer the persisted reaction DB when it has a real sample; else the in-memory aggregate.
+  const useDb = !!pred && pred.sampleSize > 0;
+  const reactions = useDb ? pred!.sampleSize : h.reactions;
+  const respectedRate = useDb ? pred!.probability / 100 : h.reactions > 0 ? h.respected / h.reactions : 0;
+  const dbMovePct = useDb ? pred!.expectedMovePct : h.avgMovePct;
   const stockTrend = trendScore(bars);
   const marketTrend = (market.spy + market.qqq) / 2;
   const dirSign = direction === "call" ? 1 : -1;
@@ -87,13 +93,13 @@ export function evaluateSniper(
   const atrp = atrPct(bars);
   const rr = pb.riskReward ?? 0;
 
-  // Probability — likelihood the setup follows through.
-  const probability = Math.round(
-    clamp(respectedRate * 45 + Math.min(h.reactions, 8) * 2 + trendAlign * 25 + (emptySpace ? 10 : 0), 0, 100),
-  );
+  // Probability — the empirical hit rate (DB) nudged by sample size + trend align.
+  const probability = useDb
+    ? Math.round(clamp(pred!.confidence * 0.85 + trendAlign * 15, 0, 100))
+    : Math.round(clamp(respectedRate * 45 + Math.min(h.reactions, 8) * 2 + trendAlign * 25 + (emptySpace ? 10 : 0), 0, 100));
 
   // Weekly-Options-Potential — if right, how much room/speed for a big % move.
-  const moveScore = clamp(h.avgMovePct * 4, 0, 40);
+  const moveScore = clamp(dbMovePct * 4, 0, 40);
   const rrScore = clamp(rr * 8, 0, 30);
   const speedScore = h.avgDays > 0 ? clamp((6 - h.avgDays) * 5, 0, 20) : 10;
   const volScore = clamp(atrp * 100 * 3, 0, 10);
@@ -103,10 +109,11 @@ export function evaluateSniper(
 
   // Adversarial review — actively try to DISPROVE the trade.
   const rejections: string[] = [];
-  if (h.reactions < 3) rejections.push("thin history (<3 prior reactions at this level)");
+  if (reactions < 3) rejections.push("thin history (<3 prior reactions at this level)");
+  if (useDb && pred!.lowConfidence) rejections.push(`low sample (${reactions} reactions, need 20)`);
   if (respectedRate < 0.4) rejections.push("zone rarely respected historically");
   if (rr < 1) rejections.push("poor risk/reward");
-  if (h.avgMovePct < 2) rejections.push("historical moves too small for weekly options");
+  if (dbMovePct < 2) rejections.push("historical moves too small for weekly options");
   if (marketTrend * dirSign < -0.3) rejections.push("fighting a strong opposing market trend");
   if (probability < THRESH.probability) rejections.push(`probability ${probability} < ${THRESH.probability}`);
   if (weeklyPotential < THRESH.weeklyPotential) rejections.push(`weekly-options potential ${weeklyPotential} < ${THRESH.weeklyPotential}`);
@@ -115,7 +122,8 @@ export function evaluateSniper(
   const passed = rejections.length === 0;
   const similarityPct = Math.round(respectedRate * 100);
   const overall = Math.round((probability + weeklyPotential + executionQuality) / 3);
-  const summary = `Prob ${probability} · Weekly-potential ${weeklyPotential} · Exec ${executionQuality}. Matches ${similarityPct}% of ${h.reactions} prior reactions; avg move +${h.avgMovePct}% in ~${h.avgDays}d${emptySpace ? "; empty-space continuation" : ""}.`;
+  const hold = useDb ? `${pred!.expectedHoldBars} bars` : `${h.avgDays}d`;
+  const summary = `Prob ${probability} · Weekly-potential ${weeklyPotential} · Exec ${executionQuality}. Matches ${similarityPct}% of ${reactions} prior reactions; avg move +${dbMovePct}% in ~${hold}${emptySpace ? "; empty-space continuation" : ""}.`;
 
   return {
     probability,
@@ -123,10 +131,10 @@ export function evaluateSniper(
     executionQuality,
     overall,
     similarityPct,
-    reactions: h.reactions,
+    reactions,
     emptySpace,
-    expectedMovePct: h.avgMovePct,
-    expectedHoldDays: h.avgDays,
+    expectedMovePct: dbMovePct,
+    expectedHoldDays: useDb ? pred!.expectedHoldBars : h.avgDays,
     rejections,
     passed,
     summary,
