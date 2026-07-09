@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-09-v7";
+const VERSION = "2026-07-09-v8";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "Per-account cost tracking",
+    body: "API spend is now tracked per strategy account, not lumped together. Each account's P&L subtracts only its own Claude cost — and since SniperBot's catalyst check is the only thing that uses Claude, QQQ 0DTE shows essentially zero. Tracking was reset to start fresh from today, so the numbers you see are real spend from here forward.",
+  },
   {
     title: "History-backed numbers + QQQ 0DTE",
     body: "Every probability, expected move, and target now comes from a database of 236,000 real historical zone reactions — with the sample size shown, so a stat backed by 6 examples never looks like one backed by 400. The QQQ 0DTE strategy (Setups → QQQ tab) predicts where QQQ moves next from Daily + 4H history, then picks the highest expected-value contract, and trades its own separate $1000 paper account. Every page now has a SniperBot / QQQ toggle at the top so you can see each strategy's setups, positions, and P&L on its own account.",
