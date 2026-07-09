@@ -400,6 +400,45 @@ export async function getOptionQuotes(occSymbols: string[]): Promise<Record<stri
   return resp.quotes ?? {};
 }
 
+export interface OptionSnapshot {
+  delta: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+  iv: number | null;
+  bid: number | null;
+  ask: number | null;
+}
+
+/** Option snapshots (greeks + IV + latest quote) for the EV strike selector.
+ *  Greeks need the OPRA options feed; OPTIONS_FEED overrides (default indicative). */
+export async function getOptionSnapshots(occSymbols: string[]): Promise<Record<string, OptionSnapshot>> {
+  if (occSymbols.length === 0) return {};
+  const feed = process.env.OPTIONS_FEED ?? "indicative";
+  const out: Record<string, OptionSnapshot> = {};
+  for (let i = 0; i < occSymbols.length; i += 100) {
+    const q = new URLSearchParams({ symbols: occSymbols.slice(i, i + 100).join(","), feed });
+    const resp = await data<{
+      snapshots?: Record<
+        string,
+        { greeks?: { delta?: number; gamma?: number; theta?: number; vega?: number }; impliedVolatility?: number; latestQuote?: { ap?: number; bp?: number } }
+      >;
+    }>(`/v1beta1/options/snapshots?${q.toString()}`);
+    for (const [sym, s] of Object.entries(resp.snapshots ?? {})) {
+      out[sym] = {
+        delta: s.greeks?.delta ?? null,
+        gamma: s.greeks?.gamma ?? null,
+        theta: s.greeks?.theta ?? null,
+        vega: s.greeks?.vega ?? null,
+        iv: s.impliedVolatility ?? null,
+        bid: s.latestQuote?.bp ?? null,
+        ask: s.latestQuote?.ap ?? null,
+      };
+    }
+  }
+  return out;
+}
+
 /** Close (liquidate) an entire position by symbol. PAPER-ONLY. Returns the closing order. */
 export async function closePosition(symbol: string, qty?: number): Promise<Order> {
   if (process.env.TRADING_MODE !== "paper") {
