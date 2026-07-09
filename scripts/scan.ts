@@ -11,13 +11,16 @@ import { candidates } from "../src/db/schema";
 import { eq } from "drizzle-orm";
 
 async function main() {
-  const res = await runScan();
-  console.log(`scan ${res.runDate}: scanned ${res.scanned}, ${res.candidates} candidates, ${res.validSetups} valid setups`);
+  const results = await runScan();
+  const runDate = results[0]?.runDate ?? new Date().toISOString().slice(0, 10);
+  for (const r of results) {
+    console.log(`scan ${r.runDate} [${r.profileId}]: scanned ${r.scanned}, ${r.candidates} candidates, ${r.validSetups} valid setups`);
+  }
 
   const valid = await db
     .select()
     .from(candidates)
-    .where(eq(candidates.runDate, res.runDate));
+    .where(eq(candidates.runDate, runDate));
   const setups = valid.filter((c) => c.setupValid).sort((a, b) => Number(a.distanceToEdgePct) - Number(b.distanceToEdgePct));
   if (setups.length) {
     console.log("\nvalid setups (tapped this session):");

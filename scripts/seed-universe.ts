@@ -1,36 +1,59 @@
 /**
- * Seed the scanner universe with ~110 cheap, liquid, optionable US names ($5-65),
- * chosen so a $0.50-$1.50 near-the-money contract exists and can be pushed ITM on a
- * zone bounce — the fit for Farrukh's cheap-contract strategy on the $500 account.
- * Mega-caps were dropped: their contracts cost more than the whole account.
+ * Seed the scanner universe, tagged per strategy profile:
+ *   - sniper_swing : large/mega-cap US names (SniperBot Master).
+ *   - qqq_0dte     : QQQ only.
+ *   - zones_legacy : the previous cheap ($5-65) list, kept for its shadow track.
  * Idempotent: clears and re-inserts. Run: npm run seed:universe
  */
 import "dotenv/config";
 import { db } from "../src/db";
 import { universe } from "../src/db/schema";
 
-const SYMBOLS = [
-  // Tech / semis / software (cheaper, liquid options)
+// Large / mega-cap US names for SniperBot Master.
+const SNIPER = [
+  "AAPL","MSFT","NVDA","AMZN","GOOGL","GOOG","META","AVGO","TSLA","NFLX","ORCL","CRM","ADBE","AMD","CSCO","INTC","QCOM","TXN","IBM","NOW","INTU","AMAT","MU","LRCX","KLAC","ADI","PANW","CRWD","SNOW","PLTR","UBER","ABNB","SHOP","ANET","DELL","SMCI","ARM","MSTR","MRVL","APP",
+  "DIS","CMCSA","T","VZ","TMUS","WBD","SPOT","NKE","SBUX","MCD","BKNG","MAR","HD","LOW","TGT","COST","WMT","TJX","F","GM","RIVN",
+  "PG","KO","PEP","PM","MO","MDLZ","CL","KHC",
+  "JPM","BAC","WFC","C","GS","MS","SCHW","AXP","V","MA","BX","KKR","COIN","HOOD","SOFI","PYPL",
+  "UNH","JNJ","LLY","PFE","MRK","ABBV","TMO","ABT","BMY","AMGN","GILD","CVS","ISRG","MRNA",
+  "CAT","DE","BA","GE","HON","UNP","UPS","FDX","LMT","RTX","GEV",
+  "XOM","CVX","COP","SLB","EOG","OXY","MPC","KMI",
+  "LIN","FCX","NEM","NUE","NEE","DUK","SO","AMT","PLD","SPG","O",
+];
+
+// QQQ 0DTE — single ticker.
+const QQQ = ["QQQ"];
+
+// Cheap ($5-65) liquid optionable names — the shelved legacy zone track.
+const ZONES = [
   "INTC","CSCO","HPQ","HPE","WDC","PLTR","PATH","SOUN","BBAI","IONQ","RGTI","U","RBLX","PINS","SNAP","DBX","NU","AFRM","UPST","PYPL","XYZ",
-  // Financials (cheaper)
   "F","GM","BAC","WFC","C","KEY","HBAN","RF","USB","ALLY","SOFI","HOOD","FITB","KMI","ET",
-  // Consumer / retail / travel (cheaper)
   "CCL","NCLH","AAL","UAL","DAL","LUV","JBLU","KSS","M","WBA","CVS","KHC","CAG","TAP",
-  // Comm / media
   "T","VZ","WBD","PARA","CMCSA","FUBO",
-  // Energy / materials (cheaper, good volatility)
   "KGC","GOLD","NEM","FCX","CLF","AA","X","VALE","RIG","HAL","SLB","DVN","MOS","AR","CVE","SU","OXY","APA","WMB","BTU","RRC",
-  // High-volatility / momentum names (cheap contracts, big % moves)
   "GME","AMC","TLRY","CGC","MARA","RIOT","CLSK","HUT","WULF","PLUG","RUN","CHPT","QS","RIVN","LCID","NIO","XPEV","LI","GRAB","JOBY","ACHR","RKLB","ASTS",
-  // Liquid sector/commodity ETFs (clean zones) + SPY (baseline only)
-  "GDX","GDXJ","SLV","EEM","FXI","EWZ","KRE","ARKK","XLF","UNG","SPY",
+  "GDX","GDXJ","SLV","EEM","FXI","EWZ","KRE","ARKK","UNG","SPY",
 ];
 
 async function main() {
-  const unique = [...new Set(SYMBOLS.map((s) => s.toUpperCase()))];
+  const rows: { symbol: string; profileId: string; rank: number }[] = [];
+  const add = (list: string[], profileId: string) => {
+    const seen = new Set<string>();
+    list.forEach((s, i) => {
+      const sym = s.toUpperCase();
+      if (seen.has(`${profileId}:${sym}`)) return;
+      seen.add(`${profileId}:${sym}`);
+      rows.push({ symbol: sym, profileId, rank: i + 1 });
+    });
+  };
+  add(SNIPER, "sniper_swing");
+  add(QQQ, "qqq_0dte");
+  add(ZONES, "zones_legacy");
+
   await db.delete(universe);
-  await db.insert(universe).values(unique.map((symbol, i) => ({ symbol, rank: i + 1, active: true })));
-  console.log(`seeded ${unique.length} symbols into universe`);
+  await db.insert(universe).values(rows.map((r) => ({ ...r, active: true })));
+  const counts = rows.reduce<Record<string, number>>((m, r) => ((m[r.profileId] = (m[r.profileId] ?? 0) + 1), m), {});
+  console.log(`seeded ${rows.length} symbols:`, counts);
 }
 
 main().catch((e) => {

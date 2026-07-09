@@ -1,33 +1,42 @@
 /**
- * Nightly zone scanner. Batches daily bars for the whole universe, runs the
- * zone strategy per symbol, and writes the next session's candidate list.
+ * Nightly zone scanner. For each ACTIVE profile, batches daily bars for that
+ * profile's universe, runs the zone strategy with the profile's options, and
+ * writes the next session's candidate list tagged with the profile id.
  * PAPER/analysis only — no orders here.
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { universe as universeTable, candidates as candidatesTable, researchRuns } from "../db/schema";
 import { getMultiStockBars, type Bar } from "./alpaca";
 import { buildZoneSetup } from "./strategy";
 import { classifyAndScore } from "./playbook";
+import { activeProfiles, type Profile } from "./profiles";
 
 const BARS_LOOKBACK_DAYS = 4000; // full available daily history (zones persist for all time)
 const CHUNK = 40; // symbols per multi-bar request (respect free-tier limits)
 
-export async function loadUniverse(): Promise<string[]> {
-  const rows = await db.select().from(universeTable).where(eq(universeTable.active, true)).orderBy(universeTable.symbol);
+/** Symbols in a profile's universe (active rows tagged with that profile). */
+export async function loadUniverse(profileId: string): Promise<string[]> {
+  const rows = await db
+    .select()
+    .from(universeTable)
+    .where(and(eq(universeTable.active, true), eq(universeTable.profileId, profileId)))
+    .orderBy(universeTable.symbol);
   return rows.map((r) => r.symbol);
 }
 
 export interface ScanResult {
+  profileId: string;
   runDate: string;
   scanned: number;
   candidates: number;
   validSetups: number;
 }
 
-export async function runScan(runDate = new Date().toISOString().slice(0, 10)): Promise<ScanResult> {
-  const symbols = await loadUniverse();
-  if (symbols.length === 0) throw new Error("universe is empty; seed it first (npm run seed:universe)");
+async function scanProfile(profile: Profile, runDate: string): Promise<ScanResult> {
+  const symbols = await loadUniverse(profile.id);
+  const base: ScanResult = { profileId: profile.id, runDate, scanned: symbols.length, candidates: 0, validSetups: 0 };
+  if (symbols.length === 0) return base;
 
   const barsBySymbol: Record<string, Bar[]> = {};
   for (let i = 0; i < symbols.length; i += CHUNK) {
@@ -42,14 +51,12 @@ export async function runScan(runDate = new Date().toISOString().slice(0, 10)): 
     if (!bars || bars.length < 60) continue;
     let setup;
     try {
-      setup = buildZoneSetup(bars);
+      setup = buildZoneSetup(bars, profile.strategy);
     } catch {
       continue;
     }
-    // A candidate is a symbol approaching an active zone in its travel direction.
     if (!setup.active_zone || setup.distance_to_edge_pct == null) continue;
 
-    // Code-computed confidence score, so the app can rank high-conviction setups first.
     let score: number | null = null;
     let playbook: string | null = null;
     if ((setup.direction === "call" || setup.direction === "put") && setup.active_zone) {
@@ -75,26 +82,40 @@ export async function runScan(runDate = new Date().toISOString().slice(0, 10)): 
       setup,
       score,
       playbook,
+      profileId: profile.id,
     });
   }
 
-  // Replace today's candidates (idempotent re-runs).
-  await db.delete(candidatesTable).where(eq(candidatesTable.runDate, runDate));
+  // Replace this profile's candidates for the runDate (idempotent re-runs).
+  await db
+    .delete(candidatesTable)
+    .where(and(eq(candidatesTable.runDate, runDate), eq(candidatesTable.profileId, profile.id)));
   if (rows.length) await db.insert(candidatesTable).values(rows);
 
-  const validSetups = rows.filter((r) => r.setupValid).length;
+  return { ...base, candidates: rows.length, validSetups: rows.filter((r) => r.setupValid).length };
+}
+
+export async function runScan(runDate = new Date().toISOString().slice(0, 10)): Promise<ScanResult[]> {
+  const results: ScanResult[] = [];
+  for (const profile of activeProfiles()) {
+    results.push(await scanProfile(profile, runDate));
+  }
+
+  const totalScanned = results.reduce((s, r) => s + r.scanned, 0);
+  const totalValid = results.reduce((s, r) => s + r.validSetups, 0);
+  const perProfile = results.map((r) => `${r.profileId}: ${r.validSetups}/${r.candidates}`).join(", ");
 
   // Log the scan as a run so it shows on the Log page with its time.
   await db.insert(researchRuns).values({
     runDate,
     status: "complete",
     model: "scan",
-    marketContext: `Scanned ${symbols.length} stocks and found ${rows.length} approaching zones, ${validSetups} live setups to watch today.`,
+    marketContext: `Scanned ${totalScanned} names across ${results.length} profiles — ${totalValid} live setups (${perProfile}).`,
     searchCount: 0,
     inputTokens: 0,
     outputTokens: 0,
     costEstimate: "0",
   });
 
-  return { runDate, scanned: symbols.length, candidates: rows.length, validSetups };
+  return results;
 }

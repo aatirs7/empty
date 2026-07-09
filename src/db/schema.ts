@@ -53,6 +53,7 @@ export const proposals = pgTable("proposals", {
   zoneSetup: jsonb("zone_setup"), // full code-computed ZoneSetup, when zone-driven
   zoneRead: text("zone_read"), // model's one-sentence read of the zone (qualitative)
   candidateId: integer("candidate_id"), // the scan candidate this fired from (monitor dedup)
+  profileId: text("profile_id").notNull().default("zones_legacy"), // owning strategy profile
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -117,7 +118,18 @@ export const universe = pgTable("universe", {
   symbol: text("symbol").notNull(),
   active: boolean("active").notNull().default(true),
   rank: integer("rank"), // optional market-cap rank
+  profileId: text("profile_id").notNull().default("zones_legacy"), // which strategy scans this name
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Per-profile runtime toggles (one row per strategy profile). Trading config that
+// used to be global (auto on/off) is per-profile so each track runs independently.
+export const profileSettings = pgTable("profile_settings", {
+  id: serial("id").primaryKey(),
+  profileId: text("profile_id").notNull().unique(),
+  autoExecute: boolean("auto_execute").notNull().default(false),
+  autoManage: boolean("auto_manage").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // Nightly scanner output: symbols with a zone setup for the next session.
@@ -135,6 +147,7 @@ export const candidates = pgTable("candidates", {
   setup: jsonb("setup"), // full ZoneSetup (code-computed)
   score: integer("score"), // playbook quality score 0-100 (code-computed at scan time)
   playbook: text("playbook"), // playbook classification name
+  profileId: text("profile_id").notNull().default("zones_legacy"), // owning strategy profile
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -166,8 +179,9 @@ export const shadowOutcomes = pgTable("shadow_outcomes", {
   candidateId: integer("candidate_id").references(() => candidates.id, { onDelete: "set null" }), // the valid setup shadowed
   proposalId: integer("proposal_id").references(() => proposals.id), // legacy; unused in shadow-only mode
   kind: text("kind").notNull().default("setup"), // setup | baseline
+  profileId: text("profile_id").notNull().default("zones_legacy"), // strategy track (never blended)
   symbol: text("symbol").notNull(),
-  variant: text("variant"), // copied from the proposal for grouping
+  variant: text("variant"), // legacy free-text grouping (superseded by profileId)
   direction: text("direction"), // call | put
   contractSymbol: text("contract_symbol"), // resolved OCC contract
   strike: numeric("strike"),
@@ -212,3 +226,4 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
 export type CandidateRow = typeof candidates.$inferSelect;
 export type ShadowOutcomeRow = typeof shadowOutcomes.$inferSelect;
 export type PositionStateRow = typeof positionState.$inferSelect;
+export type ProfileSettingsRow = typeof profileSettings.$inferSelect;

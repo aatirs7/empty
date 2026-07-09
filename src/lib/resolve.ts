@@ -12,13 +12,15 @@ import {
   type OptionContract,
   type OptionQuote,
 } from "./alpaca";
+import type { ContractConfig } from "./profiles";
 
 export interface ResolveInput {
   symbol: string;
   direction: "call" | "put";
   strikeHint: string;
   expiryHint: string;
-  maxPrice?: number; // prefer contracts cheaper than this per share
+  maxPrice?: number; // legacy: prefer contracts cheaper than this per share
+  contract?: ContractConfig; // profile-driven window/band/expiry/liquidity (preferred)
 }
 
 export interface ResolvedContract {
@@ -46,25 +48,36 @@ function isFriday(dateStr: string): boolean {
   return new Date(`${dateStr}T12:00:00Z`).getUTCDay() === 5;
 }
 
-/** "2-4 weeks" / "monthly" -> ~21 days; "friday"/"weekly"/default -> this week's
- *  Friday (nearest upcoming Friday, >=1 day out). Farrukh's rule: Friday contracts
- *  of that week. */
-function pickExpiry(expiries: string[], hint: string): string {
+type ExpiryKind = "friday" | "twoToFourWeeks" | "zeroDte";
+
+/** Map a profile expiryKind (or a hint string) to a concrete expiry from the chain. */
+function pickExpiry(expiries: string[], kind: ExpiryKind): string {
   const uniqueSorted = [...new Set(expiries)].sort();
-  const h = hint.toLowerCase();
-  const isWindow = /2\s*-\s*4|2 to 4|two to four|3\s*week|month/.test(h);
-  if (isWindow) {
+  if (kind === "zeroDte") {
+    // Same-day if listed, else the nearest expiry available.
+    const pool = uniqueSorted.filter((e) => daysFromToday(e) >= 0);
+    return (pool.length ? pool : uniqueSorted)[0];
+  }
+  if (kind === "twoToFourWeeks") {
     const inWindow = uniqueSorted.filter((e) => daysFromToday(e) >= 10 && daysFromToday(e) <= 35);
     const pool = inWindow.length ? inWindow : uniqueSorted.filter((e) => daysFromToday(e) >= 5);
     const chooseFrom = pool.length ? pool : uniqueSorted;
     return chooseFrom.reduce((best, e) => (Math.abs(daysFromToday(e) - 21) < Math.abs(daysFromToday(best) - 21) ? e : best));
   }
-  // Friday of that week: the nearest upcoming Friday (>=1 day out).
+  // friday: the nearest upcoming Friday (>=1 day out).
   const fridays = uniqueSorted.filter((e) => daysFromToday(e) >= 1 && isFriday(e));
   if (fridays.length) return fridays[0];
-  // Fallback (no Friday listed): nearest expiry >=1 day out.
   const pool = uniqueSorted.filter((e) => daysFromToday(e) >= 1);
   return (pool.length ? pool : uniqueSorted)[0];
+}
+
+/** Resolve the expiryKind from a profile contract config or a legacy hint string. */
+function expiryKindFrom(input: ResolveInput): ExpiryKind {
+  if (input.contract) return input.contract.expiryKind;
+  const h = input.expiryHint.toLowerCase();
+  if (/2\s*-\s*4|2 to 4|two to four|3\s*week|month/.test(h)) return "twoToFourWeeks";
+  if (/0\s*dte|same.?day|today/.test(h)) return "zeroDte";
+  return "friday";
 }
 
 /** "ATM" -> spot; "~N% OTM" -> N% above spot (call) / below (put). */
@@ -77,10 +90,12 @@ function targetStrike(strikeHint: string, direction: "call" | "put", spot: numbe
 
 export async function resolveContract(input: ResolveInput): Promise<ResolvedContract> {
   const spot = await getUnderlyingPrice(input.symbol);
+  const kind = expiryKindFrom(input);
 
   const now = new Date();
   const gte = new Date(now);
-  gte.setUTCDate(gte.getUTCDate() + 1);
+  // 0DTE wants today's expiry; everything else skips today.
+  gte.setUTCDate(gte.getUTCDate() + (kind === "zeroDte" ? 0 : 1));
   const lte = new Date(now);
   lte.setUTCDate(lte.getUTCDate() + 60);
 
@@ -92,12 +107,12 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
     limit: 1000,
   });
   if (contracts.length === 0) {
-    throw new Error(`No ${input.direction} contracts found for ${input.symbol} in the next 60 days.`);
+    throw new Error(`No ${input.direction} contracts found for ${input.symbol} in the window.`);
   }
 
   const expiry = pickExpiry(
     contracts.map((c) => c.expiration_date),
-    input.expiryHint,
+    kind,
   );
   const atExpiry = contracts.filter((c) => c.expiration_date === expiry && c.tradable !== false);
   const poolAll = atExpiry.length ? atExpiry : contracts.filter((c) => c.expiration_date === expiry);
@@ -105,39 +120,38 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
   let pick: OptionContract | null = null;
   let quote: OptionQuote | undefined;
 
-  // Near-the-money targeting: quote a tight window around spot (NOT deep OTM),
-  // require a REAL two-sided market (non-zero bid), and pick the priciest contract
-  // still under maxPrice. This avoids deep-OTM, no-bid lottery tickets that fill at
-  // the ask and instantly mark at a $0 bid. Falls back to the strike hint.
-  if (input.maxPrice && input.maxPrice > 0) {
-    // At most ~8% OTM (and a little ITM), so the contract actually tracks the move.
-    const lo = input.direction === "call" ? spot * 0.97 : spot * 0.92;
-    const hi = input.direction === "call" ? spot * 1.08 : spot * 1.03;
+  // Budget mode: profile.contract (preferred) or the legacy maxPrice band. Quote a
+  // strike window around spot, require a LIQUID two-sided market, and pick the
+  // contract whose ask is closest to the profile's ideal price. This avoids
+  // no-bid lottery tickets that fill at the ask and instantly mark at a $0 bid.
+  const band = input.contract
+    ? { floor: input.contract.priceFloor, ideal: input.contract.priceIdeal, cap: input.contract.priceCap }
+    : input.maxPrice && input.maxPrice > 0
+      ? { floor: 0.35, ideal: 0.5, cap: input.maxPrice }
+      : null;
+  const otmPct = input.contract?.otmPct ?? 8;
+  const itmPct = input.contract?.itmPct ?? 3;
+  const spread = input.contract?.liquiditySpread ?? 0.7;
+
+  if (band) {
+    const lo = input.direction === "call" ? spot * (1 - itmPct / 100) : spot * (1 - otmPct / 100);
+    const hi = input.direction === "call" ? spot * (1 + otmPct / 100) : spot * (1 + itmPct / 100);
     let candidates = poolAll.filter((c) => Number(c.strike_price) >= lo && Number(c.strike_price) <= hi);
     candidates.sort((a, b) =>
       input.direction === "call"
         ? Number(a.strike_price) - Number(b.strike_price)
         : Number(b.strike_price) - Number(a.strike_price),
     );
-    candidates = candidates.slice(0, 60);
+    candidates = candidates.slice(0, 80);
     if (candidates.length > 0) {
       const quotes = await getOptionQuotes(candidates.map((c) => c.symbol));
       const priced = candidates
         .map((c) => ({ c, q: quotes[c.symbol], ask: quotes[c.symbol]?.ap ?? 0, bid: quotes[c.symbol]?.bp ?? 0 }))
-        // Require a LIQUID market: non-zero bid and a tight spread (bid >= 70% of
-        // ask, i.e. <=~30% spread). Wide-spread options fill at the ask and mark
-        // near the bid, showing an instant paper loss, so we only take tight ones.
-        .filter((x) => x.ask > 0.05 && x.bid > 0 && x.bid >= 0.7 * x.ask);
-      // Farrukh's sizing: enter CHEAP contracts ~$0.50-$1.00 (up to the cap) that
-      // are near enough to be pushed into the money on a good zone-tap move — those
-      // give the big % gains. Target ~$0.70, within [floor, cap], liquid only. No
-      // expensive (near the cap) or sub-floor deep-OTM lottery contracts.
-      const PRICE_FLOOR = 0.35;
-      const PRICE_IDEAL = 0.5;
-      const inBand = priced.filter((x) => x.ask >= PRICE_FLOOR && x.ask <= input.maxPrice!);
+        .filter((x) => x.ask > 0.05 && x.bid > 0 && x.bid >= spread * x.ask);
+      const inBand = priced.filter((x) => x.ask >= band.floor && x.ask <= band.cap);
       if (inBand.length > 0) {
         const chosen = inBand.reduce((best, x) =>
-          Math.abs(x.ask - PRICE_IDEAL) < Math.abs(best.ask - PRICE_IDEAL) ? x : best,
+          Math.abs(x.ask - band.ideal) < Math.abs(best.ask - band.ideal) ? x : best,
         );
         pick = chosen.c;
         quote = chosen.q;
@@ -153,7 +167,7 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
     // In budget mode, reaching here means no affordable+liquid contract exists.
     // Leave it UNPRICED so execute skips this trade (never buy a pricey/illiquid
     // fallback). Non-budget callers (the live preview) still get a real quote.
-    if (!(input.maxPrice && input.maxPrice > 0)) {
+    if (!band) {
       const quotes = await getOptionQuotes([pick.symbol]);
       quote = quotes[pick.symbol];
     }

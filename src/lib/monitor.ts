@@ -19,9 +19,10 @@ import { getLatestPrices, getStockBars, getOptionQuotes, midPrice } from "./alpa
 import { getBroker } from "./broker";
 import { getSettings } from "./settings";
 import { executeProposal } from "./execute";
-import { classifyAndScore, PLAYBOOK_MIN_SCORE } from "./playbook";
+import { classifyAndScore } from "./playbook";
 import { parseOcc } from "./format";
 import { sendPush } from "./push";
+import { getProfile } from "./profiles";
 
 // Farrukh's simplified test exit: sell the whole (1-contract) position at +100%,
 // or stop out at -30%. Env-tunable.
@@ -166,9 +167,13 @@ export async function monitorTick(): Promise<Fire[]> {
     if (prev === undefined) continue; // first sighting: establish baseline, don't fire
 
     const direction = c.direction as "call" | "put";
+    const profile = getProfile(c.profileId);
+    // Confirmation-gated profiles (SniperBot, QQQ 0DTE) are handled by the S2
+    // confirmation engine, not the bare tap path. Only tap-only profiles fire here.
+    if (profile.confirmation.enabled) continue;
     if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
 
-    // Score the setup; only fire if it clears the quality threshold.
+    // Score the setup; only fire if it clears the profile's quality threshold.
     let pb: ReturnType<typeof classifyAndScore> | null = null;
     try {
       const bars = await getStockBars(c.symbol, 400);
@@ -176,14 +181,14 @@ export async function monitorTick(): Promise<Fire[]> {
     } catch {
       pb = null;
     }
-    if (!pb || !pb.alert) {
+    if (!pb || pb.score < profile.minScore) {
       fires.push({
         symbol: c.symbol,
         direction,
         candidateId: c.id,
         price: cur,
         placed: false,
-        detail: pb ? `score ${pb.score}/100 < ${PLAYBOOK_MIN_SCORE} (${pb.playbook}); skipped` : "could not score; skipped",
+        detail: pb ? `score ${pb.score}/100 < ${profile.minScore} (${pb.playbook}); skipped` : "could not score; skipped",
       });
       continue;
     }
@@ -215,6 +220,7 @@ export async function monitorTick(): Promise<Fire[]> {
           zoneSetup: c.setup,
           zoneRead: alert,
           candidateId: c.id,
+          profileId: c.profileId,
         })
         .returning({ id: proposals.id });
 

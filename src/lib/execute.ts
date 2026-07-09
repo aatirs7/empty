@@ -13,7 +13,7 @@ import { proposals, orders } from "../db/schema";
 import { getBroker } from "./broker";
 import { resolveContract } from "./resolve";
 import { computeRisk, type RiskMath } from "./risk";
-import { getSettings } from "./settings";
+import { getProfile } from "./profiles";
 
 export class ExecuteError extends Error {
   constructor(
@@ -46,16 +46,6 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   assertPaper();
   const broker = getBroker();
 
-  // Position/sizing caps deliberately relaxed for the PAPER real-test (owner's
-  // call). The only backstop left is real buying power (Alpaca rejects when the
-  // paper account runs out). The PAPER-ONLY guardrail (assertPaper) is untouched.
-  const perOrderCap = Number(process.env.MAX_CONTRACTS_PER_ORDER ?? 100000);
-  const openCap = Number(process.env.MAX_OPEN_POSITIONS ?? 100000);
-  const settings = await getSettings();
-  const perTradeBudget = Number(settings.perTradeBudget);
-  const maxContracts = Math.max(1, Math.min(settings.maxContracts, perOrderCap));
-  const maxContractPrice = Number(settings.maxContractPrice);
-
   const [proposal] = await db.select().from(proposals).where(eq(proposals.id, proposalId)).limit(1);
   if (!proposal) throw new ExecuteError(`Proposal ${proposalId} not found.`, "not_found");
   if (proposal.strategy === "no_trade" || !proposal.direction || proposal.direction === "none") {
@@ -64,6 +54,15 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   if (proposal.status !== "pending") {
     throw new ExecuteError(`Proposal ${proposalId} is already "${proposal.status}".`, "already_actioned");
   }
+
+  // Caps + contract shape come from the proposal's PROFILE (never blended across
+  // strategies). Env vars remain an outer hard ceiling. PAPER-ONLY assert is above.
+  const profile = getProfile(proposal.profileId);
+  const perOrderCap = Number(process.env.MAX_CONTRACTS_PER_ORDER ?? 100000);
+  // TODO(S4/S5): count open positions PER profile; today it's the account-wide count.
+  const openCap = Math.min(profile.caps.maxOpenPositions, Number(process.env.MAX_OPEN_POSITIONS ?? 100000));
+  const perTradeBudget = profile.caps.perTradeBudget;
+  const maxContracts = Math.max(1, Math.min(profile.caps.maxContracts, perOrderCap));
 
   // Open-position cap, count real Alpaca positions.
   const positions = await broker.listPositions();
@@ -76,8 +75,8 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     symbol: proposal.symbol,
     direction,
     strikeHint: proposal.strikeHint ?? "ATM",
-    expiryHint: proposal.expiryHint ?? "nearest weekly",
-    maxPrice: maxContractPrice > 0 ? maxContractPrice : undefined,
+    expiryHint: proposal.expiryHint ?? "friday",
+    contract: profile.contract,
   });
   if (resolved.price == null || resolved.price <= 0) {
     throw new ExecuteError(
