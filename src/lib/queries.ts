@@ -14,18 +14,21 @@ import {
   type CandidateRow,
 } from "../db/schema";
 
-/** The latest zone scan: its date + all candidates (valid setups first, by distance). */
-export async function getLatestScan(): Promise<{ runDate: string; candidates: CandidateRow[] } | null> {
+/** The latest scan for a profile: its date + that profile's candidates. */
+export async function getLatestScan(
+  profileId = "sniper_swing",
+): Promise<{ runDate: string; candidates: CandidateRow[] } | null> {
   const [latest] = await db
     .select({ runDate: candidates.runDate })
     .from(candidates)
+    .where(eq(candidates.profileId, profileId))
     .orderBy(desc(candidates.runDate))
     .limit(1);
   if (!latest) return null;
   const rows = await db
     .select()
     .from(candidates)
-    .where(eq(candidates.runDate, latest.runDate))
+    .where(and(eq(candidates.runDate, latest.runDate), eq(candidates.profileId, profileId)))
     .orderBy(asc(candidates.distanceToEdgePct));
   return { runDate: latest.runDate, candidates: rows };
 }

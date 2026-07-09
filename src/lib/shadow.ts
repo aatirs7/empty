@@ -1,12 +1,10 @@
 /**
- * Shadow outcomes: the measurement backbone for the paper month.
- *
- * SHADOW-ONLY MODE (frozen config): the experiment is the raw zone strategy. For
- * EVERY valid zone setup from the latest scan we record a mechanical shadow trade
- * (enter at the next open at the resolved contract's ask, mark to the bid, exit on
- * TP +50% / SL -40% / expiry) plus a daily SPY ATM-call baseline. These shadows,
- * and ONLY these, feed the scorecard. The Brain-researched top-N (Today screen) is
- * display-only and is never shadowed or scored. PAPER/analysis only.
+ * Shadow outcomes: the measurement backbone. PER-PROFILE and never blended — each
+ * strategy track (sniper_swing, qqq_0dte, zones_legacy) shadows its own valid
+ * setups against its own baseline (SPY for swings, QQQ for 0DTE). For every valid
+ * setup we record a mechanical shadow trade (enter at the resolved contract's ask,
+ * mark to the bid, exit on the profile's TP/SL/expiry rule). These shadows, and
+ * only these, feed the scorecard.
  *
  * GUARDRAIL: all prices come from the live Alpaca chain (code), never the model.
  */
@@ -15,55 +13,104 @@ import { db } from "../db";
 import { candidates, shadowOutcomes } from "../db/schema";
 import { resolveContract } from "./resolve";
 import { getOptionQuotes, getUnderlyingPrice, midPrice, type OptionQuote } from "./alpaca";
-import { getSettings } from "./settings";
+import { activeProfiles, type Profile } from "./profiles";
 
-export const TAKE_PROFIT = 0.5; // +50%
-export const STOP_LOSS = -0.4; // -40%
+/** Shadow exit rule per track (measurement; distinct from the live exit). */
+function shadowExit(profileId: string): { tp: number; sl: number } {
+  return profileId === "qqq_0dte" ? { tp: 0.6, sl: -0.4 } : { tp: 0.5, sl: -0.4 };
+}
 
-/** Sellable price: bid preferred, else mid. */
+const expiryHintFor = (p: Profile) => (p.contract.expiryKind === "zeroDte" ? "0dte" : "friday");
+
 function sellable(q: OptionQuote | undefined): number | null {
   if (!q) return null;
   if (q.bp && q.bp > 0) return q.bp;
   return midPrice(q);
 }
 
-/** Open a shadow for each VALID setup in the latest scan that doesn't have one yet. */
+/** Open a shadow for each VALID setup (per profile) that doesn't have one yet. */
 async function openSetupShadows(): Promise<number> {
-  const [latest] = await db
-    .select({ runDate: candidates.runDate })
-    .from(candidates)
-    .orderBy(desc(candidates.runDate))
-    .limit(1);
-  if (!latest) return 0;
-
-  const setups = await db
-    .select()
-    .from(candidates)
-    .where(and(eq(candidates.runDate, latest.runDate), eq(candidates.setupValid, true)));
-
-  const settings = await getSettings();
-  const maxPrice = Number(settings.maxContractPrice);
   let opened = 0;
-  for (const c of setups) {
-    if (c.direction !== "call" && c.direction !== "put") continue;
-    const [existing] = await db.select().from(shadowOutcomes).where(eq(shadowOutcomes.candidateId, c.id)).limit(1);
+  for (const profile of activeProfiles()) {
+    const [latest] = await db
+      .select({ runDate: candidates.runDate })
+      .from(candidates)
+      .where(eq(candidates.profileId, profile.id))
+      .orderBy(desc(candidates.runDate))
+      .limit(1);
+    if (!latest) continue;
+    const setups = await db
+      .select()
+      .from(candidates)
+      .where(and(eq(candidates.runDate, latest.runDate), eq(candidates.profileId, profile.id), eq(candidates.setupValid, true)));
+
+    for (const c of setups) {
+      if (c.direction !== "call" && c.direction !== "put") continue;
+      const [existing] = await db.select().from(shadowOutcomes).where(eq(shadowOutcomes.candidateId, c.id)).limit(1);
+      if (existing) continue;
+      try {
+        const r = await resolveContract({
+          symbol: c.symbol,
+          direction: c.direction,
+          strikeHint: "ATM",
+          expiryHint: expiryHintFor(profile),
+          contract: profile.contract,
+        });
+        if (r.ask == null || r.ask <= 0) continue; // unpriced now; retry next run
+        const now = new Date();
+        await db.insert(shadowOutcomes).values({
+          candidateId: c.id,
+          kind: "setup",
+          profileId: profile.id,
+          symbol: c.symbol,
+          variant: profile.id,
+          direction: c.direction,
+          contractSymbol: r.symbol,
+          strike: String(r.strike),
+          expiry: r.expiry,
+          entryAt: now,
+          entryUnderlying: String(r.underlyingPrice),
+          entryPremium: String(r.ask),
+          markPremium: String(r.ask),
+          markAt: now,
+          status: "open",
+        });
+        opened++;
+      } catch {
+        // couldn't resolve/quote; try again next run
+      }
+    }
+  }
+  return opened;
+}
+
+/** One baseline per profile per day (SPY for swings, QQQ for 0DTE). */
+async function openBaselines(): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  let opened = 0;
+  for (const profile of activeProfiles()) {
+    const [existing] = await db
+      .select()
+      .from(shadowOutcomes)
+      .where(and(eq(shadowOutcomes.kind, "baseline"), eq(shadowOutcomes.profileId, profile.id), sql`date(${shadowOutcomes.entryAt}) = ${today}`))
+      .limit(1);
     if (existing) continue;
     try {
       const r = await resolveContract({
-        symbol: c.symbol,
-        direction: c.direction,
+        symbol: profile.baselineSymbol,
+        direction: "call",
         strikeHint: "ATM",
-        expiryHint: "2-4 weeks",
-        maxPrice: maxPrice > 0 ? maxPrice : undefined,
+        expiryHint: expiryHintFor(profile),
+        contract: profile.contract,
       });
-      if (r.ask == null || r.ask <= 0) continue; // unpriced now; retry next run
+      if (r.ask == null || r.ask <= 0) continue;
       const now = new Date();
       await db.insert(shadowOutcomes).values({
-        candidateId: c.id,
-        kind: "setup",
-        symbol: c.symbol,
-        variant: "zones",
-        direction: c.direction,
+        kind: "baseline",
+        profileId: profile.id,
+        symbol: profile.baselineSymbol,
+        variant: "baseline",
+        direction: "call",
         contractSymbol: r.symbol,
         strike: String(r.strike),
         expiry: r.expiry,
@@ -76,47 +123,13 @@ async function openSetupShadows(): Promise<number> {
       });
       opened++;
     } catch {
-      // couldn't resolve/quote; try again next run
+      // retry next run
     }
   }
   return opened;
 }
 
-/** Open one SPY ATM-call baseline per trading day. */
-async function openBaseline(): Promise<boolean> {
-  const today = new Date().toISOString().slice(0, 10);
-  const [existing] = await db
-    .select()
-    .from(shadowOutcomes)
-    .where(and(eq(shadowOutcomes.kind, "baseline"), sql`date(${shadowOutcomes.entryAt}) = ${today}`))
-    .limit(1);
-  if (existing) return false;
-  try {
-    const r = await resolveContract({ symbol: "SPY", direction: "call", strikeHint: "ATM", expiryHint: "2-4 weeks" });
-    if (r.ask == null || r.ask <= 0) return false;
-    const now = new Date();
-    await db.insert(shadowOutcomes).values({
-      kind: "baseline",
-      symbol: "SPY",
-      variant: "baseline",
-      direction: "call",
-      contractSymbol: r.symbol,
-      strike: String(r.strike),
-      expiry: r.expiry,
-      entryAt: now,
-      entryUnderlying: String(r.underlyingPrice),
-      entryPremium: String(r.ask),
-      markPremium: String(r.ask),
-      markAt: now,
-      status: "open",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Mark open shadows to the bid and close any that hit the exit rule. */
+/** Mark open shadows to the bid and close any that hit their profile's exit rule. */
 async function markShadows(): Promise<{ marked: number; closed: number }> {
   const open = await db.select().from(shadowOutcomes).where(eq(shadowOutcomes.status, "open"));
   if (open.length === 0) return { marked: 0, closed: 0 };
@@ -130,6 +143,7 @@ async function markShadows(): Promise<{ marked: number; closed: number }> {
   for (const o of open) {
     const entry = Number(o.entryPremium);
     if (!o.contractSymbol || !entry || entry <= 0) continue;
+    const { tp, sl } = shadowExit(o.profileId);
 
     const expired = o.expiry ? today >= (o.expiry as string) : false;
     let exitReason: string | null = null;
@@ -150,19 +164,16 @@ async function markShadows(): Promise<{ marked: number; closed: number }> {
       exitReason = "expiry";
     } else {
       const bid = sellable(quotes[o.contractSymbol]);
-      if (bid == null) continue; // no quote this run; try again later
+      if (bid == null) continue;
       const ret = (bid - entry) / entry;
-      if (ret >= TAKE_PROFIT) {
+      if (ret >= tp) {
         exitReason = "take_profit";
         exitPremium = bid;
-      } else if (ret <= STOP_LOSS) {
+      } else if (ret <= sl) {
         exitReason = "stop_loss";
         exitPremium = bid;
       } else {
-        await db
-          .update(shadowOutcomes)
-          .set({ markPremium: String(bid), markAt: new Date() })
-          .where(eq(shadowOutcomes.id, o.id));
+        await db.update(shadowOutcomes).set({ markPremium: String(bid), markAt: new Date() }).where(eq(shadowOutcomes.id, o.id));
         marked++;
         continue;
       }
@@ -190,14 +201,14 @@ async function markShadows(): Promise<{ marked: number; closed: number }> {
 
 export interface ShadowRun {
   openedSetups: number;
-  openedBaseline: boolean;
+  openedBaselines: number;
   marked: number;
   closed: number;
 }
 
 export async function runShadow(): Promise<ShadowRun> {
   const openedSetups = await openSetupShadows();
-  const openedBaseline = await openBaseline();
+  const openedBaselines = await openBaselines();
   const { marked, closed } = await markShadows();
-  return { openedSetups, openedBaseline, marked, closed };
+  return { openedSetups, openedBaselines, marked, closed };
 }

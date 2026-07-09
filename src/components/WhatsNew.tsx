@@ -4,9 +4,17 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-08-v4";
+const VERSION = "2026-07-09-v5";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "SniperBot is live",
+    body: "A new main strategy: institutional order-block setups on large/mega-cap stocks. It only buys when a zone tap is CONFIRMED on the live 5-min tape (rejection + volume), passes three code-computed scores + a historical-similarity read + an adversarial review, and clears a news/earnings catalyst check. Find it under Setups (tabs: SniperBot / QQQ 0DTE / Zones). Now auto-trading your account.",
+  },
+  {
+    title: "Per-strategy scorecards",
+    body: "Each strategy (SniperBot swing, QQQ 0DTE, legacy Zones) is now measured on its own track against its own baseline — never blended — on the Scorecard page.",
+  },
   {
     title: "Trade notifications",
     body: "Vega can now push a notification to your phone the moment it places or sells a trade — even when the app is closed. Turn it on in Settings → Trade notifications (on iPhone, add Vega to your home screen first).",

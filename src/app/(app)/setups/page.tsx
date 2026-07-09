@@ -2,16 +2,37 @@ import Link from "next/link";
 import { getLatestScan } from "@/lib/queries";
 import { PageTitle, Empty } from "@/components/ui";
 import { companyName } from "@/lib/format";
+import { PROFILE_IDS, getProfile } from "@/lib/profiles";
 
 export const dynamic = "force-dynamic";
 
-export default async function SetupsPage() {
-  const scan = await getLatestScan();
+export default async function SetupsPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
+  const sp = await searchParams;
+  const profileId = PROFILE_IDS.includes(sp.profile as never) ? (sp.profile as string) : "sniper_swing";
+
+  const tabs = (
+    <div className="flex gap-1.5 justify-center flex-wrap">
+      {PROFILE_IDS.map((id) => (
+        <Link
+          key={id}
+          href={`/setups?profile=${id}`}
+          className={`text-xs px-3 py-1.5 rounded-full border ${
+            id === profileId ? "border-accent text-accent" : "border-border text-muted"
+          }`}
+        >
+          {getProfile(id).label}
+        </Link>
+      ))}
+    </div>
+  );
+
+  const scan = await getLatestScan(profileId);
   if (!scan) {
     return (
       <div className="space-y-5">
         <PageTitle title="Setups" />
-        <Empty>No scan has run yet. The scanner runs after each market close.</Empty>
+        {tabs}
+        <Empty>No scan yet for {getProfile(profileId).label}. The scanner runs overnight.</Empty>
       </div>
     );
   }
@@ -22,15 +43,17 @@ export default async function SetupsPage() {
 
   return (
     <div className="space-y-5">
-      <PageTitle title="Setups" subtitle={`scan ${scan.runDate}`} />
+      <PageTitle title="Setups" subtitle={`${getProfile(profileId).label} · scan ${scan.runDate}`} />
+
+      {tabs}
 
       <p className="text-center text-sm text-muted leading-relaxed">
-        The latest scan checked <span className="text-foreground font-medium">{scan.candidates.length}</span> approaching
-        stocks and found{" "}
+        {getProfile(profileId).description} Checked{" "}
+        <span className="text-foreground font-medium">{scan.candidates.length}</span> names,{" "}
         <span className="text-foreground font-medium">
           {valid.length} {valid.length === 1 ? "ready setup" : "ready setups"}
-        </span>{" "}
-        to trade at the next open.
+        </span>
+        .
       </p>
 
       {valid.length === 0 ? (

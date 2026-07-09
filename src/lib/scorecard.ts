@@ -1,46 +1,48 @@
 /**
- * Paper-month scorecard. SHADOW-ONLY: reads ONLY `shadow_outcomes` (mechanical
- * zone-setup shadows vs the SPY baseline). It does NOT join or read `proposals`
- * or `orders`, so the Brain-researched / auto-bought subset can never leak into
- * the measurement. The experiment is the raw zone strategy on every valid setup.
- * All code-computed.
+ * Per-profile scorecard. SHADOW-ONLY: reads ONLY `shadow_outcomes`, split by
+ * profileId so each strategy track (sniper_swing, qqq_0dte, zones_legacy) is
+ * measured against ITS OWN baseline and never blended with the others. Does not
+ * read proposals/orders. All code-computed.
  */
-import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { shadowOutcomes } from "../db/schema";
+import { getProfile, PROFILE_IDS } from "./profiles";
 import { getCostTotals } from "./queries";
 
 export interface Bucket {
-  label: string;
   n: number;
   winRate: number; // 0..1
   avgReturnPct: number; // percent
   netPnl: number; // dollars, 1 contract
 }
 
-export interface Scorecard {
+export interface ProfileScore {
+  profileId: string;
+  label: string;
   strategy: Bucket & { avgWinnerPct: number; avgLoserPct: number };
-  variants: Bucket[];
   baseline: Bucket;
-  counts: { setupsShadowed: number; openShadows: number; closedShadows: number };
-  apiCost: number;
-  netAfterCost: number;
   beatsBaseline: boolean | null;
+  openShadows: number;
+}
+
+export interface Scorecard {
+  profiles: ProfileScore[];
+  apiCost: number;
 }
 
 interface Row {
-  ret: number; // fraction
-  pnl: number; // dollars, 1 contract
+  ret: number;
+  pnl: number;
   win: boolean;
   kind: string;
-  variant: string | null;
+  profileId: string;
+  status: string;
 }
 
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
-function bucket(label: string, rows: Row[]): Bucket {
+function bucket(rows: Row[]): Bucket {
   return {
-    label,
     n: rows.length,
     winRate: rows.length ? rows.filter((r) => r.win).length / rows.length : 0,
     avgReturnPct: mean(rows.map((r) => r.ret)) * 100,
@@ -50,51 +52,37 @@ function bucket(label: string, rows: Row[]): Bucket {
 
 export async function computeScorecard(): Promise<Scorecard> {
   const all = await db.select().from(shadowOutcomes);
-  const closed: Row[] = all
-    .filter((s) => s.status === "closed")
-    .map((s) => {
-      const entry = Number(s.entryPremium);
-      const exit = Number(s.exitPremium);
-      return {
-        ret: entry > 0 ? (exit - entry) / entry : 0,
-        pnl: (exit - entry) * 100,
-        win: !!s.win,
-        kind: s.kind,
-        variant: s.variant,
-      };
-    });
+  const rows: Row[] = all.map((s) => {
+    const entry = Number(s.entryPremium);
+    const exit = Number(s.exitPremium);
+    return {
+      ret: entry > 0 && s.status === "closed" ? (exit - entry) / entry : 0,
+      pnl: s.status === "closed" ? (exit - entry) * 100 : 0,
+      win: !!s.win,
+      kind: s.kind,
+      profileId: s.profileId,
+      status: s.status,
+    };
+  });
 
-  const setupRows = closed.filter((r) => r.kind === "setup");
-  const baseRows = closed.filter((r) => r.kind === "baseline");
-
-  const strategyBase = bucket("zones", setupRows);
-  const winners = setupRows.filter((r) => r.win).map((r) => r.ret);
-  const losers = setupRows.filter((r) => !r.win).map((r) => r.ret);
-
-  const variantGroups = new Map<string, Row[]>();
-  for (const r of setupRows) {
-    const k = r.variant ?? "zones";
-    (variantGroups.get(k) ?? variantGroups.set(k, []).get(k)!).push(r);
-  }
-  const variants = [...variantGroups.keys()].sort().map((k) => bucket(k, variantGroups.get(k)!));
-
-  const baseline = bucket("baseline", baseRows);
+  const profiles: ProfileScore[] = PROFILE_IDS.map((id) => {
+    const mine = rows.filter((r) => r.profileId === id);
+    const setups = mine.filter((r) => r.kind === "setup" && r.status === "closed");
+    const bases = mine.filter((r) => r.kind === "baseline" && r.status === "closed");
+    const strat = bucket(setups);
+    const base = bucket(bases);
+    const winners = setups.filter((r) => r.win).map((r) => r.ret);
+    const losers = setups.filter((r) => !r.win).map((r) => r.ret);
+    return {
+      profileId: id,
+      label: getProfile(id).label,
+      strategy: { ...strat, avgWinnerPct: mean(winners) * 100, avgLoserPct: mean(losers) * 100 },
+      baseline: base,
+      beatsBaseline: setups.length && bases.length ? strat.avgReturnPct > base.avgReturnPct : null,
+      openShadows: mine.filter((r) => r.kind === "setup" && r.status === "open").length,
+    };
+  });
 
   const cost = await getCostTotals();
-  const netAfterCost = Math.round((strategyBase.netPnl - cost.total) * 100) / 100;
-  const beatsBaseline = setupRows.length && baseRows.length ? strategyBase.avgReturnPct > baseline.avgReturnPct : null;
-
-  return {
-    strategy: { ...strategyBase, avgWinnerPct: mean(winners) * 100, avgLoserPct: mean(losers) * 100 },
-    variants,
-    baseline,
-    counts: {
-      setupsShadowed: all.filter((s) => s.kind === "setup").length,
-      openShadows: all.filter((s) => s.status === "open").length,
-      closedShadows: setupRows.length,
-    },
-    apiCost: cost.total,
-    netAfterCost,
-    beatsBaseline,
-  };
+  return { profiles, apiCost: cost.total };
 }
