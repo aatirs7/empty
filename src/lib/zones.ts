@@ -22,6 +22,10 @@ export interface ZoneOptions {
   displacement: number;
   firstTouchOnly: boolean;
   useFVG: boolean;
+  /** Cap zone height at this × ATR, pulling in the DISTAL edge (keeps the proximal
+   *  edge price taps). Undefined = no cap (daily). Set for intraday so big HTF
+   *  candles don't produce range-wide "zones". */
+  maxWidthAtr?: number;
 }
 
 export const DEFAULT_ZONE_OPTIONS: ZoneOptions = {
@@ -101,11 +105,18 @@ export function computeZones(bars: Bar[], opts: ZoneOptions = DEFAULT_ZONE_OPTIO
 
     // Keep ALL zones for all time (full history, no FIFO drop). Old untapped
     // zones persist and remain tradeable; tapped ones are marked used above.
+    const cap = opts.maxWidthAtr && atr[i] > 0 ? opts.maxWidthAtr * atr[i] : Infinity;
     if (upImpulse && priorBearish) {
-      demand.push({ type: "demand", bottom: prior.l, top: prior.o, formedAt: cur.t, used: false });
+      // demand: price taps the TOP (proximal); pull the bottom (distal) in if too wide.
+      const top = prior.o;
+      const bottom = Math.max(prior.l, top - cap);
+      demand.push({ type: "demand", bottom, top, formedAt: cur.t, used: false });
     }
     if (downImpulse && priorBullish) {
-      supply.push({ type: "supply", bottom: prior.o, top: prior.h, formedAt: cur.t, used: false });
+      // supply: price taps the BOTTOM (proximal); pull the top (distal) in if too wide.
+      const bottom = prior.o;
+      const top = Math.min(prior.h, bottom + cap);
+      supply.push({ type: "supply", bottom, top, formedAt: cur.t, used: false });
     }
     // useFVG is off by default; no FVG gate.
   }

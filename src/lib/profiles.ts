@@ -27,9 +27,11 @@ const DAILY_TF: ZoneTimeframe = { timeframe: "daily", opts: DEFAULT_ZONE_OPTIONS
 const FOURH_TF: ZoneTimeframe = { timeframe: "4h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.3 } };
 // QQQ intraday timeframes: finer bars use a lower displacement to surface enough
 // zones. 15Min/1H drive same-day 0DTE; 4H drives the next-day 1-day swing.
-const Q_15M: ZoneTimeframe = { timeframe: "15min", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.2 }, expiryKind: "zeroDte" };
-const Q_1H: ZoneTimeframe = { timeframe: "1h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.25 }, expiryKind: "zeroDte" };
-const Q_4H_SWING: ZoneTimeframe = { timeframe: "4h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.3 }, expiryKind: "oneDay" };
+// maxWidthAtr caps zone thickness (0.6×ATR) so big HTF candles don't produce
+// range-wide zones — the tap edge is preserved, only the far edge pulls in.
+const Q_15M: ZoneTimeframe = { timeframe: "15min", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.2, maxWidthAtr: 0.6 }, expiryKind: "zeroDte" };
+const Q_1H: ZoneTimeframe = { timeframe: "1h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.25, maxWidthAtr: 0.6 }, expiryKind: "zeroDte" };
+const Q_4H_SWING: ZoneTimeframe = { timeframe: "4h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.3, maxWidthAtr: 0.6 }, expiryKind: "oneDay" };
 
 export interface ContractConfig {
   expiryKind: ExpiryKind;

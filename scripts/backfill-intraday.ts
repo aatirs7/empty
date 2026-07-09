@@ -16,8 +16,8 @@ const COMPS = [
 ];
 const TFS = ["15min", "1h"] as const;
 const OPTS = {
-  "15min": { atrLength: 50, displacement: 1.2, firstTouchOnly: true, useFVG: false },
-  "1h": { atrLength: 50, displacement: 1.25, firstTouchOnly: true, useFVG: false },
+  "15min": { atrLength: 50, displacement: 1.2, firstTouchOnly: true, useFVG: false, maxWidthAtr: 0.6 },
+  "1h": { atrLength: 50, displacement: 1.25, firstTouchOnly: true, useFVG: false, maxWidthAtr: 0.6 },
 } as const;
 
 async function main() {
