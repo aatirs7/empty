@@ -214,6 +214,36 @@ export type ProposalRow = typeof proposals.$inferSelect;
 export type OrderRow = typeof orders.$inferSelect;
 export type Settings = typeof settings.$inferSelect;
 export type UniverseRow = typeof universe.$inferSelect;
+// Historical reaction database: one row per PRIOR zone tap, recorded by replaying
+// history. Feeds every probability / expected-move / target / similarity number
+// (code-computed, never model-generated). Phase 2 appends live trade outcomes.
+export const reactions = pgTable("reactions", {
+  id: serial("id").primaryKey(),
+  symbol: text("symbol").notNull(),
+  timeframe: text("timeframe").notNull(), // daily | 4h
+  zoneType: text("zone_type"), // demand | supply
+  zoneBottom: numeric("zone_bottom"),
+  zoneTop: numeric("zone_top"),
+  approach: text("approach"), // from_above | from_below
+  tappedEdge: text("tapped_edge"), // top | bottom
+  direction: text("direction"), // call | put (the fade side)
+  formedAt: timestamp("formed_at", { withTimezone: true }),
+  tappedAt: timestamp("tapped_at", { withTimezone: true }),
+  outcome: text("outcome"), // rejected (fade worked) | continued (broke through)
+  entryPrice: numeric("entry_price"),
+  mfePct: numeric("mfe_pct"), // max favorable excursion %
+  maePct: numeric("mae_pct"), // max adverse excursion %
+  movePts: numeric("move_pts"), // favorable move in points
+  movePct: numeric("move_pct"),
+  barsToPeak: integer("bars_to_peak"),
+  atrExpansion: numeric("atr_expansion"), // tap-bar range / avg range
+  volExpansion: numeric("vol_expansion"), // tap-bar volume / avg volume
+  pattern: text("pattern"),
+  fingerprint: jsonb("fingerprint").$type<Record<string, string | number>>(), // for similarity matching
+  source: text("source").notNull().default("backfill"), // backfill | live
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Web Push subscriptions (one row per device/browser that opted in).
 export const pushSubscriptions = pgTable("push_subscriptions", {
   id: serial("id").primaryKey(),
@@ -227,3 +257,4 @@ export type CandidateRow = typeof candidates.$inferSelect;
 export type ShadowOutcomeRow = typeof shadowOutcomes.$inferSelect;
 export type PositionStateRow = typeof positionState.$inferSelect;
 export type ProfileSettingsRow = typeof profileSettings.$inferSelect;
+export type ReactionRow = typeof reactions.$inferSelect;

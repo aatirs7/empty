@@ -18,6 +18,7 @@
     "zone-demo": "tsx scripts/zone-brain-demo.ts",
     "shadow": "tsx scripts/shadow.ts",
     "scorecard": "tsx scripts/scorecard.ts",
+    "backfill": "tsx scripts/backfill-reactions.ts",
     "arm": "tsx scripts/arm-paper-month.ts",
     "monitor": "tsx scripts/monitor.ts",
     "seed": "tsx scripts/seed-watchlist.ts",
