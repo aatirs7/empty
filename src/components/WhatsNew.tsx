@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-09-v8";
+const VERSION = "2026-07-09-v9";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "QQQ is now truly intraday",
+    body: "QQQ was reading multi-day (daily) levels and pricing same-day options against them — so it looked like a 5-day swing on a contract that expires today. It's been rebuilt around intraday zones: 15-minute and 1-hour levels drive same-day 0DTE day-trades, and 4-hour levels drive a next-day 1-day swing (a contract that expires tomorrow). Expected hold now reads in minutes/hours, not bars, and QQQ's zones refresh every few minutes while the market is open instead of once overnight. All numbers still come from the reaction database — now backed by 124,000 intraday reactions.",
+  },
   {
     title: "Per-account cost tracking",
     body: "API spend is now tracked per strategy account, not lumped together. Each account's P&L subtracts only its own Claude cost — and since SniperBot's catalyst check is the only thing that uses Claude, QQQ 0DTE shows essentially zero. Tracking was reset to start fresh from today, so the numbers you see are real spend from here forward.",

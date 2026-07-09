@@ -119,6 +119,16 @@ The single zone strategy became a PROFILE system. `src/lib/profiles.ts` = code r
 - [x] Q6.2 (score display): SniperBot candidate scores pinned at 100 because the gate score's two differentiators saturate. Added a UI-only `displayScore` (non-saturating: log R/R, wider history band, playbook-strength weighting); scanner writes it to `candidate.score`. **Live trading unchanged** — monitor.ts still gates auto-buys on `pb.score` and `sniperConfidence` stays on `pb.score`; only display strings use displayScore. Verified spread: 81 candidates now range 40–100, median 65 (was all 100).
 - [x] Q6.3 (per-account API cost): new `api_costs` ledger (`src/lib/cost.ts` `logApiCost`/`getProfileCost`/`getAllApiCost`) attributes each Claude call to a profile. `catalyst.ts` (the only ongoing live-path Claude spend; QQQ uses none) accumulates token/search usage and logs it under the triggering profile; `run-vega` research logs as shared (profileId null). P&L subtracts THIS account's own spend (QQQ ≈ $0). Legacy `research_runs` cost sum removed (`getCostTotals` gone) so displayed spend restarts from now; Log MTD + scorecard read the ledger. Migration `0018_same_nick_fury`. **Deploys are CLI-only: `npx vercel --prod --yes` after every push (git push does NOT auto-deploy).**
 
+### Q7: QQQ intraday rework (Farrukh feedback, 2026-07-09) — LIVE
+- [x] QQQ profile switched from Daily+4H (multi-day ~5-day holds against same-day options) to INTRADAY: `zoneTimeframes` = 15Min + 1H (same-day 0DTE) + 4H (next-day 1-day swing); Daily dropped. `src/lib/timeframes.ts` (ALPACA_TF/MINUTES_PER_BAR/SCAN_LOOKBACK_MIN/formatHold).
+- [x] Per-timeframe contract expiry: new `ExpiryKind "oneDay"` + `ZoneTimeframe.expiryKind` + `contractForTimeframe(profile, tf)`; 15m/1h→zeroDte, 4h→oneDay. Wired through resolve.ts, ev.ts, execute.ts. Verified live: 15m/1h pick today's expiry, 4h picks tomorrow's.
+- [x] Hold shown in MINUTES/hours not bars (`formatHold`; predict.expectedHoldLabel; QqqPrediction). Verified: 15m→~60min, 1h→~4h, 4h→~24h.
+- [x] Intraday reaction backfill: `scripts/backfill-intraday.ts` (`npm run backfill:intraday`) 15Min+1H for QQQ + 24 liquid comps → 124k(15m)+30k(1h) reactions; reactions tuning added for 15min/1h. QQQ symbol-tier n=2210/644/635.
+- [x] 24/7 market-hours scanner: monitor `refreshIntradayScans()` re-scans QQQ intraday every ~5min while open (self-starts at open, stops at close via the market-gated tick). `scanProfile` exported.
+- [x] Caps: perTradeBudget 160 (covers a next-day swing at priceCap), maxOpenPositions 2 (0DTE + swing coexist). sameDayExit only flattens contracts expiring TODAY so the next-day swing rides overnight.
+- **QQQ account was reset/re-keyed to PA3NPEDZA11B ($1000) mid-session; new ALPACA_*_2 keys set on Vercel prod. QQQ auto ON.**
+- FIXED same session: vanishing trades — PositionsView no longer POSTs /api/manage on load (it force-closed near-expiry weeklies unrecorded); autoManagePositions now records exits. Exits are solely the per-minute monitor's job.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.
