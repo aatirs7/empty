@@ -3,14 +3,15 @@ import { getLatestScan } from "@/lib/queries";
 import { PageTitle, Empty } from "@/components/ui";
 import { companyName } from "@/lib/format";
 import { getProfile } from "@/lib/profiles";
-import ProfileTabs, { UI_PROFILE_IDS } from "@/components/ProfileTabs";
+import ProfileTabs from "@/components/ProfileTabs";
+import { resolveUiProfile } from "@/lib/ui-profiles";
 import QqqPrediction from "@/components/QqqPrediction";
 
 export const dynamic = "force-dynamic";
 
 export default async function SetupsPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
   const sp = await searchParams;
-  const profileId = UI_PROFILE_IDS.includes(sp.profile ?? "") ? (sp.profile as string) : "sniper_swing";
+  const profileId = resolveUiProfile(sp.profile);
 
   const tabs = <ProfileTabs />;
 

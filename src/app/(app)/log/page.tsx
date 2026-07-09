@@ -4,13 +4,14 @@ import { getAllApiCost } from "@/lib/cost";
 import { usd, labelStrategy, stripDash, etTime } from "@/lib/format";
 import { Empty, PageTitle } from "@/components/ui";
 import LogStatus from "@/components/LogStatus";
-import ProfileTabs, { UI_PROFILE_IDS } from "@/components/ProfileTabs";
+import ProfileTabs from "@/components/ProfileTabs";
+import { resolveUiProfile } from "@/lib/ui-profiles";
 
 export const dynamic = "force-dynamic";
 
 export default async function LogPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
   const sp = await searchParams;
-  const profileId = UI_PROFILE_IDS.includes(sp.profile ?? "") ? (sp.profile as string) : "sniper_swing";
+  const profileId = resolveUiProfile(sp.profile);
   const [allRuns, cost] = await Promise.all([getRunsLog(40), getAllApiCost()]);
 
   // Filter each run to the selected profile's proposals (+ their orders). Scan

@@ -6,13 +6,13 @@ import { StatusPill, PageTitle } from "@/components/ui";
 import { plainVerdict, confidenceLabel, stripDash, etDateTime } from "@/lib/format";
 import { getProfile } from "@/lib/profiles";
 import ProfileTabs from "@/components/ProfileTabs";
+import { resolveUiProfile } from "@/lib/ui-profiles";
 
 export const dynamic = "force-dynamic";
-const UI_PROFILES = ["sniper_swing", "qqq_0dte"];
 
 export default async function TodayPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
   const sp = await searchParams;
-  const profileId = UI_PROFILES.includes(sp.profile ?? "") ? (sp.profile as string) : "sniper_swing";
+  const profileId = resolveUiProfile(sp.profile);
   const profile = getProfile(profileId);
   const [proposals, scan] = await Promise.all([
     getTodayMonitorTrades(profileId),

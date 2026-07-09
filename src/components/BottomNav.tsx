@@ -62,17 +62,22 @@ export function isActive(path: string, href: string): boolean {
 
 export default function BottomNav() {
   const path = usePathname();
-  // On iOS/PWA a `fixed; bottom:0` bar gets shoved UP above the on-screen
-  // keyboard and floats over the content. Detect the keyboard via the visual
-  // viewport shrinking and hide the nav while it's open so it never jumps.
+  // Hide the bar only while a TEXT FIELD is focused (the keyboard is up), which
+  // otherwise shoves a fixed bottom bar up over the content. Focus-based, not
+  // viewport-size based, so it never false-fires on scroll / URL-bar collapse.
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const onResize = () => setKeyboardOpen(window.innerHeight - vv.height > 150);
-    vv.addEventListener("resize", onResize);
-    onResize();
-    return () => vv.removeEventListener("resize", onResize);
+    const isTextField = (el: Element | null) =>
+      !!el &&
+      (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || (el as HTMLElement).isContentEditable === true);
+    const onFocusIn = () => setKeyboardOpen(isTextField(document.activeElement));
+    const onFocusOut = () => setKeyboardOpen(false);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
   }, []);
   return (
     <nav
