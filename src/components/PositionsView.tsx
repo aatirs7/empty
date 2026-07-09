@@ -47,21 +47,38 @@ export default function PositionsView() {
   const [closed, setClosed] = useState<ClosedData | null>(null);
   const [closing, setClosing] = useState<string | null>(null);
 
+  const [syncedAt, setSyncedAt] = useState<Date | null>(null);
+
   const load = useCallback(async () => {
-    const r = await fetch(`/api/positions${q}`);
+    const r = await fetch(`/api/positions${q}`, { cache: "no-store" });
     setData(await r.json());
+    setSyncedAt(new Date());
   }, [q]);
   const loadClosed = useCallback(async () => {
-    const r = await fetch(`/api/positions/closed${q}`);
+    const r = await fetch(`/api/positions/closed${q}`, { cache: "no-store" });
     setClosed(await r.json());
   }, [q]);
 
   useEffect(() => {
-    // Just DISPLAY current positions. Exits are handled per-profile by the
-    // every-minute monitor cron — opening this page must never close a trade
-    // (the old /api/manage call here force-closed near-expiry weeklies on load).
-    load();
-    loadClosed();
+    // Just DISPLAY current positions (exits are the monitor cron's job — opening
+    // this page must never close a trade). Poll every 8s + on tab focus so the
+    // live P&L stays current without a manual refresh.
+    const refresh = () => {
+      load();
+      loadClosed();
+    };
+    refresh();
+    const iv = window.setInterval(refresh, 8000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      window.clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
   }, [load, loadClosed]);
 
   async function close(sym: string) {
@@ -92,6 +109,13 @@ export default function PositionsView() {
           </button>
         ))}
       </div>
+
+      {tab === "open" && syncedAt && (
+        <p className="text-center text-[11px] text-muted num flex items-center justify-center gap-1.5">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-up animate-pulse" />
+          Live · updated {syncedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+        </p>
+      )}
 
       {tab === "open" ? <OpenView data={data} closing={closing} onClose={close} /> : <ClosedView closed={closed} />}
     </div>
