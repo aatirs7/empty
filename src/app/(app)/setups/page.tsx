@@ -3,6 +3,7 @@ import { getLatestScan } from "@/lib/queries";
 import { PageTitle, Empty } from "@/components/ui";
 import { companyName } from "@/lib/format";
 import { PROFILE_IDS, getProfile } from "@/lib/profiles";
+import QqqPrediction from "@/components/QqqPrediction";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,8 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
         </span>
         .
       </p>
+
+      {profileId === "qqq_0dte" && <QqqPrediction />}
 
       {valid.length === 0 ? (
         <Empty>No ready setups from the latest scan. That&apos;s normal on quiet days.</Empty>

@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-09-v5";
+const VERSION = "2026-07-09-v6";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "History-backed numbers + QQQ 0DTE",
+    body: "Every probability, expected move, and target now comes from a database of 236,000 real historical zone reactions — with the sample size shown, so a stat backed by 6 examples never looks like one backed by 400. The QQQ 0DTE strategy (Setups → QQQ tab) predicts where QQQ moves next from Daily + 4H history, then picks the highest expected-value contract. Use the profile toggle on the homepage to switch between strategies.",
+  },
   {
     title: "SniperBot is live",
     body: "A new main strategy: institutional order-block setups on large/mega-cap stocks. It only buys when a zone tap is CONFIRMED on the live 5-min tape (rejection + volume), passes three code-computed scores + a historical-similarity read + an adversarial review, and clears a news/earnings catalyst check. Find it under Setups (tabs: SniperBot / QQQ 0DTE / Zones). Now auto-trading your account.",

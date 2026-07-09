@@ -54,8 +54,8 @@ export async function getRunWithProposals(
 }
 
 /** Today's actual trades from the live monitor (filled or working), newest first.
- *  Independent of which run is "latest" — a scan run must not hide today's trades. */
-export async function getTodayMonitorTrades(): Promise<ProposalRow[]> {
+ *  Optionally filtered to one profile (for the homepage profile toggle). */
+export async function getTodayMonitorTrades(profileId?: string): Promise<ProposalRow[]> {
   const today = new Date().toISOString().slice(0, 10);
   const runs = await db
     .select({ id: researchRuns.id })
@@ -63,10 +63,12 @@ export async function getTodayMonitorTrades(): Promise<ProposalRow[]> {
     .where(and(eq(researchRuns.model, "monitor"), eq(researchRuns.runDate, today)));
   if (runs.length === 0) return [];
   const ids = runs.map((r) => r.id);
+  const conds = [inArray(proposals.runId, ids), ne(proposals.status, "expired")];
+  if (profileId) conds.push(eq(proposals.profileId, profileId));
   return db
     .select()
     .from(proposals)
-    .where(and(inArray(proposals.runId, ids), ne(proposals.status, "expired")))
+    .where(and(...conds))
     .orderBy(desc(proposals.createdAt));
 }
 

@@ -4,11 +4,18 @@ import ProposalActions from "@/components/ProposalActions";
 import GoalProgress from "@/components/GoalProgress";
 import { StatusPill, PageTitle } from "@/components/ui";
 import { plainVerdict, confidenceLabel, stripDash, etDateTime } from "@/lib/format";
+import { PROFILE_IDS, getProfile } from "@/lib/profiles";
 
 export const dynamic = "force-dynamic";
 
-export default async function TodayPage() {
-  const [proposals, scanRun, scan] = await Promise.all([getTodayMonitorTrades(), getLatestScanRun(), getLatestScan()]);
+export default async function TodayPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
+  const sp = await searchParams;
+  const profileId = PROFILE_IDS.includes(sp.profile as never) ? (sp.profile as string) : "sniper_swing";
+  const [proposals, scanRun, scan] = await Promise.all([
+    getTodayMonitorTrades(profileId),
+    getLatestScanRun(),
+    getLatestScan(profileId),
+  ]);
   const runDate = scanRun?.runDate ?? new Date().toISOString().slice(0, 10);
   const trades = proposals.filter((p) => p.strategy !== "no_trade");
   const openTrades = trades.filter((p) => p.status !== "closed");
@@ -20,7 +27,21 @@ export default async function TodayPage() {
 
   return (
     <div className="space-y-5">
-      <PageTitle title="Today" subtitle={runDate} />
+      <PageTitle title="Today" subtitle={`${getProfile(profileId).label} · ${runDate}`} />
+
+      <div className="flex gap-1.5 justify-center flex-wrap">
+        {PROFILE_IDS.map((id) => (
+          <Link
+            key={id}
+            href={`/?profile=${id}`}
+            className={`text-xs px-3 py-1.5 rounded-full border ${
+              id === profileId ? "border-accent text-accent" : "border-border text-muted"
+            }`}
+          >
+            {getProfile(id).label}
+          </Link>
+        ))}
+      </div>
 
       <GoalProgress />
 
