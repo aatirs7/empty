@@ -3,15 +3,31 @@ import { getRunsLog, getCostTotals } from "@/lib/queries";
 import { usd, labelStrategy, stripDash, etTime } from "@/lib/format";
 import { Empty, PageTitle } from "@/components/ui";
 import LogStatus from "@/components/LogStatus";
+import ProfileTabs, { UI_PROFILE_IDS } from "@/components/ProfileTabs";
 
 export const dynamic = "force-dynamic";
 
-export default async function LogPage() {
-  const [runs, cost] = await Promise.all([getRunsLog(30), getCostTotals()]);
+export default async function LogPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
+  const sp = await searchParams;
+  const profileId = UI_PROFILE_IDS.includes(sp.profile ?? "") ? (sp.profile as string) : "sniper_swing";
+  const [allRuns, cost] = await Promise.all([getRunsLog(40), getCostTotals()]);
+
+  // Filter each run to the selected profile's proposals (+ their orders). Scan
+  // runs cover all profiles and have no proposals, so keep them regardless.
+  const runs = allRuns
+    .map((r) => {
+      const rp = r.proposals.filter((p) => p.profileId === profileId);
+      const keepIds = new Set(rp.map((p) => p.id));
+      return { run: r.run, proposals: rp, orders: r.orders.filter((o) => keepIds.has(o.proposalId)) };
+    })
+    .filter((r) => r.run.model === "scan" || r.proposals.length > 0)
+    .slice(0, 30);
 
   return (
     <div className="space-y-5">
       <PageTitle title="Log" subtitle={`Month-to-date cost ${usd(cost.monthToDate)}`} />
+
+      <ProfileTabs />
 
       <LogStatus />
 

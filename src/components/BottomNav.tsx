@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 export function NavIcon({ name, className = "h-6 w-6" }: { name: string; className?: string }) {
   const common = {
@@ -61,8 +62,24 @@ export function isActive(path: string, href: string): boolean {
 
 export default function BottomNav() {
   const path = usePathname();
+  // On iOS/PWA a `fixed; bottom:0` bar gets shoved UP above the on-screen
+  // keyboard and floats over the content. Detect the keyboard via the visual
+  // viewport shrinking and hide the nav while it's open so it never jumps.
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => setKeyboardOpen(window.innerHeight - vv.height > 150);
+    vv.addEventListener("resize", onResize);
+    onResize();
+    return () => vv.removeEventListener("resize", onResize);
+  }, []);
   return (
-    <nav className="lg:hidden fixed bottom-0 inset-x-0 z-10 border-t border-border bg-background/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
+    <nav
+      className={`lg:hidden fixed bottom-0 inset-x-0 z-10 border-t border-border bg-background/95 backdrop-blur pb-[env(safe-area-inset-bottom)] ${
+        keyboardOpen ? "hidden" : ""
+      }`}
+    >
       <div className="max-w-xl mx-auto grid grid-cols-5">
         {navTabs.map((t) => {
           const active = isActive(path, t.href);

@@ -14,16 +14,23 @@ export async function POST(_req: Request, { params }: { params: Promise<{ symbol
     return NextResponse.json({ ok: false, error: "not paper mode" }, { status: 403 });
   }
   try {
-    const broker = getBroker();
-    const pos = await broker.getPosition(symbol).catch(() => null);
-    const order = await broker.closePosition(symbol);
-    // Record the exit (price, P&L) and mark the proposal closed.
+    // Find the originating order/proposal FIRST so we close on the right account
+    // (QQQ trades live on a separate paper account from SniperBot).
     const [ord] = await db
       .select({ id: orders.id, pid: orders.proposalId, qty: orders.qty })
       .from(orders)
       .where(eq(orders.contractSymbol, symbol))
       .orderBy(desc(orders.id))
       .limit(1);
+    let profileId: string | undefined;
+    if (ord?.pid) {
+      const [prop] = await db.select({ profileId: proposals.profileId }).from(proposals).where(eq(proposals.id, ord.pid)).limit(1);
+      profileId = prop?.profileId ?? undefined;
+    }
+    const broker = getBroker(profileId);
+    const pos = await broker.getPosition(symbol).catch(() => null);
+    const order = await broker.closePosition(symbol);
+    // Record the exit (price, P&L) and mark the proposal closed.
     if (ord) {
       if (pos) {
         const exit = pos.current_price ? Number(pos.current_price) : Number(pos.avg_entry_price);

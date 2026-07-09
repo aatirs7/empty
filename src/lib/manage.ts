@@ -71,14 +71,14 @@ async function lastCompletedClose(underlying: string): Promise<number | null> {
   }
 }
 
-export async function autoManagePositions(): Promise<ManageSummary> {
+export async function autoManagePositions(profileId?: string): Promise<ManageSummary> {
   const settings = await getSettings();
   if (!settings.autoManage) return { enabled: false, actions: [] };
   if (process.env.TRADING_MODE !== "paper") {
     throw new Error(`GUARDRAIL: TRADING_MODE must be "paper", got "${process.env.TRADING_MODE}".`);
   }
 
-  const broker = getBroker();
+  const broker = getBroker(profileId);
   const tol = THRESHOLDS[(settings.riskTolerance as RiskTolerance)] ?? THRESHOLDS.balanced;
   const goal = Number(settings.weeklyGoal);
   const { weeklyPL } = await broker.getWeeklyPL();

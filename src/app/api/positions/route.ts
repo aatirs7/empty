@@ -12,8 +12,9 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const snapshot = url.searchParams.get("snapshot") === "1";
+  const profile = url.searchParams.get("profile") ?? undefined;
 
-  const raw = await getBroker().listPositions();
+  const raw = await getBroker(profile).listPositions();
 
   // Attach the exact time each entry order was placed/filled, from our orders table.
   const syms = raw.map((p) => p.symbol);

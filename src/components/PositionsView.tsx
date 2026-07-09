@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { usd, parseOcc, companyName, positionRecommendation, etDateTime, daysUntil } from "@/lib/format";
 
 interface Pos {
@@ -39,31 +40,33 @@ interface ClosedData {
 }
 
 export default function PositionsView() {
+  const profile = useSearchParams().get("profile") ?? "sniper_swing";
+  const q = `?profile=${profile}`;
   const [tab, setTab] = useState<"open" | "closed">("open");
   const [data, setData] = useState<Data | null>(null);
   const [closed, setClosed] = useState<ClosedData | null>(null);
   const [closing, setClosing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const r = await fetch("/api/positions");
+    const r = await fetch(`/api/positions${q}`);
     setData(await r.json());
-  }, []);
+  }, [q]);
   const loadClosed = useCallback(async () => {
-    const r = await fetch("/api/positions/closed");
+    const r = await fetch(`/api/positions/closed${q}`);
     setClosed(await r.json());
-  }, []);
+  }, [q]);
 
   useEffect(() => {
-    fetch("/api/manage", { method: "POST" })
+    fetch(`/api/manage${q}`, { method: "POST" })
       .catch(() => {})
       .finally(load);
     loadClosed();
-  }, [load, loadClosed]);
+  }, [load, loadClosed, q]);
 
   async function close(sym: string) {
     if (!window.confirm(`Close ${sym}? This flattens the paper position.`)) return;
     setClosing(sym);
-    await fetch(`/api/positions/${encodeURIComponent(sym)}/close`, { method: "POST" });
+    await fetch(`/api/positions/${encodeURIComponent(sym)}/close${q}`, { method: "POST" });
     setClosing(null);
     load();
     loadClosed();

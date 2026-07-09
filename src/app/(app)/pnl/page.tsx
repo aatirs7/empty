@@ -1,9 +1,11 @@
 import { getCostTotals } from "@/lib/queries";
-import { getPortfolioPL, type PortfolioPL } from "@/lib/alpaca";
+import { type PortfolioPL } from "@/lib/alpaca";
+import { getBroker } from "@/lib/broker";
 import { usd } from "@/lib/format";
 import { PageTitle } from "@/components/ui";
 import GoalProgress from "@/components/GoalProgress";
 import AccountBalance from "@/components/AccountBalance";
+import ProfileTabs, { UI_PROFILE_IDS } from "@/components/ProfileTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -17,12 +19,14 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "up
   );
 }
 
-export default async function PnlPage() {
+export default async function PnlPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
+  const sp = await searchParams;
+  const profileId = UI_PROFILE_IDS.includes(sp.profile ?? "") ? (sp.profile as string) : "sniper_swing";
   const cost = await getCostTotals();
   let pl: PortfolioPL | null = null;
   let plError: string | null = null;
   try {
-    pl = await getPortfolioPL();
+    pl = await getBroker(profileId).getPortfolioPL();
   } catch (e) {
     plError = e instanceof Error ? e.message : "unavailable";
   }
@@ -34,7 +38,9 @@ export default async function PnlPage() {
     <div className="space-y-5">
       <PageTitle title="Profit & Loss" />
 
-      <AccountBalance />
+      <ProfileTabs />
+
+      <AccountBalance profile={profileId} />
 
       <GoalProgress />
 

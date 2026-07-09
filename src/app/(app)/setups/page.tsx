@@ -2,30 +2,17 @@ import Link from "next/link";
 import { getLatestScan } from "@/lib/queries";
 import { PageTitle, Empty } from "@/components/ui";
 import { companyName } from "@/lib/format";
-import { PROFILE_IDS, getProfile } from "@/lib/profiles";
+import { getProfile } from "@/lib/profiles";
+import ProfileTabs, { UI_PROFILE_IDS } from "@/components/ProfileTabs";
 import QqqPrediction from "@/components/QqqPrediction";
 
 export const dynamic = "force-dynamic";
 
 export default async function SetupsPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
   const sp = await searchParams;
-  const profileId = PROFILE_IDS.includes(sp.profile as never) ? (sp.profile as string) : "sniper_swing";
+  const profileId = UI_PROFILE_IDS.includes(sp.profile ?? "") ? (sp.profile as string) : "sniper_swing";
 
-  const tabs = (
-    <div className="flex gap-1.5 justify-center flex-wrap">
-      {PROFILE_IDS.map((id) => (
-        <Link
-          key={id}
-          href={`/setups?profile=${id}`}
-          className={`text-xs px-3 py-1.5 rounded-full border ${
-            id === profileId ? "border-accent text-accent" : "border-border text-muted"
-          }`}
-        >
-          {getProfile(id).label}
-        </Link>
-      ))}
-    </div>
-  );
+  const tabs = <ProfileTabs />;
 
   const scan = await getLatestScan(profileId);
   if (!scan) {

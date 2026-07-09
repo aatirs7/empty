@@ -1,66 +1,66 @@
 import Link from "next/link";
-import { getTodayMonitorTrades, getLatestScanRun, getLatestScan } from "@/lib/queries";
+import { getTodayMonitorTrades, getLatestScan } from "@/lib/queries";
 import ProposalActions from "@/components/ProposalActions";
 import GoalProgress from "@/components/GoalProgress";
 import { StatusPill, PageTitle } from "@/components/ui";
 import { plainVerdict, confidenceLabel, stripDash, etDateTime } from "@/lib/format";
-import { PROFILE_IDS, getProfile } from "@/lib/profiles";
+import { getProfile } from "@/lib/profiles";
+import ProfileTabs from "@/components/ProfileTabs";
 
 export const dynamic = "force-dynamic";
+const UI_PROFILES = ["sniper_swing", "qqq_0dte"];
 
 export default async function TodayPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
   const sp = await searchParams;
-  const profileId = PROFILE_IDS.includes(sp.profile as never) ? (sp.profile as string) : "sniper_swing";
-  const [proposals, scanRun, scan] = await Promise.all([
+  const profileId = UI_PROFILES.includes(sp.profile ?? "") ? (sp.profile as string) : "sniper_swing";
+  const profile = getProfile(profileId);
+  const [proposals, scan] = await Promise.all([
     getTodayMonitorTrades(profileId),
-    getLatestScanRun(),
     getLatestScan(profileId),
   ]);
-  const runDate = scanRun?.runDate ?? new Date().toISOString().slice(0, 10);
+  const runDate = scan?.runDate ?? new Date().toISOString().slice(0, 10);
   const trades = proposals.filter((p) => p.strategy !== "no_trade");
   const openTrades = trades.filter((p) => p.status !== "closed");
   const closedTrades = trades.filter((p) => p.status === "closed");
-  const topSetups = (scan?.candidates ?? [])
+  const cands = scan?.candidates ?? [];
+  const validSetups = cands
     .filter((c) => c.setupValid)
     .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
     .slice(0, 5);
+  // When nothing is tapped/ready, still show the nearest zones approaching (so a
+  // profile like QQQ 0DTE — which fires intraday, not from a daily-scan tap —
+  // isn't a blank page).
+  const approaching = cands
+    .filter((c) => !c.setupValid)
+    .sort((a, b) => Number(a.distanceToEdgePct) - Number(b.distanceToEdgePct))
+    .slice(0, 5);
+  const watchList = validSetups.length > 0 ? validSetups : approaching;
+  const watchReady = validSetups.length > 0;
 
   return (
     <div className="space-y-5">
-      <PageTitle title="Today" subtitle={`${getProfile(profileId).label} · ${runDate}`} />
+      <PageTitle title="Today" subtitle={`${profile.label} · ${runDate}`} />
 
-      <div className="flex gap-1.5 justify-center flex-wrap">
-        {PROFILE_IDS.map((id) => (
-          <Link
-            key={id}
-            href={`/?profile=${id}`}
-            className={`text-xs px-3 py-1.5 rounded-full border ${
-              id === profileId ? "border-accent text-accent" : "border-border text-muted"
-            }`}
-          >
-            {getProfile(id).label}
-          </Link>
-        ))}
-      </div>
+      <ProfileTabs />
 
       <GoalProgress />
 
       <p className="text-center text-sm text-muted leading-relaxed">
-        {scanRun?.marketContext
-          ? stripDash(scanRun.marketContext)
-          : "Vega scans the market each morning for zone setups."}
-        {trades.length > 0 && (
-          <>
-            {" "}
-            <span className="text-foreground font-medium">
-              {trades.length} trade{trades.length === 1 ? "" : "s"} today — {openTrades.length} open, {closedTrades.length}{" "}
-              closed.
-            </span>
-          </>
+        {stripDash(profile.description)}{" "}
+        {trades.length > 0 ? (
+          <span className="text-foreground font-medium">
+            {trades.length} trade{trades.length === 1 ? "" : "s"} today — {openTrades.length} open, {closedTrades.length}{" "}
+            closed.
+          </span>
+        ) : (
+          <span className="text-muted">
+            Watching <span className="text-foreground font-medium">{cands.length}</span> names,{" "}
+            <span className="text-foreground font-medium">{validSetups.length}</span> ready.
+          </span>
         )}
       </p>
 
-      <Link href="/setups" className="block text-center text-xs text-accent">
+      <Link href={`/setups?profile=${profileId}`} className="block text-center text-xs text-accent">
         See the latest scan &amp; setups &rarr;
       </Link>
 
@@ -127,14 +127,16 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         })}
       </div>
 
-      {openTrades.length === 0 && topSetups.length > 0 && (
+      {openTrades.length === 0 && watchList.length > 0 && (
         <div className="space-y-2">
           <p className="text-center text-xs text-muted leading-relaxed">
-            {closedTrades.length > 0
-              ? "No open trades right now. Vega is watching these top setups live and will auto-buy the moment one taps its zone."
-              : "No trades placed yet today. Vega is watching these top setups live and will auto-buy the moment one taps its zone."}
+            {watchReady
+              ? closedTrades.length > 0
+                ? "No open trades right now. Vega is watching these top setups live and will auto-buy the moment one taps its zone."
+                : "No trades placed yet today. Vega is watching these top setups live and will auto-buy the moment one taps its zone."
+              : "Nothing has tapped a zone yet today. These are the nearest zones approaching — Vega auto-buys the moment one is tapped and confirmed."}
           </p>
-          {topSetups.map((c) => {
+          {watchList.map((c) => {
             const isCall = c.direction === "call";
             return (
               <Link
@@ -146,14 +148,31 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
                   <span className="font-medium">{c.symbol}</span>{" "}
                   <span className={isCall ? "text-up" : "text-down"}>{isCall ? "bounce up" : "push down"}</span>
                 </span>
-                <span className="text-xs text-muted num">{c.score != null ? `${c.score}/100` : ""}</span>
+                <span className="text-xs text-muted num">
+                  {watchReady
+                    ? c.score != null
+                      ? `${c.score}/100`
+                      : ""
+                    : `${Number(c.distanceToEdgePct).toFixed(1)}% away`}
+                </span>
               </Link>
             );
           })}
-          <Link href="/setups" className="block text-center text-xs text-accent pt-1">
+          <Link href={`/setups?profile=${profileId}`} className="block text-center text-xs text-accent pt-1">
             See all setups →
           </Link>
         </div>
+      )}
+
+      {openTrades.length === 0 && watchList.length === 0 && (
+        <p className="text-center text-xs text-muted leading-relaxed">
+          {profileId === "qqq_0dte"
+            ? "No QQQ zone in play right now. QQQ 0DTE fires intraday when price reaches a Daily/4H level — see the live prediction on the "
+            : "No setups in play right now. The scanner runs after each close — check back, or see the "}
+          <Link href={`/setups?profile=${profileId}`} className="text-accent">
+            Setups page →
+          </Link>
+        </p>
       )}
     </div>
   );

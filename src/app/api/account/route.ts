@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import { getAccount } from "@/lib/alpaca";
+import { getBroker } from "@/lib/broker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Live paper account balance (equity, cash, buying power, today's change).
-export async function GET() {
+export async function GET(req: Request) {
+  const profile = new URL(req.url).searchParams.get("profile") ?? undefined;
   try {
-    const a = await getAccount();
+    const a = await getBroker(profile).getAccount();
     const equity = Number(a.equity ?? a.portfolio_value ?? 0);
     const lastEquity = Number(a.last_equity ?? equity);
     return NextResponse.json({

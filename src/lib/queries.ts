@@ -86,9 +86,20 @@ export async function getProposalForContract(contractSymbol: string): Promise<Pr
   return p ?? null;
 }
 
-/** Closed (sold) trades, newest first — for the Positions "Closed" tab. */
-export async function getClosedTrades(limit = 60): Promise<OrderRow[]> {
-  return db.select().from(orders).where(isNotNull(orders.exitAt)).orderBy(desc(orders.exitAt)).limit(limit);
+/** Closed (sold) trades, newest first — for the Positions "Closed" tab.
+ *  Optionally filtered to one profile (via the originating proposal). */
+export async function getClosedTrades(profileId?: string, limit = 60): Promise<OrderRow[]> {
+  if (!profileId) {
+    return db.select().from(orders).where(isNotNull(orders.exitAt)).orderBy(desc(orders.exitAt)).limit(limit);
+  }
+  const rows = await db
+    .select({ order: orders })
+    .from(orders)
+    .innerJoin(proposals, eq(orders.proposalId, proposals.id))
+    .where(and(isNotNull(orders.exitAt), eq(proposals.profileId, profileId)))
+    .orderBy(desc(orders.exitAt))
+    .limit(limit);
+  return rows.map((r) => r.order);
 }
 
 export async function getCandidateById(id: number): Promise<CandidateRow | null> {

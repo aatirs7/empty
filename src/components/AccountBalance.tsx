@@ -11,14 +11,14 @@ interface Acct {
   dayPL: number;
 }
 
-export default function AccountBalance() {
+export default function AccountBalance({ profile }: { profile?: string }) {
   const [a, setA] = useState<Acct | null>(null);
   useEffect(() => {
-    fetch("/api/account")
+    fetch(`/api/account${profile ? `?profile=${profile}` : ""}`)
       .then((r) => r.json())
       .then((j) => (j.ok ? setA(j) : null))
       .catch(() => {});
-  }, []);
+  }, [profile]);
 
   if (!a) return null;
   const up = a.dayPL >= 0;
