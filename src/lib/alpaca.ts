@@ -235,6 +235,34 @@ export async function getMultiStockBars(symbols: string[], days = 450): Promise<
   return out;
 }
 
+/**
+ * Intraday OHLCV bars for the confirmation engine. Uses the configured feed
+ * (DATA_FEED, sip on the paid plan) so volume/candles reflect the full tape.
+ * Returns the recent window, most recent last.
+ */
+export async function getIntradayBars(symbol: string, timeframe = "5Min", lookbackMinutes = 300): Promise<Bar[]> {
+  const feed = process.env.DATA_FEED ?? "iex";
+  const start = new Date(Date.now() - lookbackMinutes * 60_000);
+  const bars: Bar[] = [];
+  let pageToken: string | undefined;
+  do {
+    const q = new URLSearchParams({
+      timeframe,
+      start: start.toISOString(),
+      feed,
+      limit: "10000",
+      adjustment: "split",
+    });
+    if (pageToken) q.set("page_token", pageToken);
+    const resp = await data<{ bars?: RawBar[]; next_page_token?: string | null }>(
+      `/v2/stocks/${encodeURIComponent(symbol)}/bars?${q.toString()}`,
+    );
+    bars.push(...(resp.bars ?? []).map(toBar));
+    pageToken = resp.next_page_token ?? undefined;
+  } while (pageToken);
+  return bars;
+}
+
 export function getOrder(id: string): Promise<Order> {
   return trading<Order>(`/v2/orders/${id}`);
 }

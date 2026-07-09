@@ -23,6 +23,8 @@ import { classifyAndScore } from "./playbook";
 import { parseOcc } from "./format";
 import { sendPush } from "./push";
 import { getProfile } from "./profiles";
+import { getProfileSettings } from "./profile-settings";
+import { confirmEntry } from "./confirm";
 
 // Farrukh's simplified test exit: sell the whole (1-contract) position at +100%,
 // or stop out at -30%. Env-tunable.
@@ -164,14 +166,26 @@ export async function monitorTick(): Promise<Fire[]> {
     const prev = prevPrices[key];
     nextPrices[key] = cur;
     if (firedSet.has(c.id)) continue;
-    if (prev === undefined) continue; // first sighting: establish baseline, don't fire
 
     const direction = c.direction as "call" | "put";
     const profile = getProfile(c.profileId);
-    // Confirmation-gated profiles (SniperBot, QQQ 0DTE) are handled by the S2
-    // confirmation engine, not the bare tap path. Only tap-only profiles fire here.
-    if (profile.confirmation.enabled) continue;
-    if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
+
+    // Decide whether this candidate triggers NOW.
+    let confirmReason = "";
+    if (profile.confirmation.enabled) {
+      // Confirmation profiles (SniperBot, QQQ 0DTE): fire only when price is AT the
+      // zone AND an intraday confirmation candle prints (rejection/engulf/strong
+      // close + relative volume) — never on a bare tap.
+      const atZone = cur >= z.bottom * 0.99 && cur <= z.top * 1.01;
+      if (!atZone) continue;
+      const conf = await confirmEntry(c.symbol, direction, z, profile.confirmation.minRelVolume);
+      if (!conf.confirmed) continue;
+      confirmReason = ` Confirmed: ${conf.reason}.`;
+    } else {
+      // Tap-only profiles (zones_legacy): a boundary crossing between two ticks.
+      if (prev === undefined) continue; // first sighting: establish baseline
+      if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
+    }
 
     // Score the setup; only fire if it clears the profile's quality threshold.
     let pb: ReturnType<typeof classifyAndScore> | null = null;
@@ -196,7 +210,7 @@ export async function monitorTick(): Promise<Fire[]> {
     const zoneWord = direction === "call" ? "support" : "resistance";
     const tapBoundary = direction === "call" ? "top" : "bottom"; // call taps top (from above), put taps bottom (from below)
     const tapPrice = direction === "call" ? z.top : z.bottom;
-    const alert = `${direction.toUpperCase()}S: ${c.symbol} — ${pb.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb.safeTarget ?? "?"}, extended ${pb.extendedTarget ?? "?"}. Score ${pb.score}/100.`;
+    const alert = `${direction.toUpperCase()}S: ${c.symbol} — ${pb.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb.safeTarget ?? "?"}, extended ${pb.extendedTarget ?? "?"}. Score ${pb.score}/100.${confirmReason}`;
     try {
       const runId = await ensureMonitorRun();
       const [prop] = await db
@@ -224,7 +238,8 @@ export async function monitorTick(): Promise<Fire[]> {
         })
         .returning({ id: proposals.id });
 
-      if (settings.autoExecute) {
+      const autoOn = (await getProfileSettings(c.profileId)).autoExecute;
+      if (autoOn) {
         try {
           const r = await executeProposal(prop.id, "auto");
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: true, detail: `order #${r.orderId} ${r.orderStatus}` });

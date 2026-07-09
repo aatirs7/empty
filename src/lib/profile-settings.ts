@@ -6,9 +6,9 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { profileSettings, type ProfileSettingsRow } from "../db/schema";
-import { getProfile, type ProfileId } from "./profiles";
+import { getProfile } from "./profiles";
 
-export async function getProfileSettings(profileId: ProfileId): Promise<ProfileSettingsRow> {
+export async function getProfileSettings(profileId: string): Promise<ProfileSettingsRow> {
   const [row] = await db.select().from(profileSettings).where(eq(profileSettings.profileId, profileId)).limit(1);
   if (row) return row;
   const p = getProfile(profileId);
@@ -21,7 +21,7 @@ export async function getProfileSettings(profileId: ProfileId): Promise<ProfileS
 }
 
 export async function setProfileAuto(
-  profileId: ProfileId,
+  profileId: string,
   patch: { autoExecute?: boolean; autoManage?: boolean },
 ): Promise<void> {
   await getProfileSettings(profileId); // ensure the row exists
