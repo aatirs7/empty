@@ -127,6 +127,13 @@
       "when": 1783566929834,
       "tag": "0017_huge_namorita",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783570768993,
+      "tag": "0018_same_nick_fury",
+      "breakpoints": true
     }
   ]
 }

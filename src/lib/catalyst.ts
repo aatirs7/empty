@@ -6,6 +6,7 @@
  * (advisory): if Claude is unavailable, trading proceeds with "catalyst unchecked".
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { logApiCost } from "./cost";
 
 export interface CatalystResult {
   catalyst: boolean; // a known scheduled catalyst within the window
@@ -15,8 +16,13 @@ export interface CatalystResult {
 
 const MODEL = process.env.CATALYST_MODEL ?? process.env.RESEARCH_MODEL ?? "claude-sonnet-5";
 
-export async function checkCatalyst(symbol: string, days = 5): Promise<CatalystResult> {
+// profileId attributes this call's API spend to the account that triggered it
+// (the SniperBot profile in practice). QQQ 0DTE never calls this.
+export async function checkCatalyst(symbol: string, days = 5, profileId?: string): Promise<CatalystResult> {
   if (!process.env.ANTHROPIC_API_KEY) return { catalyst: false, event: "", checked: false };
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let searchCount = 0;
   try {
     const client = new Anthropic();
     let msgs: Anthropic.MessageParam[] = [
@@ -33,6 +39,10 @@ export async function checkCatalyst(symbol: string, days = 5): Promise<CatalystR
         messages: msgs,
         tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 2 }],
       });
+      // Accumulate token + search usage across pause_turn continuations.
+      inputTokens += response.usage?.input_tokens ?? 0;
+      outputTokens += response.usage?.output_tokens ?? 0;
+      searchCount += response.usage?.server_tool_use?.web_search_requests ?? 0;
       if (response.stop_reason === "pause_turn") {
         msgs = [...msgs, { role: "assistant", content: response.content as unknown as Anthropic.ContentBlockParam[] }];
         continue;
@@ -49,5 +59,10 @@ export async function checkCatalyst(symbol: string, days = 5): Promise<CatalystR
     return { catalyst: !!j.catalyst, event: String(j.event ?? "").slice(0, 80), checked: true };
   } catch {
     return { catalyst: false, event: "", checked: false };
+  } finally {
+    // Log the spend even on partial/failed runs (tokens were still consumed).
+    if (inputTokens || outputTokens || searchCount) {
+      await logApiCost({ profileId: profileId ?? null, source: "catalyst", symbol, model: MODEL, inputTokens, outputTokens, searchCount });
+    }
   }
 }

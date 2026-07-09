@@ -1,4 +1,4 @@
-import { getCostTotals } from "@/lib/queries";
+import { getProfileCost } from "@/lib/cost";
 import { type PortfolioPL } from "@/lib/alpaca";
 import { getBroker } from "@/lib/broker";
 import { usd } from "@/lib/format";
@@ -22,7 +22,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "up
 export default async function PnlPage({ searchParams }: { searchParams: Promise<{ profile?: string }> }) {
   const sp = await searchParams;
   const profileId = UI_PROFILE_IDS.includes(sp.profile ?? "") ? (sp.profile as string) : "sniper_swing";
-  const cost = await getCostTotals();
+  const cost = await getProfileCost(profileId);
   let pl: PortfolioPL | null = null;
   let plError: string | null = null;
   try {
@@ -61,9 +61,9 @@ export default async function PnlPage({ searchParams }: { searchParams: Promise<
           value={pl ? `${tradePL >= 0 ? "+" : ""}${usd(tradePL)}` : "-"}
           tone={pl ? (tradePL >= 0 ? "up" : "down") : undefined}
         />
-        <Stat label="API cost (all-time)" value={usd(cost.total)} />
+        <Stat label="API cost (this account)" value={usd(cost.total)} />
         <Stat label="API cost (this month)" value={usd(cost.monthToDate)} />
-        <Stat label="Research runs" value={String(cost.runCount)} />
+        <Stat label="Claude calls" value={String(cost.callCount)} />
       </div>
 
       {plError && <p className="text-xs text-muted">Trade P&amp;L unavailable right now ({plError}).</p>}
@@ -73,9 +73,9 @@ export default async function PnlPage({ searchParams }: { searchParams: Promise<
       </a>
 
       <p className="text-xs text-muted">
-        Paper account. Trade P&amp;L is your paper equity change since the account started (realized + unrealized) from
-        Alpaca. API cost is the summed estimate of every research run. Net is simply one minus the other, both
-        code-computed.
+        Paper account. Trade P&amp;L is this account&apos;s paper equity change since it started (realized + unrealized)
+        from Alpaca. API cost is only this account&apos;s own Claude spend (SniperBot&apos;s catalyst check; QQQ 0DTE uses
+        none), tracked from when per-account billing began. Net is one minus the other, both code-computed.
       </p>
     </div>
   );

@@ -21,6 +21,7 @@ import { getSettings } from "./settings";
 import { executeProposal, ExecuteError } from "./execute";
 import { getWeeklyPL } from "./alpaca";
 import { autoManagePositions, type ManageSummary } from "./manage";
+import { logApiCost } from "./cost";
 import type { ZoneSetup } from "./strategy";
 
 export async function loadActiveWatchlist(): Promise<WatchlistItem[]> {
@@ -206,6 +207,18 @@ export async function runAndPersist(opts: RunOptions = {}): Promise<PersistedRun
         costEstimate: result.costEstimate.toFixed(6),
       })
       .where(eq(researchRuns.id, run.id));
+
+    // Ledger the spend (shared/unattributed — the watchlist research isn't tied
+    // to one profile/account). QQQ + SniperBot per-account costs are logged where
+    // they're incurred (the catalyst check).
+    await logApiCost({
+      profileId: null,
+      source: "research",
+      model: result.model,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      searchCount: result.searchCount,
+    });
 
     let inserted: InsertedProposal[] = [];
     if (result.output.proposals.length > 0) {

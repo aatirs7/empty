@@ -231,7 +231,7 @@ export async function monitorTick(): Promise<Fire[]> {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
         continue;
       }
-      const cat = await checkCatalyst(c.symbol, 5);
+      const cat = await checkCatalyst(c.symbol, 5, c.profileId);
       if (cat.catalyst) {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
         continue;

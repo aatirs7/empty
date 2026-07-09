@@ -7,7 +7,7 @@
 import { db } from "../db";
 import { shadowOutcomes } from "../db/schema";
 import { getProfile, PROFILE_IDS } from "./profiles";
-import { getCostTotals } from "./queries";
+import { getAllApiCost } from "./cost";
 
 export interface Bucket {
   n: number;
@@ -83,6 +83,6 @@ export async function computeScorecard(): Promise<Scorecard> {
     };
   });
 
-  const cost = await getCostTotals();
+  const cost = await getAllApiCost();
   return { profiles, apiCost: cost.total };
 }

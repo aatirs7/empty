@@ -1,7 +1,7 @@
 /**
  * Server-side read helpers for the dashboard pages (run in server components).
  */
-import { and, asc, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { db } from "../db";
 import {
   researchRuns,
@@ -159,23 +159,5 @@ export async function getRunsLog(limit = 30): Promise<RunLogEntry[]> {
   });
 }
 
-export interface CostTotals {
-  total: number;
-  monthToDate: number;
-  runCount: number;
-}
-
-export async function getCostTotals(): Promise<CostTotals> {
-  const [row] = await db
-    .select({
-      total: sql<string>`coalesce(sum(${researchRuns.costEstimate}), 0)`,
-      mtd: sql<string>`coalesce(sum(case when date_trunc('month', ${researchRuns.createdAt}) = date_trunc('month', now()) then ${researchRuns.costEstimate} else 0 end), 0)`,
-      count: sql<string>`count(*)`,
-    })
-    .from(researchRuns);
-  return {
-    total: Math.round(Number(row.total) * 1e6) / 1e6,
-    monthToDate: Math.round(Number(row.mtd) * 1e6) / 1e6,
-    runCount: Number(row.count),
-  };
-}
+// API-spend totals moved to src/lib/cost.ts (per-account ledger). The legacy
+// research_runs cost sum was intentionally dropped so tracking restarts from now.

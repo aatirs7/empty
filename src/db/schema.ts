@@ -31,6 +31,24 @@ export const researchRuns = pgTable("research_runs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Per-call Anthropic API spend ledger, attributed to a profile (account). The
+// only ongoing Claude cost in the live path is the SniperBot catalyst check;
+// QQQ 0DTE uses zero Claude. profileId is null for shared/unattributed spend
+// (e.g. the legacy watchlist research run). Tracking starts when this table was
+// created — historical research_runs cost is intentionally NOT counted here.
+export const apiCosts = pgTable("api_costs", {
+  id: serial("id").primaryKey(),
+  profileId: text("profile_id"), // null = shared/unattributed
+  source: text("source").notNull(), // 'catalyst' | 'research' | ...
+  symbol: text("symbol"),
+  model: text("model"),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  searchCount: integer("search_count").notNull().default(0),
+  costUsd: numeric("cost_usd").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Individual trade ideas from a run.
 export const proposals = pgTable("proposals", {
   id: serial("id").primaryKey(),
@@ -259,3 +277,4 @@ export type ShadowOutcomeRow = typeof shadowOutcomes.$inferSelect;
 export type PositionStateRow = typeof positionState.$inferSelect;
 export type ProfileSettingsRow = typeof profileSettings.$inferSelect;
 export type ReactionRow = typeof reactions.$inferSelect;
+export type ApiCostRow = typeof apiCosts.$inferSelect;
