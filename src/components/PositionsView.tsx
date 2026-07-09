@@ -57,11 +57,12 @@ export default function PositionsView() {
   }, [q]);
 
   useEffect(() => {
-    fetch(`/api/manage${q}`, { method: "POST" })
-      .catch(() => {})
-      .finally(load);
+    // Just DISPLAY current positions. Exits are handled per-profile by the
+    // every-minute monitor cron — opening this page must never close a trade
+    // (the old /api/manage call here force-closed near-expiry weeklies on load).
+    load();
     loadClosed();
-  }, [load, loadClosed, q]);
+  }, [load, loadClosed]);
 
   async function close(sym: string) {
     if (!window.confirm(`Close ${sym}? This flattens the paper position.`)) return;

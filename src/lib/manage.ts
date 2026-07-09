@@ -116,6 +116,22 @@ export async function autoManagePositions(profileId?: string): Promise<ManageSum
     if (reason) {
       try {
         await broker.closePosition(p.symbol);
+        // Record the exit so the trade shows in Closed (not vanish from both tabs).
+        const exit = p.current_price ? Number(p.current_price) : Number(p.avg_entry_price);
+        const realizedPl = p.unrealized_pl != null ? Math.round(Number(p.unrealized_pl) * 100) / 100 : null;
+        const [ord] = await db
+          .select({ id: orders.id, pid: orders.proposalId })
+          .from(orders)
+          .where(eq(orders.contractSymbol, p.symbol))
+          .orderBy(desc(orders.id))
+          .limit(1);
+        if (ord) {
+          await db
+            .update(orders)
+            .set({ exitPrice: String(exit), exitAt: new Date(), realizedPl: realizedPl != null ? String(realizedPl) : null, exitReason: reason.slice(0, 60) })
+            .where(eq(orders.id, ord.id));
+          await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
+        }
         actions.push({ symbol: p.symbol, reason });
       } catch {
         // ignore a single failed close; continue managing the rest
