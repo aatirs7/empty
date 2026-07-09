@@ -3,6 +3,8 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { orders, proposals } from "@/db/schema";
 import { getBroker } from "@/lib/broker";
+import { sendPush } from "@/lib/push";
+import { parseOcc } from "@/lib/format";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +44,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ symbol
       }
       await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
     }
+    // Sell notification for the manual close.
+    const occ = parseOcc(symbol);
+    const pl = pos?.unrealized_pl != null ? Number(pos.unrealized_pl) : null;
+    await sendPush(
+      `Sold ${occ?.underlying ?? symbol}`,
+      pl != null ? `Closed manually · ${pl >= 0 ? "+" : ""}$${pl.toFixed(2)}.` : "Position closed manually.",
+      "/positions",
+    ).catch(() => {});
     return NextResponse.json({ ok: true, orderId: order.id, status: order.status });
   } catch (err) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : "error" }, { status: 502 });

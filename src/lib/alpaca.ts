@@ -477,14 +477,18 @@ export interface PortfolioPL {
   totalPL: number; // currentEquity - baseValue (realized + unrealized, paper)
 }
 
-/** All-time paper account P&L from Alpaca's portfolio history. */
+/** All-time paper account P&L. Base = account inception equity (portfolio
+ *  history); current = LIVE equity (getAccount) so it reflects intraday moves +
+ *  open-position marks — the daily history point lags and made P&L read ~0. */
 export async function getPortfolioPL(): Promise<PortfolioPL> {
-  const resp = await trading<{ base_value: number; equity: (number | null)[] }>(
-    "/v2/account/portfolio/history?period=all&timeframe=1D",
-  );
-  const equitySeries = (resp.equity ?? []).filter((v): v is number => typeof v === "number");
-  const currentEquity = equitySeries.length ? equitySeries[equitySeries.length - 1] : resp.base_value;
-  const baseValue = resp.base_value ?? 0;
+  const [resp, acct] = await Promise.all([
+    trading<{ base_value: number; equity: (number | null)[] }>("/v2/account/portfolio/history?period=all&timeframe=1D"),
+    getAccount(),
+  ]);
+  const liveEquity = Number(acct.equity ?? acct.portfolio_value ?? 0);
+  const firstPoint = (resp.equity ?? []).find((v): v is number => typeof v === "number" && v > 0);
+  const baseValue = resp.base_value && resp.base_value > 0 ? resp.base_value : (firstPoint ?? liveEquity);
+  const currentEquity = liveEquity > 0 ? liveEquity : baseValue;
   return {
     baseValue,
     currentEquity,
@@ -492,14 +496,17 @@ export async function getPortfolioPL(): Promise<PortfolioPL> {
   };
 }
 
-/** This week's paper P&L (rolling 7 days) from portfolio history. */
+/** This week's paper P&L (rolling 7 days). Base = a week ago (history); current
+ *  = LIVE equity so the weekly number reflects intraday moves, not the last close. */
 export async function getWeeklyPL(): Promise<{ weeklyPL: number; currentEquity: number }> {
-  const resp = await trading<{ base_value: number; equity: (number | null)[] }>(
-    "/v2/account/portfolio/history?period=1W&timeframe=1D",
-  );
-  const series = (resp.equity ?? []).filter((v): v is number => typeof v === "number");
-  const currentEquity = series.length ? series[series.length - 1] : resp.base_value;
-  const base = resp.base_value ?? currentEquity;
+  const [resp, acct] = await Promise.all([
+    trading<{ base_value: number; equity: (number | null)[] }>("/v2/account/portfolio/history?period=1W&timeframe=1D"),
+    getAccount(),
+  ]);
+  const liveEquity = Number(acct.equity ?? acct.portfolio_value ?? 0);
+  const firstPoint = (resp.equity ?? []).find((v): v is number => typeof v === "number" && v > 0);
+  const base = resp.base_value && resp.base_value > 0 ? resp.base_value : (firstPoint ?? liveEquity);
+  const currentEquity = liveEquity > 0 ? liveEquity : base;
   return { weeklyPL: Math.round((currentEquity - base) * 100) / 100, currentEquity };
 }
 

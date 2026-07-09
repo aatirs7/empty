@@ -345,11 +345,7 @@ export async function monitorTick(): Promise<Fire[]> {
         try {
           const r = await executeProposal(prop.id, "auto");
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: true, detail: `order #${r.orderId} ${r.orderStatus}` });
-          await sendPush(
-            `Bought ${c.symbol} ${direction === "call" ? "call" : "put"}`,
-            `${pb.playbook} — tapped ${tapBoundary} zone at ${cur}. Score ${pb.displayScore}/100.`,
-            "/positions",
-          ).catch(() => {});
+          // Buy notification now fires inside executeProposal (covers auto + manual).
         } catch (e) {
           // Full-auto: a skipped buy (e.g. no cheap contract) must NOT sit pending
           // asking the owner to approve — the bot already decided. Mark it auto-skipped.

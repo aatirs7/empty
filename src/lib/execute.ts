@@ -14,6 +14,7 @@ import { getBroker } from "./broker";
 import { resolveContract, type ResolvedContract } from "./resolve";
 import { computeRisk, type RiskMath } from "./risk";
 import { getProfile, contractForTimeframe } from "./profiles";
+import { sendPush } from "./push";
 import { predict } from "./predict";
 import { selectByEV } from "./ev";
 import { getUnderlyingPrice, getOptionQuotes } from "./alpaca";
@@ -201,6 +202,14 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   if (filled) {
     await db.update(proposals).set({ status: "filled" }).where(eq(proposals.id, proposalId));
   }
+
+  // Notify on every buy — auto (monitor) AND manual (approve) both land here.
+  const buyPx = filledPrice ?? limitPrice;
+  await sendPush(
+    `Bought ${proposal.symbol} ${direction === "call" ? "call" : "put"}`,
+    `${qty} × $${resolved.strike} exp ${resolved.expiry} @ $${buyPx.toFixed(2)}${filled ? "" : " (working)"}.`,
+    "/positions",
+  ).catch(() => {});
 
   return {
     orderId: orderRow.id,
