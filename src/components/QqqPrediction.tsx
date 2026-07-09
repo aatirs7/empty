@@ -2,7 +2,8 @@ import { getUnderlyingPrice, getStockBars, getIntradayBars } from "@/lib/alpaca"
 import { buildZoneSetup } from "@/lib/strategy";
 import { predict } from "@/lib/predict";
 import { selectByEV, type EvContract } from "@/lib/ev";
-import { getProfile } from "@/lib/profiles";
+import { getProfile, contractForTimeframe } from "@/lib/profiles";
+import { ALPACA_TF, SCAN_LOOKBACK_MIN } from "@/lib/timeframes";
 
 // Live QQQ prediction: predict the underlying first (from the reaction DB, per
 // timeframe), then show the expected-value contracts. All numbers carry a sample
@@ -17,7 +18,10 @@ export default async function QqqPrediction() {
   const rows: { tf: string; dir: "call" | "put"; distance: number; pred: Awaited<ReturnType<typeof predict>> }[] = [];
   for (const ztf of profile.zoneTimeframes) {
     try {
-      const bars = ztf.timeframe === "daily" ? await getStockBars("QQQ", 4000) : await getIntradayBars("QQQ", "4Hour", 365 * 24 * 60);
+      const bars =
+        ztf.timeframe === "daily"
+          ? await getStockBars("QQQ", 4000)
+          : await getIntradayBars("QQQ", ALPACA_TF[ztf.timeframe], SCAN_LOOKBACK_MIN[ztf.timeframe]);
       const setup = buildZoneSetup(bars, { ...profile.strategy, zone: ztf.opts });
       if (!setup.direction || !setup.active_zone) continue;
       const pred = await predict("QQQ", spot, ztf.timeframe, setup.direction, setup.approach ?? "", 0);
@@ -31,7 +35,7 @@ export default async function QqqPrediction() {
   const primary = [...rows].sort((a, b) => a.distance - b.distance)[0];
   let ev: { primary: EvContract | null; aggressive: EvContract | null; conservative: EvContract | null } | null = null;
   try {
-    ev = await selectByEV("QQQ", primary.dir, spot, primary.pred, profile.contract);
+    ev = await selectByEV("QQQ", primary.dir, spot, primary.pred, contractForTimeframe(profile, primary.tf));
   } catch {
     ev = null;
   }
@@ -64,7 +68,7 @@ export default async function QqqPrediction() {
             </span>
           </div>
           <p className="text-xs text-muted num">
-            Expected +{r.pred.expectedMovePct}% ({r.pred.expectedMovePts} pts) in ~{r.pred.expectedHoldBars} bars
+            Expected +{r.pred.expectedMovePct}% ({r.pred.expectedMovePts} pts) in {r.pred.expectedHoldLabel}
           </p>
           <p className="text-[11px] text-muted num">
             Safe {r.pred.targetSafe ?? "—"} · Main {r.pred.targetMain ?? "—"} · Stretch {r.pred.targetStretch ?? "—"}

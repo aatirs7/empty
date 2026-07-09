@@ -11,6 +11,7 @@ import { getMultiStockBars, getIntradayBars, type Bar } from "./alpaca";
 import { buildZoneSetup } from "./strategy";
 import { classifyAndScore } from "./playbook";
 import { activeProfiles, type Profile, type ZoneTimeframe } from "./profiles";
+import { ALPACA_TF, SCAN_LOOKBACK_MIN } from "./timeframes";
 
 const BARS_LOOKBACK_DAYS = 4000; // full available daily history (zones persist for all time)
 const CHUNK = 40; // symbols per multi-bar request (respect free-tier limits)
@@ -47,9 +48,12 @@ async function scanTimeframe(
       Object.assign(barsBySymbol, await getMultiStockBars(symbols.slice(i, i + CHUNK), BARS_LOOKBACK_DAYS));
     }
   } else {
+    // Intraday (4h / 1h / 15min): fetch the right Alpaca interval + lookback.
+    const alpacaTf = ALPACA_TF[ztf.timeframe];
+    const lookback = SCAN_LOOKBACK_MIN[ztf.timeframe] ?? FOURH_SCAN_LOOKBACK_MIN;
     for (const sym of symbols) {
       try {
-        barsBySymbol[sym] = await getIntradayBars(sym, "4Hour", FOURH_SCAN_LOOKBACK_MIN);
+        barsBySymbol[sym] = await getIntradayBars(sym, alpacaTf, lookback);
       } catch {
         /* skip this symbol/timeframe */
       }
@@ -108,7 +112,7 @@ async function scanTimeframe(
   return { candidates: rows.length, valid: rows.filter((r) => r.setupValid).length };
 }
 
-async function scanProfile(profile: Profile, runDate: string): Promise<ScanResult> {
+export async function scanProfile(profile: Profile, runDate: string): Promise<ScanResult> {
   const symbols = await loadUniverse(profile.id);
   const base: ScanResult = { profileId: profile.id, runDate, scanned: symbols.length, candidates: 0, validSetups: 0 };
   if (symbols.length === 0) return base;

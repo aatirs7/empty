@@ -12,17 +12,27 @@ import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
 export type ProfileId = "sniper_swing" | "qqq_0dte" | "zones_legacy";
 
-/** Zone timeframes a profile reads (QQQ reads Daily + 4H together). */
+/** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day;
+ *  oneDay = next trading day (the QQQ 1-day-swing leg). */
+export type ExpiryKind = "friday" | "twoToFourWeeks" | "zeroDte" | "oneDay";
+
+/** Zone timeframes a profile reads. QQQ reads 15Min + 1H (0DTE intraday) + 4H
+ *  (next-day 1-day swing); the per-tf expiryKind picks the contract for each. */
 export interface ZoneTimeframe {
-  timeframe: "daily" | "4h";
+  timeframe: "daily" | "4h" | "1h" | "15min";
   opts: ZoneOptions;
+  expiryKind?: ExpiryKind; // contract expiry for setups off this tf (defaults to the profile's)
 }
 const DAILY_TF: ZoneTimeframe = { timeframe: "daily", opts: DEFAULT_ZONE_OPTIONS }; // ATR50, disp 1.7
 const FOURH_TF: ZoneTimeframe = { timeframe: "4h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.3 } };
+// QQQ intraday timeframes: finer bars use a lower displacement to surface enough
+// zones. 15Min/1H drive same-day 0DTE; 4H drives the next-day 1-day swing.
+const Q_15M: ZoneTimeframe = { timeframe: "15min", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.2 }, expiryKind: "zeroDte" };
+const Q_1H: ZoneTimeframe = { timeframe: "1h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.25 }, expiryKind: "zeroDte" };
+const Q_4H_SWING: ZoneTimeframe = { timeframe: "4h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.3 }, expiryKind: "oneDay" };
 
 export interface ContractConfig {
-  /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day. */
-  expiryKind: "friday" | "twoToFourWeeks" | "zeroDte";
+  expiryKind: ExpiryKind;
   /** Strike window around spot, in %. otmPct is how far OTM the window may reach. */
   otmPct: number;
   itmPct: number;
@@ -101,11 +111,14 @@ const QQQ_0DTE: Profile = {
   description: "QQQ same-day-expiry intraday setups. High variance, tight caps.",
   active: true,
   strategy: DEFAULT_STRATEGY_OPTIONS,
-  zoneTimeframes: [DAILY_TF, FOURH_TF],
+  // Intraday only — same-day 0DTE off 15Min/1H, next-day 1-day swing off 4H.
+  // Daily was dropped: it produced multi-day (~5-day) holds that made no sense
+  // against a same-day option.
+  zoneTimeframes: [Q_15M, Q_1H, Q_4H_SWING],
   confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 },
   minScore: 80, // stricter: 0DTE punishes marginal setups
   contract: {
-    expiryKind: "zeroDte",
+    expiryKind: "zeroDte", // default; the 4H swing tf overrides to oneDay
     otmPct: 1.5, // 0DTE wants near-the-money to have any delta
     itmPct: 1,
     priceFloor: 0.4,
@@ -113,7 +126,10 @@ const QQQ_0DTE: Profile = {
     priceCap: 1.5,
     liquiditySpread: 0.7,
   },
-  caps: { perTradeBudget: 60, maxContracts: 1, maxOpenPositions: 1, maxTradesPerDay: 2 },
+  // Budget covers a next-day swing contract (up to priceCap); 2 open lets a 0DTE
+  // day-trade and a 1-day swing coexist. sameDayExit only flattens contracts that
+  // expire TODAY (manageExits checks expiry===today), so the next-day swing rides.
+  caps: { perTradeBudget: 160, maxContracts: 1, maxOpenPositions: 2, maxTradesPerDay: 3 },
   exit: { takeProfit: 0.6, stopLoss: -0.35, sameDayExit: true },
   autoDefault: false, // off until measured
   baselineSymbol: "QQQ",
@@ -159,4 +175,11 @@ export function getProfile(id: string | null | undefined): Profile {
 
 export function activeProfiles(): Profile[] {
   return PROFILE_IDS.map((id) => PROFILES[id]).filter((p) => p.active);
+}
+
+/** The contract config for a setup off a given timeframe — applies that
+ *  timeframe's expiryKind override (QQQ: 15m/1h → 0DTE, 4h → next-day swing). */
+export function contractForTimeframe(profile: Profile, timeframe: string | null | undefined): ContractConfig {
+  const ztf = profile.zoneTimeframes.find((z) => z.timeframe === timeframe);
+  return ztf?.expiryKind ? { ...profile.contract, expiryKind: ztf.expiryKind } : profile.contract;
 }

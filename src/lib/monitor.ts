@@ -21,7 +21,8 @@ import { executeProposal } from "./execute";
 import { classifyAndScore } from "./playbook";
 import { parseOcc } from "./format";
 import { sendPush } from "./push";
-import { getProfile } from "./profiles";
+import { getProfile, activeProfiles } from "./profiles";
+import { scanProfile } from "./scanner";
 import { getProfileSettings } from "./profile-settings";
 import { confirmEntry } from "./confirm";
 import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
@@ -124,7 +125,37 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
   return out;
 }
 
+const INTRADAY_RESCAN_MS = 5 * 60_000;
+
+/** Keep intraday profiles' zones fresh DURING market hours (Farrukh's "24/7
+ *  scanner"): re-scan QQQ (single ticker, intraday tfs) when its candidates are
+ *  older than ~5 min. Only runs inside a market-open tick, so it self-starts at
+ *  the open and stops at the close. */
+async function refreshIntradayScans(): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  for (const p of activeProfiles()) {
+    if (!p.zoneTimeframes.some((z) => z.timeframe === "1h" || z.timeframe === "15min")) continue;
+    const [newest] = await db
+      .select({ at: candidates.createdAt })
+      .from(candidates)
+      .where(eq(candidates.profileId, p.id))
+      .orderBy(desc(candidates.createdAt))
+      .limit(1);
+    const age = newest?.at ? Date.now() - new Date(newest.at).getTime() : Infinity;
+    if (age > INTRADAY_RESCAN_MS) {
+      try {
+        await scanProfile(p, today);
+      } catch {
+        /* keep the tick alive even if a rescan fails */
+      }
+    }
+  }
+}
+
 export async function monitorTick(): Promise<Fire[]> {
+  // Refresh intraday zones first so QQQ trades off fresh same-session levels.
+  await refreshIntradayScans();
+
   const [latest] = await db
     .select({ d: candidates.runDate })
     .from(candidates)

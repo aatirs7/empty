@@ -5,6 +5,7 @@
  * and an honesty gate. The option engine (ev.ts) capitalizes on this prediction.
  */
 import { queryReactions } from "./reactions";
+import { formatHold } from "./timeframes";
 
 export interface Prediction {
   bias: "reverse_up" | "reverse_down" | "chop";
@@ -17,6 +18,7 @@ export interface Prediction {
   targetMain: number | null;
   targetStretch: number | null;
   expectedHoldBars: number;
+  expectedHoldLabel: string; // human hold: minutes for intraday, days for daily
   sampleSize: number;
   lowConfidence: boolean;
   reason: string;
@@ -33,6 +35,7 @@ const CHOP: Prediction = {
   targetMain: null,
   targetStretch: null,
   expectedHoldBars: 0,
+  expectedHoldLabel: "—",
   sampleSize: 0,
   lowConfidence: true,
   reason: "no historical reactions to match",
@@ -69,8 +72,9 @@ export async function predict(
     targetMain: stats.mainTarget,
     targetStretch: stats.stretchTarget,
     expectedHoldBars: stats.expectedHold,
+    expectedHoldLabel: formatHold(stats.expectedHold, timeframe),
     sampleSize: stats.n,
     lowConfidence: stats.lowConfidence,
-    reason: `${probability}% over ${stats.n} ${timeframe} reactions (${stats.bucket}); expected +${stats.avgMovePct}% (${stats.avgMovePts}pts) in ~${stats.expectedHold} bars${stats.lowConfidence ? "; LOW SAMPLE" : ""}.`,
+    reason: `${probability}% over ${stats.n} ${timeframe} reactions (${stats.bucket}); expected +${stats.avgMovePct}% (${stats.avgMovePts}pts) in ${formatHold(stats.expectedHold, timeframe)}${stats.lowConfidence ? "; LOW SAMPLE" : ""}.`,
   };
 }

@@ -31,6 +31,7 @@ const isFriday = (s: string) => new Date(`${s}T12:00:00Z`).getUTCDay() === 5;
 function pickExpiry(dates: string[], kind: ContractConfig["expiryKind"]): string {
   const u = [...new Set(dates)].sort();
   if (kind === "zeroDte") return (u.filter((e) => daysFromToday(e) >= 0)[0] ?? u[0]);
+  if (kind === "oneDay") return (u.filter((e) => daysFromToday(e) >= 1)[0] ?? u[0]);
   if (kind === "twoToFourWeeks") {
     const w = u.filter((e) => daysFromToday(e) >= 10 && daysFromToday(e) <= 35);
     return (w.length ? w : u).reduce((b, e) => (Math.abs(daysFromToday(e) - 21) < Math.abs(daysFromToday(b) - 21) ? e : b));

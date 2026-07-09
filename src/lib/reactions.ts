@@ -18,7 +18,16 @@ interface TfTuning {
   respect: number; // favorable move that counts as "respected" (fraction)
 }
 function tuning(timeframe: string): TfTuning {
-  return timeframe === "4h" ? { hold: 12, respect: 0.012 } : { hold: 10, respect: 0.02 };
+  switch (timeframe) {
+    case "15min":
+      return { hold: 8, respect: 0.003 }; // ~2h forward; small intraday moves
+    case "1h":
+      return { hold: 7, respect: 0.005 }; // ~1 session forward
+    case "4h":
+      return { hold: 12, respect: 0.012 };
+    default:
+      return { hold: 10, respect: 0.02 }; // daily
+  }
 }
 
 const overlaps = (b: Bar, bottom: number, top: number) => b.h >= bottom && b.l <= top;

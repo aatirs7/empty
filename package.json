@@ -19,6 +19,7 @@
     "shadow": "tsx scripts/shadow.ts",
     "scorecard": "tsx scripts/scorecard.ts",
     "backfill": "tsx scripts/backfill-reactions.ts",
+    "backfill:intraday": "tsx scripts/backfill-intraday.ts",
     "arm": "tsx scripts/arm-paper-month.ts",
     "monitor": "tsx scripts/monitor.ts",
     "seed": "tsx scripts/seed-watchlist.ts",

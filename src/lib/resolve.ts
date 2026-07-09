@@ -48,7 +48,7 @@ function isFriday(dateStr: string): boolean {
   return new Date(`${dateStr}T12:00:00Z`).getUTCDay() === 5;
 }
 
-type ExpiryKind = "friday" | "twoToFourWeeks" | "zeroDte";
+type ExpiryKind = "friday" | "twoToFourWeeks" | "zeroDte" | "oneDay";
 
 /** Map a profile expiryKind (or a hint string) to a concrete expiry from the chain. */
 function pickExpiry(expiries: string[], kind: ExpiryKind): string {
@@ -56,6 +56,11 @@ function pickExpiry(expiries: string[], kind: ExpiryKind): string {
   if (kind === "zeroDte") {
     // Same-day if listed, else the nearest expiry available.
     const pool = uniqueSorted.filter((e) => daysFromToday(e) >= 0);
+    return (pool.length ? pool : uniqueSorted)[0];
+  }
+  if (kind === "oneDay") {
+    // Next-day (1-day swing): nearest expiry at least one day out.
+    const pool = uniqueSorted.filter((e) => daysFromToday(e) >= 1);
     return (pool.length ? pool : uniqueSorted)[0];
   }
   if (kind === "twoToFourWeeks") {

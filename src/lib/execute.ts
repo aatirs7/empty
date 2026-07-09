@@ -13,7 +13,7 @@ import { proposals, orders, candidates } from "../db/schema";
 import { getBroker } from "./broker";
 import { resolveContract, type ResolvedContract } from "./resolve";
 import { computeRisk, type RiskMath } from "./risk";
-import { getProfile } from "./profiles";
+import { getProfile, contractForTimeframe } from "./profiles";
 import { predict } from "./predict";
 import { selectByEV } from "./ev";
 import { getUnderlyingPrice, getOptionQuotes } from "./alpaca";
@@ -83,7 +83,9 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
       : [];
     const spot = await getUnderlyingPrice(proposal.symbol);
     const pred = await predict(proposal.symbol, spot, cand?.timeframe ?? "daily", direction, cand?.approach ?? "", 0);
-    const sel = await selectByEV(proposal.symbol, direction, spot, pred, profile.contract);
+    // Per-timeframe expiry: QQQ 15m/1h → same-day 0DTE, 4h → next-day swing.
+    const contractCfg = contractForTimeframe(profile, cand?.timeframe);
+    const sel = await selectByEV(proposal.symbol, direction, spot, pred, contractCfg);
     if (!sel.primary) {
       throw new ExecuteError(`No EV-viable contract for ${proposal.symbol} (or market closed).`, "no_quote");
     }
