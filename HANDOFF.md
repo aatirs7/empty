@@ -1,8 +1,16 @@
 # Vega — Project Handoff
 
-_Last updated: 2026-07-07_
+_Last updated: 2026-07-09_
 
-## Zone strategy + measurement (I-series, current focus)
+## Current state (S-series + Q-series — READ FIRST)
+The single zone strategy below (I-series) became a **strategy PROFILE system**. See `CLAUDE.md` build status for the authoritative, milestone-by-milestone log; the essentials:
+- **Profiles** (`src/lib/profiles.ts`): `sniper_swing` (main, auto ON), `qqq_0dte` (auto ON, 0DTE EV-selected), `zones_legacy` (shelved, shadow-only, **hidden from the UI**). Each profile drives its own universe/zone-timeframes/confirmation/score/contract/caps/exit. `profile_settings` table = per-profile auto toggles. `profileId` tags candidates/proposals/shadow_outcomes/universe.
+- **Per-profile ACCOUNTS**: each strategy trades its own $1000 paper account. `alpaca.ts` uses `AsyncLocalStorage` (`withAccount`); `getBroker(profileId)` binds keys (qqq_0dte → `ALPACA_*_2`, else default) and asserts paper. SniperBot = PA33FAVNIVA2; QQQ = PA3CHVMZRNSL. Positions/close/account/manage/P&L all route by `?profile=`.
+- **Historical-reaction DB** (`reactions` table, `src/lib/reactions.ts`): 236k backfilled per-tap reactions (daily+4H, 130 symbols). `queryReactions` matches a setup with tiered bucket-widening + N=20 min-sample honesty + always returns sample size. Powers `predict.ts` (bias/probability/expected-move/targets) and SniperBot's numbers. `ev.ts selectByEV` ranks option contracts by expected value (greeks via `getOptionSnapshots`, free indicative feed).
+- **The live monitor is the sole trading path** (research runs are display-only): fires on a confirmation-gated boundary-tap crossing (SIP 5-min), per-profile auto gating. `DATA_FEED=sip` (paid).
+- **UI**: shared `ProfileTabs` switcher (SniperBot/QQQ) on every main page. SniperBot `candidate.score` is a UI-only non-saturating `displayScore`; the live auto-buy gate still uses the original `pb.score` in `monitor.ts` (do not conflate them).
+
+## Zone strategy + measurement (I-series — now generalized into profiles above)
 Vega now has a real, testable strategy on top of the news engine: **Farrukh's order-block "zone" strategy** (ported from a TradingView Pine indicator; see `STRATEGY.md`). Highest-weight signal, above news.
 - **zones.ts** — daily order-block detection (Wilder ATR-50, 1.7x displacement, first-touch, 30/side FIFO).
 - **strategy.ts** — `buildZoneSetup`: STATELESS edge-based model. Direction = which side price is on relative to the tapped edge (above => call, below => put), so the flip-on-close-through is automatic. `trigger_edge='first_touch'` + `tapped_edge` exposed; demand/supply labels never drive direction. White-space hard gate. Zones use FULL history + split-adjusted bars.
