@@ -45,8 +45,7 @@ export interface ContractConfig {
 export interface ProfileCaps {
   perTradeBudget: number;
   maxContracts: number;
-  maxOpenPositions: number;
-  maxTradesPerDay: number;
+  maxOpenPositions: number; // the real live-path cap (concurrent open positions)
 }
 
 export interface ExitConfig {
@@ -97,7 +96,7 @@ const SNIPER_SWING: Profile = {
     priceCap: 1.0,
     liquiditySpread: 0.6,
   },
-  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3, maxTradesPerDay: 3 },
+  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3 },
   exit: { takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: true, // owner chose to auto-trade SniperBot on the paper account
   baselineSymbol: "SPY",
@@ -129,7 +128,7 @@ const QQQ_0DTE: Profile = {
   // Budget covers a next-day swing contract (up to priceCap); 2 open lets a 0DTE
   // day-trade and a 1-day swing coexist. sameDayExit only flattens contracts that
   // expire TODAY (manageExits checks expiry===today), so the next-day swing rides.
-  caps: { perTradeBudget: 160, maxContracts: 1, maxOpenPositions: 2, maxTradesPerDay: 3 },
+  caps: { perTradeBudget: 160, maxContracts: 1, maxOpenPositions: 2 },
   exit: { takeProfit: 0.6, stopLoss: -0.35, sameDayExit: true },
   autoDefault: false, // off until measured
   baselineSymbol: "QQQ",
@@ -155,7 +154,7 @@ const ZONES_LEGACY: Profile = {
     priceCap: 1.0,
     liquiditySpread: 0.7,
   },
-  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3, maxTradesPerDay: 3 },
+  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3 },
   exit: { takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: false, // SHELVED — no new auto-trades
   baselineSymbol: "SPY",
