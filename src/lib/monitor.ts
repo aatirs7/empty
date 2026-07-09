@@ -25,6 +25,9 @@ import { sendPush } from "./push";
 import { getProfile } from "./profiles";
 import { getProfileSettings } from "./profile-settings";
 import { confirmEntry } from "./confirm";
+import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
+import { checkCatalyst } from "./catalyst";
+import type { Bar } from "./alpaca";
 
 // Farrukh's simplified test exit: sell the whole (1-contract) position at +100%,
 // or stop out at -30%. Env-tunable.
@@ -157,6 +160,18 @@ export async function monitorTick(): Promise<Fire[]> {
   const nextPrices = { ...prevPrices };
   const fires: Fire[] = [];
 
+  // Market context for the SniperBot confidence engine (fetched once per tick).
+  const hasConfirm = cands.some((c) => getProfile(c.profileId).confirmation.enabled);
+  let marketCtx: MarketContext = { spy: 0, qqq: 0 };
+  if (hasConfirm) {
+    try {
+      const [spyB, qqqB] = await Promise.all([getStockBars("SPY", 90), getStockBars("QQQ", 90)]);
+      marketCtx = { spy: indexTrend(spyB), qqq: indexTrend(qqqB) };
+    } catch {
+      /* neutral */
+    }
+  }
+
   for (const c of cands) {
     const z = c.zone as { bottom: number; top: number };
     const cur = prices[c.symbol];
@@ -172,6 +187,7 @@ export async function monitorTick(): Promise<Fire[]> {
 
     // Decide whether this candidate triggers NOW.
     let confirmReason = "";
+    let execScore = 0;
     if (profile.confirmation.enabled) {
       // Confirmation profiles (SniperBot, QQQ 0DTE): fire only when price is AT the
       // zone AND an intraday confirmation candle prints (rejection/engulf/strong
@@ -181,6 +197,7 @@ export async function monitorTick(): Promise<Fire[]> {
       const conf = await confirmEntry(c.symbol, direction, z, profile.confirmation.minRelVolume);
       if (!conf.confirmed) continue;
       confirmReason = ` Confirmed: ${conf.reason}.`;
+      execScore = conf.executionScore;
     } else {
       // Tap-only profiles (zones_legacy): a boundary crossing between two ticks.
       if (prev === undefined) continue; // first sighting: establish baseline
@@ -189,8 +206,9 @@ export async function monitorTick(): Promise<Fire[]> {
 
     // Score the setup; only fire if it clears the profile's quality threshold.
     let pb: ReturnType<typeof classifyAndScore> | null = null;
+    let bars: Bar[] = [];
     try {
-      const bars = await getStockBars(c.symbol, 400);
+      bars = await getStockBars(c.symbol, 400);
       pb = classifyAndScore(bars, z, direction, cur);
     } catch {
       pb = null;
@@ -207,10 +225,29 @@ export async function monitorTick(): Promise<Fire[]> {
       continue;
     }
 
+    // SniperBot confidence engine: 3 code scores + adversarial review + catalyst
+    // check. Only setups that survive EVERY gate are promoted.
+    let sniperConfidence = pb.score / 100;
+    let sniperSummary = "";
+    if (profile.confirmation.enabled) {
+      const ev = evaluateSniper(pb, bars, direction, execScore, c.clearRunway, marketCtx);
+      if (!ev.passed) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
+        continue;
+      }
+      const cat = await checkCatalyst(c.symbol, 5);
+      if (cat.catalyst) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
+        continue;
+      }
+      sniperConfidence = ev.overall / 100;
+      sniperSummary = ` ${ev.summary}${cat.checked ? "" : " (catalyst unchecked)"}`;
+    }
+
     const zoneWord = direction === "call" ? "support" : "resistance";
     const tapBoundary = direction === "call" ? "top" : "bottom"; // call taps top (from above), put taps bottom (from below)
     const tapPrice = direction === "call" ? z.top : z.bottom;
-    const alert = `${direction.toUpperCase()}S: ${c.symbol} — ${pb.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb.safeTarget ?? "?"}, extended ${pb.extendedTarget ?? "?"}. Score ${pb.score}/100.${confirmReason}`;
+    const alert = `${direction.toUpperCase()}S: ${c.symbol} — ${pb.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb.safeTarget ?? "?"}, extended ${pb.extendedTarget ?? "?"}. Score ${pb.score}/100.${confirmReason}${sniperSummary}`;
     try {
       const runId = await ensureMonitorRun();
       const [prop] = await db
@@ -222,9 +259,9 @@ export async function monitorTick(): Promise<Fire[]> {
           strategy: direction === "call" ? "long_call" : "long_put",
           strikeHint: "ATM",
           expiryHint: "friday",
-          // The setup's code-computed quality score (0-100) as a 0-1 value — NOT a
-          // probability. Shown on Today so it isn't a misleading flat "100% sure".
-          confidence: String(pb.score / 100),
+          // SniperBot's blended confidence (0-1) for confirmation profiles, else the
+          // playbook quality score. Code-computed, NOT a probability of profit.
+          confidence: String(sniperConfidence),
           pricedInAssessment: "unclear",
           rationale: `${alert} ${pb.reason}`,
           plainExplanation: `${c.symbol} just tapped its zone live (${pb.playbook}), betting on a ${direction === "call" ? "bounce up off support" : "rejection down off resistance"} over the next 1-2 weeks.`,
