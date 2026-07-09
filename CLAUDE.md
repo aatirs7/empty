@@ -108,6 +108,14 @@ The single zone strategy became a PROFILE system. `src/lib/profiles.ts` = code r
 - [x] S5: Scheduling — shadow migrated to `/api/shadow` Vercel cron (15:00 UTC), per-profile; GitHub shadow.yml disabled. Premarket re-eval subsumed by the every-minute confirmation-gated monitor. `/api/scan` (04:00 UTC) now scans all profiles.
 - [x] S6: Measurement + UI — per-profile shadow (SPY baseline for swings, QQQ for 0DTE); per-profile `scorecard.ts` + `/scorecard` (never blended); Setups page profile tabs. WhatsNew updated.
 
+### Q-series: QQQ 0DTE additions + Historical-Reaction Database. QQQ on its OWN paper account (ALPACA_*_2). Numbers all from the reaction DB.
+- [x] Q1: `reactions` table + `reactions.ts` (computeReactions replays bars recording every tap's approach/edge/outcome/MFE/MAE/move/time/expansion/pattern/fingerprint; `queryReactions` matches a live setup with tiered bucket widening + N=20 min-sample honesty + always returns sample size + Safe/Main/Stretch targets). `npm run backfill` (daily+4H). Backfilled 236k reactions across 130 symbols.
+- [x] Q2: multi-timeframe zones — `Profile.zoneTimeframes` (QQQ = Daily 1.7 + 4H 1.3); `candidates.timeframe`; scanner loops timeframes (daily batched, 4H via getIntradayBars).
+- [x] Q3: `predict.ts` — bias/probability/confidence/expected move (pts+%)/targets/hold/sample-size from queryReactions. SniperBot's evaluateSniper now derives Probability + move + targets from the DB (falls back to in-memory when no sample).
+- [x] Q4: `alpaca.getOptionSnapshots` (greeks+IV via /v1beta1/options/snapshots — greeks work on the free indicative feed, no OPRA needed); `ev.ts selectByEV` ranks contracts by EXPECTED VALUE (P×gain−cost−theta) within the profile price band → Primary/Aggressive/Conservative.
+- [x] Q5: per-profile accounts — alpaca AsyncLocalStorage `withAccount`; `getBroker(profileId)` (QQQ→ALPACA_*_2); execute routes through the profile broker + uses selectByEV for confirmation profiles; manageExits per-account + per-profile TP/SL + 0DTE same-day flatten. **BLOCKED: the ALPACA_API_SECRET_KEY2 (QQQ account) in .env is rejected by Alpaca (401, 45 chars vs 44) — owner must re-paste it; then set it on Vercel + flip qqq_0dte auto on.**
+- [x] Q6: Today profile toggle; `QqqPrediction` (Setups QQQ tab: live prediction per TF + 3 EV contracts + sample sizes); WhatsNew + version bump.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.
