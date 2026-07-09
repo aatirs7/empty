@@ -144,7 +144,7 @@ export function classifyAndScore(
   const dispConfirm = closeConfirm ? 10 : 0;
   const displayScore = Math.round(clamp(dispBase + dispPlaybook + dispHist + dispRR + dispConfirm, 0, 100));
 
-  const reason = `${playbook}; ${hist.reactions} prior taps (${hist.respected} respected, avg +${hist.avgMovePct}% in ~${hist.avgDays}d); R/R ~${riskReward ?? "?"}.`;
+  const reason = `${playbook}; ${hist.reactions} prior taps (${hist.respected} respected, avg +${hist.avgMovePct}% in ~${hist.avgDays} trading days); R/R ~${riskReward ?? "?"}.`;
 
   return {
     playbook,

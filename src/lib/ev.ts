@@ -28,16 +28,26 @@ const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const daysFromToday = (s: string) => Math.round((Date.parse(`${s}T00:00:00Z`) - Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())) / 86_400_000);
 const isFriday = (s: string) => new Date(`${s}T12:00:00Z`).getUTCDay() === 5;
 
-function pickExpiry(dates: string[], kind: ContractConfig["expiryKind"]): string {
+// Pick an expiry whose life covers the expected time-to-target. `minDays` is the
+// horizon floor (from the prediction) — the option must survive at least that
+// long. Returns null when nothing fits so the caller REJECTS (better than buying
+// a contract that expires before the move can play out).
+function pickExpiry(dates: string[], kind: ContractConfig["expiryKind"], minDays = 0): string | null {
   const u = [...new Set(dates)].sort();
-  if (kind === "zeroDte") return (u.filter((e) => daysFromToday(e) >= 0)[0] ?? u[0]);
-  if (kind === "oneDay") return (u.filter((e) => daysFromToday(e) >= 1)[0] ?? u[0]);
+  const atLeast = (d: number) => u.filter((e) => daysFromToday(e) >= d);
+  if (kind === "zeroDte") return atLeast(Math.max(0, minDays))[0] ?? null;
+  if (kind === "oneDay") return atLeast(Math.max(1, minDays))[0] ?? null;
   if (kind === "twoToFourWeeks") {
-    const w = u.filter((e) => daysFromToday(e) >= 10 && daysFromToday(e) <= 35);
-    return (w.length ? w : u).reduce((b, e) => (Math.abs(daysFromToday(e) - 21) < Math.abs(daysFromToday(b) - 21) ? e : b));
+    const lo = Math.max(10, minDays);
+    const w = u.filter((e) => daysFromToday(e) >= lo && daysFromToday(e) <= Math.max(35, minDays + 14));
+    const pool = w.length ? w : atLeast(lo);
+    const tgt = Math.max(21, minDays);
+    return pool.length ? pool.reduce((b, e) => (Math.abs(daysFromToday(e) - tgt) < Math.abs(daysFromToday(b) - tgt) ? e : b)) : null;
   }
-  const f = u.filter((e) => daysFromToday(e) >= 1 && isFriday(e));
-  return f[0] ?? u.filter((e) => daysFromToday(e) >= 1)[0] ?? u[0];
+  // friday: nearest weekly Friday at least `floor` days out.
+  const floor = Math.max(1, minDays);
+  const f = u.filter((e) => daysFromToday(e) >= floor && isFriday(e));
+  return f[0] ?? atLeast(floor)[0] ?? null;
 }
 
 /** Fallback delta from moneyness when greeks are absent. */
@@ -53,15 +63,17 @@ export async function selectByEV(
   spot: number,
   pred: Prediction,
   contract: ContractConfig,
+  minDaysToExpiry = 0,
 ): Promise<EvSelection> {
   const target = pred.targetMain ?? (direction === "call" ? spot * 1.02 : spot * 0.98);
   const P = Math.max(0.1, Math.min(0.95, pred.probability / 100));
 
+  const floorDays = Math.max(contract.expiryKind === "zeroDte" ? 0 : 1, Math.round(minDaysToExpiry));
   const now = new Date();
   const gte = new Date(now);
-  gte.setUTCDate(gte.getUTCDate() + (contract.expiryKind === "zeroDte" ? 0 : 1));
+  gte.setUTCDate(gte.getUTCDate() + floorDays);
   const lte = new Date(now);
-  lte.setUTCDate(lte.getUTCDate() + 60);
+  lte.setUTCDate(lte.getUTCDate() + Math.max(60, floorDays + 21));
   const contracts = await listOptionContracts({
     underlyingSymbol: symbol,
     type: direction,
@@ -71,8 +83,9 @@ export async function selectByEV(
   });
   if (!contracts.length) return { primary: null, aggressive: null, conservative: null };
 
-  const expiry = pickExpiry(contracts.map((c) => c.expiration_date), contract.expiryKind);
-  const holdDays = Math.min(Math.max(daysFromToday(expiry), 0.3), 3);
+  const expiry = pickExpiry(contracts.map((c) => c.expiration_date), contract.expiryKind, minDaysToExpiry);
+  if (!expiry) return { primary: null, aggressive: null, conservative: null }; // no expiry covers the horizon -> reject
+  const holdDays = Math.min(Math.max(daysFromToday(expiry), 0.3), 30); // theta over the ACTUAL hold, not capped at 3
   // Strike window around spot from the profile.
   const lo = direction === "call" ? spot * (1 - contract.itmPct / 100) : spot * (1 - contract.otmPct / 100);
   const hi = direction === "call" ? spot * (1 + contract.otmPct / 100) : spot * (1 + contract.itmPct / 100);

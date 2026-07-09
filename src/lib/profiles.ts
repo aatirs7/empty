@@ -66,7 +66,9 @@ export interface Profile {
   id: ProfileId;
   label: string;
   description: string;
-  active: boolean; // scanner/monitor process this profile
+  active: boolean; // scanner still produces candidates (e.g. for shadow measurement)
+  shelved?: boolean; // quarantined: the live monitor ignores it (no proposals/signals)
+  // and it's excluded from the daily report. Kept scanned only for shadow history.
   strategy: StrategyOptions;
   zoneTimeframes: ZoneTimeframe[]; // zone timeframes to scan (QQQ = Daily + 4H)
   confirmation: ConfirmationConfig;
@@ -149,6 +151,7 @@ const ZONES_LEGACY: Profile = {
   label: "Zones (legacy)",
   description: "Previous cheap-universe zone strategy. Shelved — shadow-only.",
   active: true, // still scanned + shadowed for comparison
+  shelved: true, // quarantined from the live monitor + daily report (no new signals)
   strategy: DEFAULT_STRATEGY_OPTIONS,
   zoneTimeframes: [DAILY_TF],
   confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1 },

@@ -22,16 +22,25 @@ export const SCAN_LOOKBACK_MIN: Record<Exclude<TF, "daily">, number> = {
   "15min": 150 * 24 * 60, // ~5mo (finer bars → enough taps in less calendar time)
 };
 
+const MINUTES_PER_SESSION = 390; // ~6.5h US trading day
+
 export function holdToMinutes(bars: number, tf: string): number {
   return Math.round(bars * (MINUTES_PER_BAR[tf as TF] ?? 60));
 }
 
-/** Human hold estimate: minutes for intraday, days for daily. */
+/** Expected hold in TRADING days (market time, not wall-clock). A 4h-bar hold
+ *  spans multiple sessions, so 6 bars = ~3.7 trading days, not "24h". */
+export function holdToDays(bars: number, tf: string): number {
+  return (bars * (MINUTES_PER_BAR[tf as TF] ?? 60)) / MINUTES_PER_SESSION;
+}
+
+/** Explicit, unambiguous hold estimate: minutes/hours within a session, else
+ *  trading days. Never "~N bars". */
 export function formatHold(bars: number, tf: string): string {
-  if (tf === "daily") return `~${bars}d`;
-  const m = holdToMinutes(bars, tf);
-  if (m < 90) return `~${m} min`;
-  const h = Math.floor(m / 60);
-  const mm = m % 60;
-  return mm ? `~${h}h ${mm}m` : `~${h}h`;
+  if (!bars || bars <= 0) return "—";
+  if (tf === "daily") return `~${Math.round(bars)} trading day${Math.round(bars) === 1 ? "" : "s"}`;
+  const m = holdToMinutes(bars, tf); // market minutes
+  if (m < 90) return `~${Math.round(m)} min`;
+  if (m < MINUTES_PER_SESSION) return `~${(m / 60).toFixed(1)}h`;
+  return `~${(m / MINUTES_PER_SESSION).toFixed(1)} trading days`;
 }

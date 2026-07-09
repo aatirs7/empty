@@ -122,8 +122,9 @@ export function evaluateSniper(
   const passed = rejections.length === 0;
   const similarityPct = Math.round(respectedRate * 100);
   const overall = Math.round((probability + weeklyPotential + executionQuality) / 3);
-  const hold = useDb ? `${pred!.expectedHoldBars} bars` : `${h.avgDays}d`;
-  const summary = `Prob ${probability} · Weekly-potential ${weeklyPotential} · Exec ${executionQuality}. Matches ${similarityPct}% of ${reactions} prior reactions; avg move +${dbMovePct}% in ~${hold}${emptySpace ? "; empty-space continuation" : ""}.`;
+  // Explicit, unambiguous time-to-target (minutes/hours/trading-days) — never "N bars".
+  const hold = useDb ? pred!.expectedHoldLabel : `~${h.avgDays} trading days`;
+  const summary = `Prob ${probability} · Weekly-potential ${weeklyPotential} · Exec ${executionQuality}. Matches ${similarityPct}% of ${reactions} prior reactions; avg move +${dbMovePct}% in ${hold}${emptySpace ? "; empty-space continuation" : ""}.`;
 
   return {
     probability,

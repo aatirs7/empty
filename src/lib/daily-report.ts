@@ -34,9 +34,11 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
     .from(researchRuns)
     .where(and(eq(researchRuns.model, "monitor"), eq(researchRuns.runDate, runDate)));
   const runIds = monRuns.map((r) => r.id);
-  const props = runIds.length
+  const allProps = runIds.length
     ? await db.select().from(proposals).where(inArray(proposals.runId, runIds)).orderBy(proposals.createdAt)
     : [];
+  // Exclude shelved/quarantined profiles (zones_legacy) from the active report.
+  const props = allProps.filter((p) => !getProfile(p.profileId).shelved);
   const propIds = props.map((p) => p.id);
   const ords = propIds.length ? await db.select().from(orders).where(inArray(orders.proposalId, propIds)) : [];
   const orderByProp = new Map(ords.map((o) => [o.proposalId, o]));

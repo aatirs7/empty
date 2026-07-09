@@ -16,6 +16,7 @@ import { computeRisk, type RiskMath } from "./risk";
 import { getProfile, contractForTimeframe } from "./profiles";
 import { sendPush } from "./push";
 import { predict } from "./predict";
+import { holdToDays } from "./timeframes";
 import { selectByEV } from "./ev";
 import { getUnderlyingPrice, getOptionQuotes } from "./alpaca";
 
@@ -83,12 +84,23 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
       ? await db.select().from(candidates).where(eq(candidates.id, proposal.candidateId)).limit(1)
       : [];
     const spot = await getUnderlyingPrice(proposal.symbol);
-    const pred = await predict(proposal.symbol, spot, cand?.timeframe ?? "daily", direction, cand?.approach ?? "", 0);
+    const tf = cand?.timeframe ?? "daily";
+    const pred = await predict(proposal.symbol, spot, tf, direction, cand?.approach ?? "", 0);
+    // HORIZON MATCH: the option must survive the expected time-to-target. Size the
+    // minimum expiry to the predicted hold (+25% margin) so we never buy a 1-DTE
+    // contract for a multi-day move. Sub-day holds (intraday 0DTE) keep a 0 floor —
+    // a same-day option easily covers a few-hour move. If no expiry/contract fits,
+    // executeProposal throws below and the setup is rejected.
+    const holdDays = holdToDays(pred.expectedHoldBars, tf);
+    const minDaysToExpiry = holdDays >= 1 ? Math.ceil(holdDays * 1.25) : 0;
     // Per-timeframe expiry: QQQ 15m/1h → same-day 0DTE, 4h → next-day swing.
-    const contractCfg = contractForTimeframe(profile, cand?.timeframe);
-    const sel = await selectByEV(proposal.symbol, direction, spot, pred, contractCfg);
+    const contractCfg = contractForTimeframe(profile, tf);
+    const sel = await selectByEV(proposal.symbol, direction, spot, pred, contractCfg, minDaysToExpiry);
     if (!sel.primary) {
-      throw new ExecuteError(`No EV-viable contract for ${proposal.symbol} (or market closed).`, "no_quote");
+      throw new ExecuteError(
+        `No contract fits ${proposal.symbol}'s horizon (~${holdDays.toFixed(1)}d to target; needs expiry ≥ ${minDaysToExpiry}d in the price band) — rejected.`,
+        "no_quote",
+      );
     }
     const q = await getOptionQuotes([sel.primary.occ]);
     const ask = q[sel.primary.occ]?.ap && q[sel.primary.occ].ap > 0 ? q[sel.primary.occ].ap : sel.primary.ask;

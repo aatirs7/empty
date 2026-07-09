@@ -205,9 +205,11 @@ export async function monitorTick(): Promise<Fire[]> {
 
   const cands = (await db.select().from(candidates).where(eq(candidates.runDate, latest.d))).filter((c) => {
     if (!(c.direction === "call" || c.direction === "put") || !c.zone) return false;
+    const prof = getProfile(c.profileId);
+    if (prof.shelved) return false; // quarantined — no live signals (e.g. zones_legacy)
     // Clear-runway (white space) is required unless the profile opts out (QQQ 0DTE
     // relies on its confirmation candle instead — intraday zones sit too close).
-    if (getProfile(c.profileId).requireClearRunway !== false && !c.clearRunway) return false;
+    if (prof.requireClearRunway !== false && !c.clearRunway) return false;
     return true;
   });
   if (cands.length === 0) return [];
