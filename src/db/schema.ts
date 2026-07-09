@@ -148,6 +148,7 @@ export const candidates = pgTable("candidates", {
   score: integer("score"), // playbook quality score 0-100 (code-computed at scan time)
   playbook: text("playbook"), // playbook classification name
   profileId: text("profile_id").notNull().default("zones_legacy"), // owning strategy profile
+  timeframe: text("timeframe").notNull().default("daily"), // daily | 4h (zone timeframe)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

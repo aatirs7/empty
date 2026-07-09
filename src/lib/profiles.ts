@@ -8,8 +8,17 @@
  * HOW it reaches the broker — every order still funnels through getBroker() (paper).
  */
 import { type StrategyOptions, DEFAULT_STRATEGY_OPTIONS } from "./strategy";
+import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
 export type ProfileId = "sniper_swing" | "qqq_0dte" | "zones_legacy";
+
+/** Zone timeframes a profile reads (QQQ reads Daily + 4H together). */
+export interface ZoneTimeframe {
+  timeframe: "daily" | "4h";
+  opts: ZoneOptions;
+}
+const DAILY_TF: ZoneTimeframe = { timeframe: "daily", opts: DEFAULT_ZONE_OPTIONS }; // ATR50, disp 1.7
+const FOURH_TF: ZoneTimeframe = { timeframe: "4h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.3 } };
 
 export interface ContractConfig {
   /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day. */
@@ -48,6 +57,7 @@ export interface Profile {
   description: string;
   active: boolean; // scanner/monitor process this profile
   strategy: StrategyOptions;
+  zoneTimeframes: ZoneTimeframe[]; // zone timeframes to scan (QQQ = Daily + 4H)
   confirmation: ConfirmationConfig;
   minScore: number; // playbook/confidence gate
   contract: ContractConfig;
@@ -65,6 +75,7 @@ const SNIPER_SWING: Profile = {
   description: "Large/mega-cap order-block swing setups, confirmed, weekly options.",
   active: true,
   strategy: DEFAULT_STRATEGY_OPTIONS,
+  zoneTimeframes: [DAILY_TF],
   confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.3 },
   minScore: 75,
   contract: {
@@ -90,6 +101,7 @@ const QQQ_0DTE: Profile = {
   description: "QQQ same-day-expiry intraday setups. High variance, tight caps.",
   active: true,
   strategy: DEFAULT_STRATEGY_OPTIONS,
+  zoneTimeframes: [DAILY_TF, FOURH_TF],
   confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 },
   minScore: 80, // stricter: 0DTE punishes marginal setups
   contract: {
@@ -115,6 +127,7 @@ const ZONES_LEGACY: Profile = {
   description: "Previous cheap-universe zone strategy. Shelved — shadow-only.",
   active: true, // still scanned + shadowed for comparison
   strategy: DEFAULT_STRATEGY_OPTIONS,
+  zoneTimeframes: [DAILY_TF],
   confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1 },
   minScore: 70,
   contract: {

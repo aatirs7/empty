@@ -1,0 +1,1 @@
+ALTER TABLE "candidates" ADD COLUMN "timeframe" text DEFAULT 'daily' NOT NULL;
