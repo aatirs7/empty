@@ -15,7 +15,7 @@ Never violate these. Never "temporarily" disable them to make a test pass.
 1. **Paper trading only.** `ALPACA_BASE_URL` is hardcoded to `https://paper-api.alpaca.markets`. There is NO live-trading code path in this repo. Do not add one.
 2. **`TRADING_MODE` must equal `paper`.** The execute endpoint asserts this and throws otherwise.
 3. **Human in the loop is the DEFAULT.** Operation Vega writes proposals; by default orders are placed only when the owner taps Approve on a specific proposal. **Deliberate exception (not a violation to "fix"):** an explicit, off-by-default, **PAPER-ONLY** auto-execute mode may place orders automatically, bounded by its own caps (`settings.autoMinConfidence`, `settings.maxAutoTradesPerDay`) plus the standard per-order and open-position caps. Auto-execute MUST assert `TRADING_MODE === "paper"` and hard-refuse otherwise. It is off unless the owner turns it on in settings. This does not create a live-trading path (guardrail #1 still holds).
-4. **Position caps, enforced server-side:** per-order contract count is bounded by `MAX_CONTRACTS_PER_ORDER` (hard ceiling, 20) and the user's Settings `maxContracts` (default 5); Vega buys as many contracts as the per-trade budget allows up to that cap. Max 3 open positions (`MAX_OPEN_POSITIONS`). The execute endpoint rejects anything over. NOTE: the original 1-contract cap was deliberately relaxed for small-account realism — this is PAPER-ONLY and every order still re-asserts `TRADING_MODE==='paper'`.
+4. **Position caps, enforced server-side:** per-order contract count is bounded by `MAX_CONTRACTS_PER_ORDER` (hard ceiling, 20) and the user's Settings `maxContracts` (default 5); Vega buys as many contracts as the per-trade budget allows up to that cap. Open positions bounded by the profile's `maxOpenPositions` AND the `MAX_OPEN_POSITIONS` env ceiling (execute takes the min); owner raised SniperBot to 10 on 2026-07-09 (QQQ 0DTE stays 2). The execute endpoint rejects anything over. NOTE: the original 1-contract cap was deliberately relaxed for small-account realism — this is PAPER-ONLY and every order still re-asserts `TRADING_MODE==='paper'`.
 5. **The Brain never sees or invents option prices.** It emits strike and expiry HINTS only. A separate step resolves real contracts off the live Alpaca chain.
 
 ## Stack
@@ -54,7 +54,7 @@ APP_PASSWORD
 AUTH_SECRET
 TRADING_MODE=paper
 MAX_CONTRACTS_PER_ORDER=1
-MAX_OPEN_POSITIONS=3
+MAX_OPEN_POSITIONS=10
 ```
 
 Never commit `.env`. Keep secrets out of the repo.
