@@ -9,8 +9,22 @@
  * value throws. There is no live-trading path in this repo.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 const PAPER_TRADING_URL = "https://paper-api.alpaca.markets";
 const DEFAULT_DATA_URL = "https://data.alpaca.markets";
+
+// Per-account key context. The broker runs its TRADING calls inside withAccount()
+// so different strategy profiles route to different paper accounts; anything
+// outside (market data) uses the default keys.
+export interface AccountKeys {
+  id: string;
+  secret: string;
+}
+const keyStore = new AsyncLocalStorage<AccountKeys>();
+export function withAccount<T>(keys: AccountKeys, fn: () => Promise<T>): Promise<T> {
+  return keyStore.run(keys, fn);
+}
 
 /** Strip trailing slash and any trailing API-version segment (/v2, /v1beta1, ...). */
 function normalizeBase(url: string): string {
@@ -32,8 +46,9 @@ function dataBase(): string {
 }
 
 function authHeaders(): Record<string, string> {
-  const id = process.env.ALPACA_API_KEY_ID;
-  const secret = process.env.ALPACA_API_SECRET_KEY;
+  const ctx = keyStore.getStore();
+  const id = ctx?.id ?? process.env.ALPACA_API_KEY_ID;
+  const secret = ctx?.secret ?? process.env.ALPACA_API_SECRET_KEY;
   if (!id || !secret) {
     throw new Error("Missing ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY");
   }

@@ -87,6 +87,7 @@ export async function selectByEV(
     const s = snaps[c.symbol];
     const ask = s?.ask && s.ask > 0 ? s.ask : null;
     if (!ask) continue;
+    if (ask < contract.priceFloor || ask > contract.priceCap) continue; // affordable band only
     const delta = s?.delta != null ? s.delta : fallbackDelta(direction, spot, strike);
     const gamma = s?.gamma ?? 0;
     const theta = s?.theta ?? 0;

@@ -9,11 +9,14 @@
  */
 import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { proposals, orders } from "../db/schema";
+import { proposals, orders, candidates } from "../db/schema";
 import { getBroker } from "./broker";
-import { resolveContract } from "./resolve";
+import { resolveContract, type ResolvedContract } from "./resolve";
 import { computeRisk, type RiskMath } from "./risk";
 import { getProfile } from "./profiles";
+import { predict } from "./predict";
+import { selectByEV } from "./ev";
+import { getUnderlyingPrice, getOptionQuotes } from "./alpaca";
 
 export class ExecuteError extends Error {
   constructor(
@@ -44,7 +47,6 @@ function assertPaper(): void {
 
 export async function executeProposal(proposalId: number, mode: "manual" | "auto"): Promise<ExecuteResult> {
   assertPaper();
-  const broker = getBroker();
 
   const [proposal] = await db.select().from(proposals).where(eq(proposals.id, proposalId)).limit(1);
   if (!proposal) throw new ExecuteError(`Proposal ${proposalId} not found.`, "not_found");
@@ -58,6 +60,7 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   // Caps + contract shape come from the proposal's PROFILE (never blended across
   // strategies). Env vars remain an outer hard ceiling. PAPER-ONLY assert is above.
   const profile = getProfile(proposal.profileId);
+  const broker = getBroker(proposal.profileId); // the profile's own paper account
   const perOrderCap = Number(process.env.MAX_CONTRACTS_PER_ORDER ?? 100000);
   // TODO(S4/S5): count open positions PER profile; today it's the account-wide count.
   const openCap = Math.min(profile.caps.maxOpenPositions, Number(process.env.MAX_OPEN_POSITIONS ?? 100000));
@@ -71,13 +74,42 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   }
 
   const direction = proposal.direction as "call" | "put";
-  const resolved = await resolveContract({
-    symbol: proposal.symbol,
-    direction,
-    strikeHint: proposal.strikeHint ?? "ATM",
-    expiryHint: proposal.expiryHint ?? "friday",
-    contract: profile.contract,
-  });
+  let resolved: ResolvedContract;
+  if (profile.confirmation.enabled) {
+    // Confirmation profiles (SniperBot, QQQ): pick by EXPECTED VALUE off the
+    // reaction-DB prediction (highest-EV contract), not a plain price band.
+    const [cand] = proposal.candidateId
+      ? await db.select().from(candidates).where(eq(candidates.id, proposal.candidateId)).limit(1)
+      : [];
+    const spot = await getUnderlyingPrice(proposal.symbol);
+    const pred = await predict(proposal.symbol, spot, cand?.timeframe ?? "daily", direction, cand?.approach ?? "", 0);
+    const sel = await selectByEV(proposal.symbol, direction, spot, pred, profile.contract);
+    if (!sel.primary) {
+      throw new ExecuteError(`No EV-viable contract for ${proposal.symbol} (or market closed).`, "no_quote");
+    }
+    const q = await getOptionQuotes([sel.primary.occ]);
+    const ask = q[sel.primary.occ]?.ap && q[sel.primary.occ].ap > 0 ? q[sel.primary.occ].ap : sel.primary.ask;
+    const bid = q[sel.primary.occ]?.bp && q[sel.primary.occ].bp > 0 ? q[sel.primary.occ].bp : null;
+    resolved = {
+      symbol: sel.primary.occ,
+      direction,
+      strike: sel.primary.strike,
+      expiry: sel.primary.expiry,
+      underlyingPrice: spot,
+      ask,
+      bid,
+      mid: bid != null ? Math.round(((ask + bid) / 2) * 100) / 100 : null,
+      price: Math.round(ask * 100) / 100,
+    };
+  } else {
+    resolved = await resolveContract({
+      symbol: proposal.symbol,
+      direction,
+      strikeHint: proposal.strikeHint ?? "ATM",
+      expiryHint: proposal.expiryHint ?? "friday",
+      contract: profile.contract,
+    });
+  }
   if (resolved.price == null || resolved.price <= 0) {
     throw new ExecuteError(
       `No affordable + liquid contract for ${proposal.symbol} within the price cap (or market closed).`,

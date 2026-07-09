@@ -15,9 +15,8 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { candidates, monitorState, orders, proposals, researchRuns } from "../db/schema";
-import { getLatestPrices, getStockBars, getOptionQuotes, midPrice } from "./alpaca";
+import { getLatestPrices, getStockBars, getOptionQuotes, midPrice, getClock } from "./alpaca";
 import { getBroker } from "./broker";
-import { getSettings } from "./settings";
 import { executeProposal } from "./execute";
 import { classifyAndScore } from "./playbook";
 import { parseOcc } from "./format";
@@ -29,11 +28,6 @@ import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
 import { predict } from "./predict";
 import { checkCatalyst } from "./catalyst";
 import type { Bar } from "./alpaca";
-
-// Farrukh's simplified test exit: sell the whole (1-contract) position at +100%,
-// or stop out at -30%. Env-tunable.
-const TAKE_PROFIT = Number(process.env.MONITOR_TAKE_PROFIT_PCT ?? 1.0); // +100%
-const STOP_LOSS = Number(process.env.MONITOR_STOP_PCT ?? -0.3); // -30%
 
 export interface Fire {
   symbol: string;
@@ -73,13 +67,18 @@ function tapCrossing(direction: "call" | "put", prev: number, cur: number, botto
   return prev > top && cur <= top; // call: pulled into support from above
 }
 
-/** Farrukh's simple exit: sell at +100%, stop at -30%. Runs each tick in-hours. */
-async function manageExits(): Promise<Fire[]> {
-  const broker = getBroker();
+/** Per-profile exit: TP/SL from the profile's exit config, plus a forced same-day
+ *  flatten for 0DTE near the close. Runs each tick against the profile's account. */
+async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[]> {
+  const profile = getProfile(profileId);
+  const broker = getBroker(profileId);
   const positions = await broker.listPositions();
   if (positions.length === 0) return [];
   const quotes = await getOptionQuotes(positions.map((p) => p.symbol));
   const out: Fire[] = [];
+  const tp = profile.exit.takeProfit;
+  const sl = profile.exit.stopLoss;
+  const today = new Date().toISOString().slice(0, 10);
 
   for (const p of positions) {
     const entry = Number(p.avg_entry_price);
@@ -87,9 +86,10 @@ async function manageExits(): Promise<Fire[]> {
     const bid = q?.bp && q.bp > 0 ? q.bp : midPrice(q);
     if (!entry || entry <= 0 || bid == null) continue;
     const ret = (bid - entry) / entry;
-    if (ret < TAKE_PROFIT && ret > STOP_LOSS) continue;
-
     const occ = parseOcc(p.symbol);
+    // 0DTE: force a flatten near the close so it never expires worthless.
+    const sameDayForce = profile.exit.sameDayExit && occ?.expiry === today && nearClose;
+    if (ret < tp && ret > sl && !sameDayForce) continue;
     try {
       await broker.closePosition(p.symbol);
       // Record the exit (price, P&L, reason) and mark the proposal closed so the
@@ -105,22 +105,16 @@ async function manageExits(): Promise<Fire[]> {
         const realizedPl = Math.round((bid - entry) * 100 * qty * 100) / 100;
         await db
           .update(orders)
-          .set({ exitPrice: String(bid), exitAt: new Date(), realizedPl: String(realizedPl), exitReason: ret >= TAKE_PROFIT ? "target" : "stop" })
+          .set({ exitPrice: String(bid), exitAt: new Date(), realizedPl: String(realizedPl), exitReason: ret >= tp ? "target" : ret <= sl ? "stop" : "same_day" })
           .where(eq(orders.id, ord.id));
         await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
       }
       const sym = occ?.underlying ?? p.symbol;
-      out.push({
-        symbol: sym,
-        direction: occ?.type ?? "call",
-        candidateId: 0,
-        price: bid,
-        placed: true,
-        detail: ret >= TAKE_PROFIT ? `SOLD +${Math.round(ret * 100)}% (target)` : `STOPPED ${Math.round(ret * 100)}%`,
-      });
+      const label = ret >= tp ? `SOLD +${Math.round(ret * 100)}% (target)` : ret <= sl ? `STOPPED ${Math.round(ret * 100)}%` : `CLOSED ${Math.round(ret * 100)}% (0DTE)`;
+      out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: bid, placed: true, detail: label });
       await sendPush(
-        ret >= TAKE_PROFIT ? `Sold ${sym} for +${Math.round(ret * 100)}%` : `Stopped out of ${sym} (${Math.round(ret * 100)}%)`,
-        ret >= TAKE_PROFIT ? "Hit the +100% profit target." : "Hit the -30% stop.",
+        ret >= tp ? `Sold ${sym} for +${Math.round(ret * 100)}%` : `Closed ${sym} (${ret >= 0 ? "+" : ""}${Math.round(ret * 100)}%)`,
+        ret >= tp ? "Hit the profit target." : ret <= sl ? "Hit the stop." : "0DTE end-of-day flatten.",
         "/positions",
       ).catch(() => {});
     } catch {
@@ -131,8 +125,6 @@ async function manageExits(): Promise<Fire[]> {
 }
 
 export async function monitorTick(): Promise<Fire[]> {
-  const settings = await getSettings();
-
   const [latest] = await db
     .select({ d: candidates.runDate })
     .from(candidates)
@@ -307,13 +299,23 @@ export async function monitorTick(): Promise<Fire[]> {
     }
   }
 
-  // Intraday exits (ratcheting stop + scaled trims). Close-through exits run in the
-  // overnight scan job.
-  if (settings.autoManage) {
+  // Intraday exits — per account (default = SniperBot/zones, account 2 = QQQ 0DTE),
+  // gated per-profile so an unconfigured account is skipped. 0DTE flattens near close.
+  {
+    let nearClose = false;
     try {
-      fires.push(...(await manageExits()));
+      const clock = await getClock();
+      nearClose = new Date(clock.next_close).getTime() - Date.now() < 25 * 60_000;
     } catch {
-      // best-effort
+      /* keep false */
+    }
+    for (const pid of ["sniper_swing", "qqq_0dte"]) {
+      try {
+        if (!(await getProfileSettings(pid)).autoManage) continue;
+        fires.push(...(await manageExits(pid, nearClose)));
+      } catch {
+        // best-effort
+      }
     }
   }
 
