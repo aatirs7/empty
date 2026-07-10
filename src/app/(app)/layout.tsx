@@ -40,7 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Bottom padding clears the fixed bottom nav (nav height + safe area). */}
-        <main className="flex-1 w-full max-w-xl lg:max-w-3xl mx-auto px-4 py-4 lg:px-10 lg:py-10 pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-10">
+        <main className="flex-1 w-full max-w-xl lg:max-w-3xl mx-auto px-4 py-4 lg:px-10 lg:py-10 pb-28 lg:pb-10">
           {children}
         </main>
         <BottomNav />

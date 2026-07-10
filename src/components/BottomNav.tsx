@@ -67,7 +67,9 @@ export default function BottomNav() {
   return (
     <nav
       className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      // Reserve space below the icons for the iPhone home indicator so it never
+      // overlaps them. Uses the real safe-area inset when present, else ~22px.
+      style={{ paddingBottom: "max(env(safe-area-inset-bottom), 22px)" }}
     >
       <div className="mx-auto grid max-w-xl grid-cols-5">
         {navTabs.map((t) => {
