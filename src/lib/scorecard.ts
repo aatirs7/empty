@@ -1,88 +1,90 @@
 /**
- * Per-profile scorecard. SHADOW-ONLY: reads ONLY `shadow_outcomes`, split by
- * profileId so each strategy track (sniper_swing, qqq_0dte, zones_legacy) is
- * measured against ITS OWN baseline and never blended with the others. Does not
- * read proposals/orders. All code-computed.
+ * Per-account scorecard — a SUMMARY OF REAL TRADING ACTIVITY (not a simulation).
+ * For each strategy's own paper account it reports the actual net P&L (Alpaca
+ * account equity change = the source of truth), plus stats computed from the real
+ * closed trades: win rate, average win/loss, average hold, best/worst, open
+ * positions. No shadow sim, no baseline, no blending. All code-computed.
  */
+import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "../db";
-import { shadowOutcomes } from "../db/schema";
-import { getProfile, PROFILE_IDS } from "./profiles";
-import { getAllApiCost } from "./cost";
-
-export interface Bucket {
-  n: number;
-  winRate: number; // 0..1
-  avgReturnPct: number; // percent
-  netPnl: number; // dollars, 1 contract
-}
+import { orders, proposals } from "../db/schema";
+import { getBroker } from "./broker";
+import { getProfile } from "./profiles";
+import { getProfileCost } from "./cost";
+import { UI_PROFILE_IDS } from "./ui-profiles";
 
 export interface ProfileScore {
   profileId: string;
   label: string;
-  strategy: Bucket & { avgWinnerPct: number; avgLoserPct: number };
-  baseline: Bucket;
-  beatsBaseline: boolean | null;
-  openShadows: number;
+  netPnl: number; // account equity change (realized + unrealized) — the truth
+  realizedPnl: number; // sum of closed-trade realized P&L
+  closed: number;
+  wins: number;
+  losses: number;
+  winRate: number; // 0..1
+  avgWinPct: number;
+  avgLossPct: number;
+  avgHoldDays: number;
+  bestPnl: number;
+  worstPnl: number;
+  openCount: number;
+  unrealizedPnl: number;
+  apiCost: number;
 }
 
 export interface Scorecard {
   profiles: ProfileScore[];
-  apiCost: number;
-}
-
-interface Row {
-  ret: number;
-  pnl: number;
-  win: boolean;
-  kind: string;
-  profileId: string;
-  status: string;
 }
 
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-
-function bucket(rows: Row[]): Bucket {
-  return {
-    n: rows.length,
-    winRate: rows.length ? rows.filter((r) => r.win).length / rows.length : 0,
-    avgReturnPct: mean(rows.map((r) => r.ret)) * 100,
-    netPnl: Math.round(rows.reduce((a, r) => a + r.pnl, 0) * 100) / 100,
-  };
-}
+const r2 = (n: number) => Math.round(n * 100) / 100;
 
 export async function computeScorecard(): Promise<Scorecard> {
-  const all = await db.select().from(shadowOutcomes);
-  const rows: Row[] = all.map((s) => {
-    const entry = Number(s.entryPremium);
-    const exit = Number(s.exitPremium);
-    return {
-      ret: entry > 0 && s.status === "closed" ? (exit - entry) / entry : 0,
-      pnl: s.status === "closed" ? (exit - entry) * 100 : 0,
-      win: !!s.win,
-      kind: s.kind,
-      profileId: s.profileId,
-      status: s.status,
-    };
-  });
+  const profiles: ProfileScore[] = [];
+  for (const pid of UI_PROFILE_IDS) {
+    const broker = getBroker(pid);
+    const pl = await broker.getPortfolioPL().catch(() => ({ totalPL: 0 } as { totalPL: number }));
+    const positions = await broker.listPositions().catch(() => []);
+    const unrealized = positions.reduce((s, p) => s + (p.unrealized_pl != null ? Number(p.unrealized_pl) : 0), 0);
 
-  const profiles: ProfileScore[] = PROFILE_IDS.map((id) => {
-    const mine = rows.filter((r) => r.profileId === id);
-    const setups = mine.filter((r) => r.kind === "setup" && r.status === "closed");
-    const bases = mine.filter((r) => r.kind === "baseline" && r.status === "closed");
-    const strat = bucket(setups);
-    const base = bucket(bases);
-    const winners = setups.filter((r) => r.win).map((r) => r.ret);
-    const losers = setups.filter((r) => !r.win).map((r) => r.ret);
-    return {
-      profileId: id,
-      label: getProfile(id).label,
-      strategy: { ...strat, avgWinnerPct: mean(winners) * 100, avgLoserPct: mean(losers) * 100 },
-      baseline: base,
-      beatsBaseline: setups.length && bases.length ? strat.avgReturnPct > base.avgReturnPct : null,
-      openShadows: mine.filter((r) => r.kind === "setup" && r.status === "open").length,
-    };
-  });
+    // Real closed trades for this profile's account.
+    const rows = await db
+      .select({ rp: orders.realizedPl, entry: orders.filledPrice, exit: orders.exitPrice, sub: orders.submittedAt, exitAt: orders.exitAt })
+      .from(orders)
+      .innerJoin(proposals, eq(orders.proposalId, proposals.id))
+      .where(and(eq(proposals.profileId, pid), isNotNull(orders.exitAt)));
 
-  const cost = await getAllApiCost();
-  return { profiles, apiCost: cost.total };
+    const pnls = rows.map((r) => (r.rp != null ? Number(r.rp) : 0));
+    const closed = rows.length;
+    const wins = pnls.filter((p) => p > 0).length;
+    const losses = pnls.filter((p) => p < 0).length;
+    const retPcts = rows.map((r) => {
+      const e = r.entry ? Number(r.entry) : 0;
+      const x = r.exit ? Number(r.exit) : 0;
+      return e > 0 ? ((x - e) / e) * 100 : 0;
+    });
+    const holds = rows
+      .map((r) => (r.sub && r.exitAt ? (new Date(r.exitAt).getTime() - new Date(r.sub).getTime()) / 86_400_000 : 0))
+      .filter((h) => h > 0);
+
+    profiles.push({
+      profileId: pid,
+      label: getProfile(pid).label,
+      netPnl: r2(pl.totalPL),
+      realizedPnl: r2(pnls.reduce((a, b) => a + b, 0)),
+      closed,
+      wins,
+      losses,
+      winRate: closed ? wins / closed : 0,
+      avgWinPct: r2(mean(retPcts.filter((p) => p > 0))),
+      avgLossPct: r2(mean(retPcts.filter((p) => p < 0))),
+      avgHoldDays: Math.round(mean(holds) * 10) / 10,
+      bestPnl: r2(pnls.length ? Math.max(...pnls) : 0),
+      worstPnl: r2(pnls.length ? Math.min(...pnls) : 0),
+      openCount: positions.length,
+      unrealizedPnl: r2(unrealized),
+      apiCost: (await getProfileCost(pid)).total,
+    });
+  }
+  return { profiles };
 }

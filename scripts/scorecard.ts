@@ -1,5 +1,5 @@
 /**
- * Print the per-profile scorecard (shadow-only; each strategy vs its own baseline).
+ * Print the per-account scorecard — a summary of REAL trading activity.
  *
  * Run: npm run scorecard
  */
@@ -11,21 +11,17 @@ const usd = (x: number) => `${x >= 0 ? "+" : "-"}$${Math.abs(x).toFixed(2)}`;
 
 async function main() {
   const s = await computeScorecard();
-  console.log("\n=== VEGA PER-PROFILE SCORECARD (shadow-only, never blended) ===\n");
+  console.log("\n=== VEGA SCORECARD (real activity, per account) ===\n");
   for (const p of s.profiles) {
-    const st = p.strategy;
-    console.log(`${p.label}`);
-    if (st.n === 0) {
-      console.log(`  no closed setups yet (${p.openShadows} open)\n`);
-      continue;
+    console.log(`${p.label}: net ${usd(p.netPnl)} (realized ${usd(p.realizedPnl)}, ${p.openCount} open ${usd(p.unrealizedPnl)})`);
+    if (p.closed > 0) {
+      console.log(`  ${p.closed} closed · win ${(p.winRate * 100).toFixed(0)}% (${p.wins}W/${p.losses}L) · avg win ${pct(p.avgWinPct)} / loss ${pct(p.avgLossPct)} · avg hold ${p.avgHoldDays}d`);
+      console.log(`  best ${usd(p.bestPnl)} / worst ${usd(p.worstPnl)} · API cost ${usd(-p.apiCost)}`);
+    } else {
+      console.log(`  no closed trades yet`);
     }
-    console.log(
-      `  setups n=${st.n}  win ${(st.winRate * 100).toFixed(0)}%  avg ${pct(st.avgReturnPct)}  net ${usd(st.netPnl)}`,
-    );
-    console.log(`  avg winner ${pct(st.avgWinnerPct)} | avg loser ${pct(st.avgLoserPct)}`);
-    console.log(`  baseline n=${p.baseline.n} avg ${pct(p.baseline.avgReturnPct)}  ->  ${p.beatsBaseline == null ? "n/a" : p.beatsBaseline ? "BEATS baseline" : "trails baseline"}\n`);
+    console.log("");
   }
-  console.log(`API cost to date: -$${s.apiCost.toFixed(2)}\n`);
 }
 
 main().catch((e) => {

@@ -6,52 +6,55 @@ export const dynamic = "force-dynamic";
 
 const pct = (x: number): string => `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`;
 
-function ProfileCard({ p }: { p: ProfileScore }) {
-  const s = p.strategy;
-  const netTone = s.netPnl >= 0 ? "text-up" : "text-down";
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
+  const color = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-foreground";
   return (
-    <div className="bg-panel border border-border rounded-2xl p-4 space-y-2">
+    <div className="text-center">
+      <p className="text-[11px] text-muted">{label}</p>
+      <p className={`num text-sm ${color}`}>{value}</p>
+    </div>
+  );
+}
+
+function ProfileCard({ p }: { p: ProfileScore }) {
+  const netTone = p.netPnl >= 0 ? "text-up" : "text-down";
+  return (
+    <div className="bg-panel border border-border rounded-2xl p-5 space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold">{p.label}</p>
-        {s.n > 0 && p.beatsBaseline != null && (
-          <span className={`text-[11px] font-medium ${p.beatsBaseline ? "text-up" : "text-down"}`}>
-            {p.beatsBaseline ? "beats baseline" : "trails baseline"}
-          </span>
-        )}
+        <span className="text-[11px] text-muted">
+          {p.openCount} open{p.openCount > 0 ? ` · ${usd(p.unrealizedPnl)} unrealized` : ""}
+        </span>
       </div>
-      {s.n === 0 ? (
-        <p className="text-xs text-muted">
-          No closed setups yet{p.openShadows > 0 ? ` · ${p.openShadows} open` : ""}. Metrics build as shadows resolve.
+
+      <div className="text-center">
+        <p className="text-xs text-muted">Net P&amp;L (account)</p>
+        <p className={`text-3xl font-bold num ${netTone}`}>
+          {p.netPnl >= 0 ? "+" : ""}
+          {usd(p.netPnl)}
         </p>
+      </div>
+
+      {p.closed === 0 ? (
+        <p className="text-xs text-muted text-center">No closed trades yet.</p>
       ) : (
         <>
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted">Net P&amp;L (1 contract)</span>
-            <span className={`num font-semibold ${netTone}`}>{usd(s.netPnl)}</span>
+          <div className="grid grid-cols-4 gap-2 pt-1 border-t border-border">
+            <Stat label="trades" value={String(p.closed)} />
+            <Stat label="win rate" value={`${Math.round(p.winRate * 100)}%`} />
+            <Stat label="realized" value={usd(p.realizedPnl)} tone={p.realizedPnl >= 0 ? "up" : "down"} />
+            <Stat label="avg hold" value={`${p.avgHoldDays}d`} />
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center text-xs num pt-1">
-            <div>
-              <p className="text-muted">setups</p>
-              <p>{s.n}</p>
-            </div>
-            <div>
-              <p className="text-muted">win</p>
-              <p>{Math.round(s.winRate * 100)}%</p>
-            </div>
-            <div>
-              <p className="text-muted">avg</p>
-              <p className={s.avgReturnPct >= 0 ? "text-up" : "text-down"}>{pct(s.avgReturnPct)}</p>
-            </div>
+          <div className="grid grid-cols-4 gap-2">
+            <Stat label="wins" value={String(p.wins)} tone="up" />
+            <Stat label="losses" value={String(p.losses)} tone="down" />
+            <Stat label="avg win" value={pct(p.avgWinPct)} tone="up" />
+            <Stat label="avg loss" value={pct(p.avgLossPct)} tone="down" />
           </div>
           <div className="flex justify-between text-[11px] text-muted num pt-1 border-t border-border">
-            <span>avg winner <span className="text-up">{pct(s.avgWinnerPct)}</span></span>
-            <span>avg loser <span className="text-down">{pct(s.avgLoserPct)}</span></span>
-          </div>
-          <div className="flex justify-between text-[11px] text-muted num">
-            <span>baseline ({p.profileId === "qqq_0dte" ? "QQQ" : "SPY"})</span>
-            <span>
-              n{p.baseline.n} · {pct(p.baseline.avgReturnPct)}
-            </span>
+            <span>best {usd(p.bestPnl)}</span>
+            <span>worst {usd(p.worstPnl)}</span>
+            <span>API cost {usd(p.apiCost)}</span>
           </div>
         </>
       )}
@@ -61,25 +64,19 @@ function ProfileCard({ p }: { p: ProfileScore }) {
 
 export default async function ScorecardPage() {
   const s = await computeScorecard();
-  const anyData = s.profiles.some((p) => p.strategy.n > 0 || p.openShadows > 0);
 
   return (
     <div className="space-y-4">
-      <PageTitle title="Scorecard" subtitle="per-strategy, shadow-only — never blended" />
+      <PageTitle title="Scorecard" subtitle="your real trading activity, per account" />
 
-      {!anyData ? (
-        <p className="text-sm text-muted text-center py-8">
-          No shadow outcomes yet. Each strategy&apos;s valid setups are shadowed mechanically and appear here as they
-          resolve.
-        </p>
-      ) : (
-        s.profiles.map((p) => <ProfileCard key={p.profileId} p={p} />)
-      )}
+      {s.profiles.map((p) => (
+        <ProfileCard key={p.profileId} p={p} />
+      ))}
 
       <p className="text-[11px] text-muted text-center leading-relaxed">
-        Each strategy is measured on its OWN track: every valid setup is shadowed mechanically (enter at the ask, exit at
-        the bid on the profile&apos;s TP/SL/expiry rule) and compared to its own baseline (SPY for swings, QQQ for 0DTE).
-        Tracks are never blended, and this never reads the live auto-bought trades. API cost to date ${s.apiCost.toFixed(2)}. Not financial advice.
+        A summary of your ACTUAL trades on each strategy&apos;s paper account. Net P&amp;L is the real account equity
+        change (realized + unrealized) from Alpaca — the source of truth. Win rate, average win/loss, and hold time are
+        computed from your real closed trades. Not a simulation. Not financial advice.
       </p>
     </div>
   );

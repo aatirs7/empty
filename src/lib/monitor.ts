@@ -143,25 +143,35 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
     if (!reason) continue; // HOLD
 
     try {
-      await broker.closePosition(p.symbol);
+      const closeOrder = await broker.closePosition(p.symbol);
       const [ord] = await db
-        .select({ id: orders.id, pid: orders.proposalId, qty: orders.qty })
+        .select({ id: orders.id, pid: orders.proposalId, qty: orders.qty, buyFill: orders.filledPrice })
         .from(orders)
         .where(eq(orders.contractSymbol, p.symbol))
         .orderBy(desc(orders.id))
         .limit(1);
+      // Use the ACTUAL close fill (not the bid estimate) + the actual buy fill so
+      // realized P&L matches the Alpaca account exactly.
+      let exitFill = bid;
+      try {
+        const filled = await broker.waitForFill(closeOrder.id, 8000, 500);
+        if (filled.filled_avg_price && Number(filled.filled_avg_price) > 0) exitFill = Number(filled.filled_avg_price);
+      } catch {
+        /* keep the bid estimate */
+      }
+      const buyFill = ord?.buyFill ? Number(ord.buyFill) : entry;
+      const qty = ord?.qty ?? (Math.abs(Number(p.qty)) || 1);
+      const realizedPl = Math.round((exitFill - buyFill) * 100 * qty * 100) / 100;
       if (ord) {
-        const qty = ord.qty ?? (Math.abs(Number(p.qty)) || 1);
-        const realizedPl = Math.round((bid - entry) * 100 * qty * 100) / 100;
         await db
           .update(orders)
-          .set({ exitPrice: String(bid), exitAt: new Date(), realizedPl: String(realizedPl), exitReason: reason.slice(0, 80) })
+          .set({ exitPrice: String(exitFill), exitAt: new Date(), realizedPl: String(realizedPl), exitReason: reason.slice(0, 80) })
           .where(eq(orders.id, ord.id));
         await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
       }
       const sym = occ?.underlying ?? p.symbol;
-      const pct = `${ret >= 0 ? "+" : ""}${Math.round(ret * 100)}%`;
-      out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: bid, placed: true, detail: `SOLD ${sym} ${pct} — ${reason}`, profileId });
+      const pct = `${realizedPl >= 0 ? "+" : ""}$${Math.abs(realizedPl).toFixed(2)}`;
+      out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: exitFill, placed: true, detail: `SOLD ${sym} ${pct} — ${reason}`, profileId });
       await sendPush(`Sold ${sym} ${pct}`, reason, "/positions").catch(() => {});
     } catch {
       /* retry next tick */
