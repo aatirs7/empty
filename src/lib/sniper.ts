@@ -94,9 +94,11 @@ export function evaluateSniper(
   const atrp = atrPct(bars);
   const rr = pb.riskReward ?? 0;
 
-  // Probability — the empirical hit rate (DB) nudged by sample size + trend align.
+  // Probability — the empirical hit rate (DB) nudged by trend align. 0DTE uses the
+  // RAW hit rate (a ~45% same-day tap is tradeable); swing uses the sample/market-
+  // adjusted confidence (which is discounted harder for multi-day conviction).
   const probability = useDb
-    ? Math.round(clamp(pred!.confidence * 0.85 + trendAlign * 15, 0, 100))
+    ? Math.round(clamp((intraday ? pred!.probability * 0.9 : pred!.confidence * 0.85) + trendAlign * (intraday ? 10 : 15), 0, 100))
     : Math.round(clamp(respectedRate * 45 + Math.min(h.reactions, 8) * 2 + trendAlign * 25 + (emptySpace ? 10 : 0), 0, 100));
 
   // Weekly-Options-Potential — if right, how much room/speed for a big % move.
@@ -108,11 +110,14 @@ export function evaluateSniper(
 
   const executionQuality = Math.round(clamp(execScore, 0, 100));
 
+  // 0DTE gets scalp-appropriate thresholds; swings keep the strict weekly gates.
+  const T = intraday ? { probability: 45, executionQuality: 40, respected: 0.35 } : { probability: THRESH.probability, executionQuality: THRESH.executionQuality, respected: 0.4 };
+
   // Adversarial review — actively try to DISPROVE the trade.
   const rejections: string[] = [];
   if (reactions < 3) rejections.push("thin history (<3 prior reactions at this level)");
   if (useDb && pred!.lowConfidence) rejections.push(`low sample (${reactions} reactions, need 20)`);
-  if (respectedRate < 0.4) rejections.push("zone rarely respected historically");
+  if (respectedRate < T.respected) rejections.push("zone rarely respected historically");
   // Move-size + weekly-potential gates apply to WEEKLY swings only. 0DTE scalps
   // trade small/fast moves — judge them on a tiny floor and skip the weekly gates.
   if (intraday) {
@@ -122,9 +127,9 @@ export function evaluateSniper(
     if (dbMovePct < 2) rejections.push("historical moves too small for weekly options");
   }
   if (marketTrend * dirSign < -0.3) rejections.push("fighting a strong opposing market trend");
-  if (probability < THRESH.probability) rejections.push(`probability ${probability} < ${THRESH.probability}`);
+  if (probability < T.probability) rejections.push(`probability ${probability} < ${T.probability}`);
   if (!intraday && weeklyPotential < THRESH.weeklyPotential) rejections.push(`weekly-options potential ${weeklyPotential} < ${THRESH.weeklyPotential}`);
-  if (executionQuality < THRESH.executionQuality) rejections.push(`execution quality ${executionQuality} < ${THRESH.executionQuality}`);
+  if (executionQuality < T.executionQuality) rejections.push(`execution quality ${executionQuality} < ${T.executionQuality}`);
 
   const passed = rejections.length === 0;
   const similarityPct = Math.round(respectedRate * 100);

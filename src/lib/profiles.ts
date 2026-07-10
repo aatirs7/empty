@@ -132,7 +132,7 @@ const QQQ_0DTE: Profile = {
   confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 },
   requireClearRunway: false, // intraday zones sit close; the confirmation candle gates instead
   watchPerTimeframe: 4, // single ticker — watch the nearest 4 levels per timeframe, not 1
-  minScore: 80, // stricter: 0DTE punishes marginal setups
+  minScore: 55, // 0DTE playbook score gate — the 80 (weekly) gate blocked all QQQ setups
   contract: {
     expiryKind: "zeroDte", // default; the 4H swing tf overrides to oneDay
     otmPct: 1.5, // 0DTE wants near-the-money to have any delta
