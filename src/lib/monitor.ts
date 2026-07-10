@@ -23,6 +23,7 @@ import { parseOcc } from "./format";
 import { sendPush } from "./push";
 import { getProfile, activeProfiles } from "./profiles";
 import { scanProfile } from "./scanner";
+import { zoneOfPosition } from "./manage";
 import { getProfileSettings } from "./profile-settings";
 import { confirmEntry } from "./confirm";
 import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
@@ -79,8 +80,6 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
   if (positions.length === 0) return [];
   const quotes = await getOptionQuotes(positions.map((p) => p.symbol));
   const out: Fire[] = [];
-  const tp = profile.exit.takeProfit;
-  const sl = profile.exit.stopLoss;
   const today = new Date().toISOString().slice(0, 10);
 
   for (const p of positions) {
@@ -90,13 +89,61 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
     if (!entry || entry <= 0 || bid == null) continue;
     const ret = (bid - entry) / entry;
     const occ = parseOcc(p.symbol);
-    // 0DTE: force a flatten near the close so it never expires worthless.
-    const sameDayForce = profile.exit.sameDayExit && occ?.expiry === today && nearClose;
-    if (ret < tp && ret > sl && !sameDayForce) continue;
+    const daysToExpiry = occ?.expiry ? Math.ceil((Date.parse(`${occ.expiry}T00:00:00Z`) - Date.now()) / 86_400_000) : Infinity;
+
+    let reason = ""; // non-empty => close this position; empty => HOLD
+
+    if (profile.exit.style === "swing") {
+      // SWING: hold toward the first target over the multi-day horizon. Exit ONLY
+      // on thesis invalidation (a completed daily close back THROUGH the zone
+      // against the trade), a first-target hit, or an expiry-salvage safety.
+      // NO tight intraday premium stop — small adverse moves are held through.
+      const zone = occ ? await zoneOfPosition(p.symbol) : null;
+      if (zone && occ) {
+        let bars: Bar[] = [];
+        try {
+          bars = await getStockBars(occ.underlying, 400);
+        } catch {
+          /* no bars -> fall through to the expiry check */
+        }
+        if (bars.length) {
+          const underlyingNow = bars[bars.length - 1].c;
+          const completed = bars.filter((b) => b.t.slice(0, 10) < today);
+          const lastClose = completed.length ? completed[completed.length - 1].c : null;
+          if (lastClose != null && zone.direction === "call" && lastClose < zone.bottom) {
+            reason = `swing invalidated — daily close ${lastClose} back below the zone`;
+          } else if (lastClose != null && zone.direction === "put" && lastClose > zone.top) {
+            reason = `swing invalidated — daily close ${lastClose} back above the zone`;
+          } else {
+            // First target = nearest swing high/low from the playbook structure.
+            let target: number | null = null;
+            try {
+              target = classifyAndScore(bars, { bottom: zone.bottom, top: zone.top }, zone.direction, underlyingNow).safeTarget;
+            } catch {
+              target = null;
+            }
+            if (target != null && ((zone.direction === "call" && underlyingNow >= target) || (zone.direction === "put" && underlyingNow <= target))) {
+              reason = `hit first target ${target} (underlying ${underlyingNow})`;
+            }
+          }
+        }
+      }
+      // Salvage: never let a swing option expire worthless if the move ran late.
+      if (!reason && daysToExpiry <= 1) reason = "near expiry — salvaging remaining value";
+    } else {
+      // INTRADAY 0DTE: premium TP/SL + a forced same-day flatten near the close.
+      const tp = profile.exit.takeProfit;
+      const sl = profile.exit.stopLoss;
+      if (ret >= tp) reason = `hit take-profit (+${Math.round(ret * 100)}%)`;
+      else if (ret <= sl) reason = `hit stop (${Math.round(ret * 100)}%)`;
+      else if (profile.exit.sameDayExit && occ?.expiry === today && nearClose)
+        reason = `0DTE end-of-day flatten (${ret >= 0 ? "+" : ""}${Math.round(ret * 100)}%)`;
+    }
+
+    if (!reason) continue; // HOLD
+
     try {
       await broker.closePosition(p.symbol);
-      // Record the exit (price, P&L, reason) and mark the proposal closed so the
-      // Closed tab + Today reconcile with reality.
       const [ord] = await db
         .select({ id: orders.id, pid: orders.proposalId, qty: orders.qty })
         .from(orders)
@@ -108,18 +155,14 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
         const realizedPl = Math.round((bid - entry) * 100 * qty * 100) / 100;
         await db
           .update(orders)
-          .set({ exitPrice: String(bid), exitAt: new Date(), realizedPl: String(realizedPl), exitReason: ret >= tp ? "target" : ret <= sl ? "stop" : "same_day" })
+          .set({ exitPrice: String(bid), exitAt: new Date(), realizedPl: String(realizedPl), exitReason: reason.slice(0, 80) })
           .where(eq(orders.id, ord.id));
         await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.pid));
       }
       const sym = occ?.underlying ?? p.symbol;
-      const label = ret >= tp ? `SOLD +${Math.round(ret * 100)}% (target)` : ret <= sl ? `STOPPED ${Math.round(ret * 100)}%` : `CLOSED ${Math.round(ret * 100)}% (0DTE)`;
-      out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: bid, placed: true, detail: label, profileId });
-      await sendPush(
-        ret >= tp ? `Sold ${sym} for +${Math.round(ret * 100)}%` : `Closed ${sym} (${ret >= 0 ? "+" : ""}${Math.round(ret * 100)}%)`,
-        ret >= tp ? "Hit the profit target." : ret <= sl ? "Hit the stop." : "0DTE end-of-day flatten.",
-        "/positions",
-      ).catch(() => {});
+      const pct = `${ret >= 0 ? "+" : ""}${Math.round(ret * 100)}%`;
+      out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: bid, placed: true, detail: `SOLD ${sym} ${pct} — ${reason}`, profileId });
+      await sendPush(`Sold ${sym} ${pct}`, reason, "/positions").catch(() => {});
     } catch {
       /* retry next tick */
     }

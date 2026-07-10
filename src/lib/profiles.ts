@@ -25,13 +25,12 @@ export interface ZoneTimeframe {
 }
 const DAILY_TF: ZoneTimeframe = { timeframe: "daily", opts: DEFAULT_ZONE_OPTIONS }; // ATR50, disp 1.7
 const FOURH_TF: ZoneTimeframe = { timeframe: "4h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.3 } };
-// QQQ intraday timeframes: finer bars use a lower displacement to surface enough
-// zones. 15Min/1H drive same-day 0DTE; 4H drives the next-day 1-day swing.
-// maxWidthAtr caps zone thickness (0.6×ATR) so big HTF candles don't produce
-// range-wide zones — the tap edge is preserved, only the far edge pulls in.
+// QQQ intraday timeframes — PURELY same-day 0DTE (15Min + 1H). 4H was dropped: its
+// historical hold is ~3.7 trading days (a multi-day swing), which doesn't fit 0DTE.
+// maxWidthAtr caps zone thickness (0.6×ATR) so big candles don't produce range-wide
+// zones — the tap edge is preserved, only the far edge pulls in.
 const Q_15M: ZoneTimeframe = { timeframe: "15min", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.2, maxWidthAtr: 0.6 }, expiryKind: "zeroDte" };
 const Q_1H: ZoneTimeframe = { timeframe: "1h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.25, maxWidthAtr: 0.6 }, expiryKind: "zeroDte" };
-const Q_4H_SWING: ZoneTimeframe = { timeframe: "4h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.3, maxWidthAtr: 0.6 }, expiryKind: "oneDay" };
 
 export interface ContractConfig {
   expiryKind: ExpiryKind;
@@ -51,8 +50,13 @@ export interface ProfileCaps {
 }
 
 export interface ExitConfig {
-  takeProfit: number; // +1.0 => +100%
-  stopLoss: number; // -0.3 => -30%
+  // "swing": HOLD toward the first target over the multi-day horizon; exit ONLY on
+  //   thesis invalidation (underlying closes back through the zone), first-target
+  //   hit, or an expiry-salvage safety. No tight intraday premium stop.
+  // "intraday": premium TP/SL + a 0DTE same-day flatten (for same-day 0DTE trades).
+  style: "swing" | "intraday";
+  takeProfit: number; // intraday only: +1.0 => +100% of premium
+  stopLoss: number; // intraday only: -0.35 => -35% of premium
   sameDayExit: boolean; // 0DTE: flatten before the close
 }
 
@@ -105,7 +109,9 @@ const SNIPER_SWING: Profile = {
     liquiditySpread: 0.6,
   },
   caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 10 }, // owner raised 3 -> 10 (2026-07-09)
-  exit: { takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  // Multi-day swing (5-10 trading days per SNIPERBOT-PLAYBOOK.md): hold to target /
+  // structural invalidation, no tight premium stop. tp/sl below are unused for swing.
+  exit: { style: "swing", takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: true, // owner chose to auto-trade SniperBot on the paper account
   baselineSymbol: "SPY",
 };
@@ -118,10 +124,9 @@ const QQQ_0DTE: Profile = {
   description: "QQQ same-day-expiry intraday setups. High variance, tight caps.",
   active: true,
   strategy: DEFAULT_STRATEGY_OPTIONS,
-  // Intraday only — same-day 0DTE off 15Min/1H, next-day 1-day swing off 4H.
-  // Daily was dropped: it produced multi-day (~5-day) holds that made no sense
-  // against a same-day option.
-  zoneTimeframes: [Q_15M, Q_1H, Q_4H_SWING],
+  // Purely same-day 0DTE off 15Min + 1H. Daily (~5-day holds) and 4H (~3.7-day
+  // holds) were both dropped — they're multi-day swings, not same-day trades.
+  zoneTimeframes: [Q_15M, Q_1H],
   confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 },
   requireClearRunway: false, // intraday zones sit close; the confirmation candle gates instead
   watchPerTimeframe: 4, // single ticker — watch the nearest 4 levels per timeframe, not 1
@@ -135,11 +140,9 @@ const QQQ_0DTE: Profile = {
     priceCap: 1.5,
     liquiditySpread: 0.7,
   },
-  // Budget covers a next-day swing contract (up to priceCap); 2 open lets a 0DTE
-  // day-trade and a 1-day swing coexist. sameDayExit only flattens contracts that
-  // expire TODAY (manageExits checks expiry===today), so the next-day swing rides.
   caps: { perTradeBudget: 160, maxContracts: 1, maxOpenPositions: 2 },
-  exit: { takeProfit: 0.6, stopLoss: -0.35, sameDayExit: true },
+  // Same-day 0DTE: premium TP/SL + a forced flatten before the close.
+  exit: { style: "intraday", takeProfit: 0.6, stopLoss: -0.35, sameDayExit: true },
   autoDefault: false, // off until measured
   baselineSymbol: "QQQ",
 };
@@ -166,7 +169,7 @@ const ZONES_LEGACY: Profile = {
     liquiditySpread: 0.7,
   },
   caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3 },
-  exit: { takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  exit: { style: "swing", takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: false, // SHELVED — no new auto-trades
   baselineSymbol: "SPY",
 };

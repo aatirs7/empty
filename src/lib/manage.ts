@@ -45,7 +45,7 @@ export interface ManageSummary {
 }
 
 /** The zone a position was opened from (latest order -> proposal.zoneSetup), or null. */
-async function zoneOfPosition(occSymbol: string): Promise<{ bottom: number; top: number; direction: "call" | "put" } | null> {
+export async function zoneOfPosition(occSymbol: string): Promise<{ bottom: number; top: number; direction: "call" | "put" } | null> {
   const [ord] = await db
     .select()
     .from(orders)
