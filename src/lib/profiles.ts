@@ -50,11 +50,13 @@ export interface ProfileCaps {
 }
 
 export interface ExitConfig {
-  // "swing": HOLD toward the first target over the multi-day horizon; exit ONLY on
-  //   thesis invalidation (underlying closes back through the zone), first-target
-  //   hit, or an expiry-salvage safety. No tight intraday premium stop.
-  // "intraday": premium TP/SL + a 0DTE same-day flatten (for same-day 0DTE trades).
-  style: "swing" | "intraday";
+  // "premium" (SniperBot, per Farrukh): let it RIDE to targetPremium ($2) before
+  //   selling, with a hard stop at hardStopPremium ($0.15). No tight % stop in
+  //   between + an expiry-salvage safety.
+  // "intraday" (QQQ 0DTE): % TP/SL on premium + a same-day flatten before close.
+  style: "premium" | "intraday";
+  targetPremium?: number; // premium style: sell when the bid reaches this ($)
+  hardStopPremium?: number; // premium style: sell when the bid falls to this ($)
   takeProfit: number; // intraday only: +1.0 => +100% of premium
   stopLoss: number; // intraday only: -0.35 => -35% of premium
   sameDayExit: boolean; // 0DTE: flatten before the close
@@ -109,9 +111,9 @@ const SNIPER_SWING: Profile = {
     liquiditySpread: 0.6,
   },
   caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 10 }, // owner raised 3 -> 10 (2026-07-09)
-  // Multi-day swing (5-10 trading days per SNIPERBOT-PLAYBOOK.md): hold to target /
-  // structural invalidation, no tight premium stop. tp/sl below are unused for swing.
-  exit: { style: "swing", takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  // Owner's rule (Farrukh): let it RIDE to $2.00 before selling, hard stop at $0.15.
+  // No tight stop in between. takeProfit/stopLoss below are unused for premium style.
+  exit: { style: "premium", targetPremium: 2.0, hardStopPremium: 0.15, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: true, // owner chose to auto-trade SniperBot on the paper account
   baselineSymbol: "SPY",
 };
@@ -169,7 +171,7 @@ const ZONES_LEGACY: Profile = {
     liquiditySpread: 0.7,
   },
   caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3 },
-  exit: { style: "swing", takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  exit: { style: "premium", targetPremium: 2.0, hardStopPremium: 0.15, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: false, // SHELVED — no new auto-trades
   baselineSymbol: "SPY",
 };

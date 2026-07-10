@@ -76,6 +76,7 @@ export function evaluateSniper(
   clearRunway: boolean,
   market: MarketContext,
   pred?: Prediction, // persisted reaction-DB prediction (preferred over in-memory)
+  intraday = false, // 0DTE same-day scalp: judge on small/fast moves, NOT weekly-swing size
 ): SniperEval {
   const h = pb.historical;
   // Prefer the persisted reaction DB when it has a real sample; else the in-memory aggregate.
@@ -112,16 +113,25 @@ export function evaluateSniper(
   if (reactions < 3) rejections.push("thin history (<3 prior reactions at this level)");
   if (useDb && pred!.lowConfidence) rejections.push(`low sample (${reactions} reactions, need 20)`);
   if (respectedRate < 0.4) rejections.push("zone rarely respected historically");
-  if (rr < 1) rejections.push("poor risk/reward");
-  if (dbMovePct < 2) rejections.push("historical moves too small for weekly options");
+  // Move-size + weekly-potential gates apply to WEEKLY swings only. 0DTE scalps
+  // trade small/fast moves — judge them on a tiny floor and skip the weekly gates.
+  if (intraday) {
+    if (dbMovePct < 0.15) rejections.push("move too small even for a 0DTE scalp");
+  } else {
+    if (rr < 1) rejections.push("poor risk/reward");
+    if (dbMovePct < 2) rejections.push("historical moves too small for weekly options");
+  }
   if (marketTrend * dirSign < -0.3) rejections.push("fighting a strong opposing market trend");
   if (probability < THRESH.probability) rejections.push(`probability ${probability} < ${THRESH.probability}`);
-  if (weeklyPotential < THRESH.weeklyPotential) rejections.push(`weekly-options potential ${weeklyPotential} < ${THRESH.weeklyPotential}`);
+  if (!intraday && weeklyPotential < THRESH.weeklyPotential) rejections.push(`weekly-options potential ${weeklyPotential} < ${THRESH.weeklyPotential}`);
   if (executionQuality < THRESH.executionQuality) rejections.push(`execution quality ${executionQuality} < ${THRESH.executionQuality}`);
 
   const passed = rejections.length === 0;
   const similarityPct = Math.round(respectedRate * 100);
-  const overall = Math.round((probability + weeklyPotential + executionQuality) / 3);
+  // Intraday scores on probability + execution (weekly-potential is a swing concept).
+  const overall = intraday
+    ? Math.round((probability + executionQuality) / 2)
+    : Math.round((probability + weeklyPotential + executionQuality) / 3);
   // Explicit, unambiguous time-to-target (minutes/hours/trading-days) — never "N bars".
   const hold = useDb ? pred!.expectedHoldLabel : `~${h.avgDays} trading days`;
   const summary = `Prob ${probability} · Weekly-potential ${weeklyPotential} · Exec ${executionQuality}. Matches ${similarityPct}% of ${reactions} prior reactions; avg move +${dbMovePct}% in ${hold}${emptySpace ? "; empty-space continuation" : ""}.`;
