@@ -76,12 +76,12 @@ export default function BottomNav() {
             <Link
               key={t.href}
               href={t.href}
-              className={`flex h-16 flex-col items-center justify-center gap-1 transition-colors ${
+              className={`flex h-[4.75rem] flex-col items-center justify-center gap-1.5 transition-colors ${
                 active ? "text-accent" : "text-muted"
               }`}
             >
-              <NavIcon name={t.icon} />
-              <span className={`text-[11px] ${active ? "font-medium" : ""}`}>{t.label}</span>
+              <NavIcon name={t.icon} className="h-7 w-7" />
+              <span className={`text-xs ${active ? "font-medium" : ""}`}>{t.label}</span>
             </Link>
           );
         })}
