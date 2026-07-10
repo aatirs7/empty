@@ -8,17 +8,14 @@ import Sidebar from "@/components/Sidebar";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    // App shell: exactly one viewport tall, no page scroll. The main area scrolls
-    // internally and the bottom nav is a normal flex child — so it always sits
-    // flush at the bottom (no iOS `position:fixed` float/gap).
-    <div className="h-dvh lg:flex overflow-hidden">
+    <div className="min-h-dvh lg:flex">
       <RefreshManager />
       <WhatsNew />
       <Sidebar />
 
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile-only top bar; desktop controls live in the sidebar. */}
-        <header className="lg:hidden shrink-0 z-10 bg-background/85 backdrop-blur pt-[env(safe-area-inset-top)]">
+        <header className="lg:hidden sticky top-0 z-20 bg-background/85 backdrop-blur pt-[env(safe-area-inset-top)]">
           <div className="h-11 max-w-xl mx-auto px-4 flex items-center justify-between">
             <HeaderThemeToggle />
             <div className="flex items-center gap-3">
@@ -42,7 +39,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main id="app-scroll" className="flex-1 overflow-y-auto w-full max-w-xl lg:max-w-3xl mx-auto px-4 py-4 lg:px-10 lg:py-10">
+        {/* Bottom padding clears the fixed bottom nav (nav height + safe area). */}
+        <main className="flex-1 w-full max-w-xl lg:max-w-3xl mx-auto px-4 py-4 lg:px-10 lg:py-10 pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:pb-10">
           {children}
         </main>
         <BottomNav />

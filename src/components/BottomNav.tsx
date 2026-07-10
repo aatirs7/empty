@@ -1,7 +1,6 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 
 export function NavIcon({ name, className = "h-6 w-6" }: { name: string; className?: string }) {
   const common = {
@@ -60,44 +59,29 @@ export function isActive(path: string, href: string): boolean {
   return href === "/" ? path === "/" : path.startsWith(href);
 }
 
+// Standard PWA bottom tab bar: fixed to the viewport bottom, opaque background,
+// and its own safe-area inset so it clears the home indicator. No JavaScript —
+// no show/hide, no viewport math — so it never jumps, hides, or sticks.
 export default function BottomNav() {
   const path = usePathname();
-  // Hide the bar only while a TEXT FIELD is focused (the keyboard is up), which
-  // otherwise shoves a fixed bottom bar up over the content. Focus-based, not
-  // viewport-size based, so it never false-fires on scroll / URL-bar collapse.
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-  useEffect(() => {
-    const isTextField = (el: Element | null) =>
-      !!el &&
-      (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || (el as HTMLElement).isContentEditable === true);
-    const onFocusIn = () => setKeyboardOpen(isTextField(document.activeElement));
-    const onFocusOut = () => setKeyboardOpen(false);
-    document.addEventListener("focusin", onFocusIn);
-    document.addEventListener("focusout", onFocusOut);
-    return () => {
-      document.removeEventListener("focusin", onFocusIn);
-      document.removeEventListener("focusout", onFocusOut);
-    };
-  }, []);
   return (
     <nav
-      className={`lg:hidden shrink-0 z-10 border-t border-border bg-background/95 backdrop-blur pb-[env(safe-area-inset-bottom)] ${
-        keyboardOpen ? "hidden" : ""
-      }`}
+      className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <div className="max-w-xl mx-auto grid grid-cols-5">
+      <div className="mx-auto grid max-w-xl grid-cols-5">
         {navTabs.map((t) => {
           const active = isActive(path, t.href);
           return (
             <Link
               key={t.href}
               href={t.href}
-              className={`flex flex-col items-center justify-center gap-1 py-3 min-h-[68px] transition-colors ${
+              className={`flex h-16 flex-col items-center justify-center gap-1 transition-colors ${
                 active ? "text-accent" : "text-muted"
               }`}
             >
               <NavIcon name={t.icon} />
-              <span className={`text-xs ${active ? "font-medium" : ""}`}>{t.label}</span>
+              <span className={`text-[11px] ${active ? "font-medium" : ""}`}>{t.label}</span>
             </Link>
           );
         })}
