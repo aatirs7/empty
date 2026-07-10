@@ -23,6 +23,7 @@ import { parseOcc } from "./format";
 import { sendPush } from "./push";
 import { getProfile, activeProfiles } from "./profiles";
 import { scanProfile } from "./scanner";
+import { zoneOfPosition } from "./manage";
 import { getProfileSettings } from "./profile-settings";
 import { confirmEntry } from "./confirm";
 import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
@@ -92,14 +93,47 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
 
     let reason = ""; // non-empty => close this position; empty => HOLD
 
-    if (profile.exit.style === "premium") {
-      // Owner's rule: RIDE to the target premium ($2) before selling; hard stop at
-      // the floor premium ($0.15). No tight stop in between. Salvage near expiry.
-      const target = profile.exit.targetPremium ?? 2.0;
-      const hardStop = profile.exit.hardStopPremium ?? 0.15;
-      if (bid >= target) reason = `rode to target $${bid.toFixed(2)} (>= $${target.toFixed(2)})`;
-      else if (bid <= hardStop) reason = `hard stop at $${bid.toFixed(2)} (<= $${hardStop.toFixed(2)})`;
-      else if (daysToExpiry <= 1) reason = "near expiry — salvaging remaining value";
+    if (profile.exit.style === "swing") {
+      // SWING: hold toward the first target over the multi-day horizon. Exit ONLY on
+      // swing INVALIDATION (a completed daily close back through the zone against the
+      // trade), a first-target hit, the $2 upside take-profit, or expiry salvage.
+      // NO intraday premium hard stop — a cheap option dipping intraday is HELD.
+      const tgtPrem = profile.exit.targetPremium;
+      if (tgtPrem && bid >= tgtPrem) reason = `rode to $${bid.toFixed(2)} (>= $${tgtPrem.toFixed(2)} target)`;
+
+      if (!reason) {
+        const zone = occ ? await zoneOfPosition(p.symbol) : null;
+        if (zone && occ) {
+          let bars: Bar[] = [];
+          try {
+            bars = await getStockBars(occ.underlying, 400);
+          } catch {
+            /* no bars -> fall through to expiry check */
+          }
+          if (bars.length) {
+            const underlyingNow = bars[bars.length - 1].c;
+            const completed = bars.filter((b) => b.t.slice(0, 10) < today);
+            const lastClose = completed.length ? completed[completed.length - 1].c : null;
+            if (lastClose != null && zone.direction === "call" && lastClose < zone.bottom) {
+              reason = `swing invalidated — daily close ${lastClose} back below the zone`;
+            } else if (lastClose != null && zone.direction === "put" && lastClose > zone.top) {
+              reason = `swing invalidated — daily close ${lastClose} back above the zone`;
+            } else {
+              let target: number | null = null;
+              try {
+                target = classifyAndScore(bars, { bottom: zone.bottom, top: zone.top }, zone.direction, underlyingNow).safeTarget;
+              } catch {
+                target = null;
+              }
+              if (target != null && ((zone.direction === "call" && underlyingNow >= target) || (zone.direction === "put" && underlyingNow <= target))) {
+                reason = `hit first target ${target} (underlying ${underlyingNow})`;
+              }
+            }
+          }
+        }
+      }
+      // Salvage: never let a swing option expire worthless if the move ran late.
+      if (!reason && daysToExpiry <= 1) reason = "near expiry — salvaging remaining value";
     } else {
       // INTRADAY 0DTE: premium TP/SL + a forced same-day flatten near the close.
       const tp = profile.exit.takeProfit;

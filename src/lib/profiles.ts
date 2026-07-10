@@ -50,13 +50,14 @@ export interface ProfileCaps {
 }
 
 export interface ExitConfig {
-  // "premium" (SniperBot, per Farrukh): let it RIDE to targetPremium ($2) before
-  //   selling, with a hard stop at hardStopPremium ($0.15). No tight % stop in
-  //   between + an expiry-salvage safety.
+  // "swing" (SniperBot): HOLD toward the first target over the multi-day horizon.
+  //   Close ONLY on swing invalidation (underlying DAILY-closes back through the
+  //   zone), a first-target hit, a bonus premium take-profit (targetPremium = ride
+  //   to $2), or an expiry-salvage safety. NO intraday premium hard stop — a cheap
+  //   option dipping intraday is HELD while the swing thesis is intact.
   // "intraday" (QQQ 0DTE): % TP/SL on premium + a same-day flatten before close.
-  style: "premium" | "intraday";
-  targetPremium?: number; // premium style: sell when the bid reaches this ($)
-  hardStopPremium?: number; // premium style: sell when the bid falls to this ($)
+  style: "swing" | "intraday";
+  targetPremium?: number; // swing: upside take-profit — sell when the bid reaches this ($)
   takeProfit: number; // intraday only: +1.0 => +100% of premium
   stopLoss: number; // intraday only: -0.35 => -35% of premium
   sameDayExit: boolean; // 0DTE: flatten before the close
@@ -111,9 +112,9 @@ const SNIPER_SWING: Profile = {
     liquiditySpread: 0.6,
   },
   caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 10 }, // owner raised 3 -> 10 (2026-07-09)
-  // Owner's rule (Farrukh): let it RIDE to $2.00 before selling, hard stop at $0.15.
-  // No tight stop in between. takeProfit/stopLoss below are unused for premium style.
-  exit: { style: "premium", targetPremium: 2.0, hardStopPremium: 0.15, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  // Swing: hold to first target / swing invalidation; ride to $2 as an upside TP.
+  // NO intraday hard stop (it was killing swings on same-day premium decay).
+  exit: { style: "swing", targetPremium: 2.0, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: true, // owner chose to auto-trade SniperBot on the paper account
   baselineSymbol: "SPY",
 };
@@ -171,7 +172,7 @@ const ZONES_LEGACY: Profile = {
     liquiditySpread: 0.7,
   },
   caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3 },
-  exit: { style: "premium", targetPremium: 2.0, hardStopPremium: 0.15, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  exit: { style: "swing", targetPremium: 2.0, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: false, // SHELVED — no new auto-trades
   baselineSymbol: "SPY",
 };
