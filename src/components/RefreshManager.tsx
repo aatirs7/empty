@@ -26,8 +26,11 @@ export default function RefreshManager() {
   }, [doRefresh]);
 
   useEffect(() => {
+    // The app shell scrolls #app-scroll internally (not the window), so read that.
+    const scroller = () => document.getElementById("app-scroll");
+    const atTop = () => (scroller()?.scrollTop ?? window.scrollY) <= 0;
     const onStart = (e: TouchEvent) => {
-      if (window.scrollY <= 0) {
+      if (atTop()) {
         startY.current = e.touches[0].clientY;
         dragging.current = true;
       }
@@ -35,7 +38,7 @@ export default function RefreshManager() {
     const onMove = (e: TouchEvent) => {
       if (!dragging.current || startY.current == null) return;
       const dy = e.touches[0].clientY - startY.current;
-      if (dy > 0 && window.scrollY <= 0) setPull(Math.min(dy * 0.5, 90));
+      if (dy > 0 && atTop()) setPull(Math.min(dy * 0.5, 90));
       else setPull(0);
     };
     const onEnd = () => {

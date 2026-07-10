@@ -44,7 +44,7 @@ export default async function LogPage({ searchParams }: { searchParams: Promise<
                   Run #{run.id} · {run.runDate} · {etTime(run.createdAt)}{" "}
                   <span className={run.status === "complete" ? "text-muted" : "text-down"}>({run.status})</span>
                 </span>
-                <span className="text-xs text-muted num">{usd(Number(run.costEstimate), 4)}</span>
+                <span className="text-xs text-muted num">{proposals.length} {proposals.length === 1 ? "signal" : "signals"}</span>
               </summary>
               <div className="mt-3 space-y-2">
                 {run.marketContext && <p className="text-xs text-muted">{stripDash(run.marketContext)}</p>}
