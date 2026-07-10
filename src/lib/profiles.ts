@@ -58,6 +58,10 @@ export interface ExitConfig {
   // "intraday" (QQQ 0DTE): % TP/SL on premium + a same-day flatten before close.
   style: "swing" | "intraday";
   targetPremium?: number; // swing: upside take-profit — sell when the bid reaches this ($)
+  // swing catastrophe floor — cut a basically-dead option ONLY near expiry (bid <=
+  // catastropheFloor AND <= catastropheDays to expiry). Does NOT fire mid-swing.
+  catastropheFloor?: number;
+  catastropheDays?: number;
   takeProfit: number; // intraday only: +1.0 => +100% of premium
   stopLoss: number; // intraday only: -0.35 => -35% of premium
   sameDayExit: boolean; // 0DTE: flatten before the close
@@ -113,8 +117,8 @@ const SNIPER_SWING: Profile = {
   },
   caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 10 }, // owner raised 3 -> 10 (2026-07-09)
   // Swing: hold to first target / swing invalidation; ride to $2 as an upside TP.
-  // NO intraday hard stop (it was killing swings on same-day premium decay).
-  exit: { style: "swing", targetPremium: 2.0, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  // NO mid-swing stop. Catastrophe floor ($0.15) only bites within 2 days of expiry.
+  exit: { style: "swing", targetPremium: 2.0, catastropheFloor: 0.15, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: true, // owner chose to auto-trade SniperBot on the paper account
   baselineSymbol: "SPY",
 };

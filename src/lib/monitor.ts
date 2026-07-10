@@ -132,6 +132,11 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
           }
         }
       }
+      // Catastrophe floor — ONLY near expiry: cut a basically-dead option that's out
+      // of time. Does NOT fire mid-swing (that was the RIVN bug).
+      if (!reason && profile.exit.catastropheFloor != null && bid <= profile.exit.catastropheFloor && daysToExpiry <= (profile.exit.catastropheDays ?? 2)) {
+        reason = `catastrophe floor — $${bid.toFixed(2)} <= $${profile.exit.catastropheFloor.toFixed(2)} with ${daysToExpiry}d to expiry`;
+      }
       // Salvage: never let a swing option expire worthless if the move ran late.
       if (!reason && daysToExpiry <= 1) reason = "near expiry — salvaging remaining value";
     } else {
