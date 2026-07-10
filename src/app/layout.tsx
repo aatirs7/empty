@@ -10,7 +10,10 @@ export const metadata: Metadata = {
   title: "Vega",
   description: "Pre-market options research, paper trading only.",
   applicationName: "Vega",
-  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Vega" },
+  // "black" (opaque) rather than "black-translucent": the web view is confined to
+  // the safe area, so a fixed bottom nav sits flush at launch instead of being
+  // positioned against a too-tall viewport and snapping down on first tap.
+  appleWebApp: { capable: true, statusBarStyle: "black", title: "Vega" },
   icons: { icon: "/icon.png", apple: "/icons/apple-touch-icon.png" },
 };
 
@@ -19,7 +22,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  viewportFit: "cover",
+  // No viewport-fit:cover — let iOS reserve the safe areas so fixed positioning is
+  // correct from the first frame (avoids the "nav floats up until first tap" bug).
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
