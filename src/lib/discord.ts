@@ -17,14 +17,14 @@ export interface DiscordResult {
   error?: string;
 }
 
-export async function postDiscordReport(embed: DiscordEmbed, fullMarkdown: string, filename: string): Promise<DiscordResult> {
+export async function postDiscordReport(embed: DiscordEmbed, fullMarkdown: string, filename: string, content = ""): Promise<DiscordResult> {
   const url = process.env.DISCORD_WEBHOOK_URL;
   if (!url) return { ok: false, status: 0, error: "DISCORD_WEBHOOK_URL not set" };
 
   const form = new FormData();
   form.append(
     "payload_json",
-    JSON.stringify({ username: "Vega", embeds: [{ ...embed, color: embed.color ?? 0x5865f2 }] }),
+    JSON.stringify({ username: "Vega", content: content.slice(0, 2000), embeds: [{ ...embed, color: embed.color ?? 0x5865f2 }] }),
   );
   form.append("files[0]", new Blob([fullMarkdown], { type: "text/markdown" }), filename);
 

@@ -5,7 +5,7 @@
  * its P&L, and every skipped setup its reason — so strategy can be tuned from
  * evidence. All numbers are code-computed from the DB + the live broker.
  */
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { researchRuns, proposals, orders, candidates, activityLog } from "../db/schema";
 import { getBroker } from "./broker";
@@ -17,16 +17,47 @@ const money = (n: number | null | undefined) => (n == null ? "—" : `${n >= 0 ?
 const signMoney = (n: number) => `${n >= 0 ? "+" : "-"}$${Math.abs(n).toFixed(2)}`;
 const et = (d: Date | string | null) => (d ? new Date(d).toLocaleString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" }) : "—");
 
+/** Turn a raw skip detail into a short, plain-English reason. */
+function friendlyReason(detail: string): string {
+  const s = detail.toLowerCase();
+  if (s.includes("probability")) return "probability too low";
+  if (s.includes("weekly-options potential") || s.includes("weekly potential")) return "weekly potential too low";
+  if (s.includes("execution quality")) return "weak confirmation candle";
+  if (s.includes("risk/reward")) return "poor risk/reward";
+  if (s.includes("too small")) return "expected move too small";
+  if (s.includes("score")) return "quality score too low";
+  if (s.includes("catalyst")) return "earnings/Fed catalyst nearby";
+  if (s.includes("rarely respected")) return "zone rarely respected historically";
+  if (s.includes("thin history")) return "thin history at the level";
+  if (s.includes("low sample")) return "not enough historical sample";
+  if (s.includes("horizon")) return "no contract fit the horizon";
+  if (s.includes("fighting")) return "against the market trend";
+  return detail.replace(/rejected:\s*/i, "").slice(0, 30).trim();
+}
+
 export interface ReportOutput {
   date: string;
   embed: { title: string; description: string; color: number; fields: { name: string; value: string; inline?: boolean }[] };
+  narrative: string; // plain-English recap for the Discord message body
   markdown: string;
   filename: string;
   hasActivity: boolean;
 }
 
+/** Sum realized P&L of closed orders within [from, to). */
+const sumRealized = (rows: { rp: string | null; exitAt: Date | null }[], from: Date, to?: Date) =>
+  Math.round(
+    rows
+      .filter((r) => r.exitAt && r.exitAt >= from && (!to || r.exitAt < to))
+      .reduce((s, r) => s + (r.rp != null ? Number(r.rp) : 0), 0) * 100,
+  ) / 100;
+
 export async function buildDailyReport(runDate = new Date().toISOString().slice(0, 10)): Promise<ReportOutput> {
   const dayStart = new Date(`${runDate}T00:00:00Z`);
+  const yStart = new Date(dayStart);
+  yStart.setUTCDate(dayStart.getUTCDate() - 1); // yesterday 00:00 UTC
+  const weekStart = new Date(dayStart);
+  weekStart.setUTCDate(dayStart.getUTCDate() - ((dayStart.getUTCDay() + 6) % 7)); // Monday of this week
 
   // Today's monitor proposals (the live trading path) + their orders.
   const monRuns = await db
@@ -49,10 +80,12 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
   // Closed-today orders (exits with realized P&L).
   const soldToday = await db.select().from(orders).where(gte(orders.exitAt, dayStart)).orderBy(desc(orders.exitAt));
 
-  // Per-profile: live positions, P&L, cost, scan counts.
+  // Per-profile: live positions, P&L, cost, scan counts, period-realized, skips.
   const perProfile: Record<string, {
     label: string; positions: Awaited<ReturnType<ReturnType<typeof getBroker>["listPositions"]>>;
     tradePL: number; cost: number; net: number; scanned: number; valid: number;
+    rzToday: number; rzYest: number; rzWeek: number; winsToday: number; lossesToday: number;
+    skipsToday: number; topSkip: string;
   }> = {};
   for (const pid of UI_PROFILE_IDS) {
     const broker = getBroker(pid);
@@ -63,6 +96,24 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
       .select({ n: sql<string>`count(*)`, v: sql<string>`sum(case when ${candidates.setupValid} then 1 else 0 end)` })
       .from(candidates)
       .where(and(eq(candidates.profileId, pid), eq(candidates.runDate, runDate)));
+
+    // Closed trades for this account (realized by period).
+    const closed = await db
+      .select({ rp: orders.realizedPl, exitAt: orders.exitAt })
+      .from(orders)
+      .innerJoin(proposals, eq(orders.proposalId, proposals.id))
+      .where(and(eq(proposals.profileId, pid), isNotNull(orders.exitAt)));
+    const todayClosed = closed.filter((r) => r.exitAt && r.exitAt >= dayStart);
+
+    // Top skip reason today (why it passed on setups).
+    const skips = acts.filter((a) => a.profileId === pid && a.kind === "skip");
+    const reasonCounts = new Map<string, number>();
+    for (const s of skips) {
+      const key = friendlyReason(s.detail ?? "") || "other";
+      reasonCounts.set(key, (reasonCounts.get(key) ?? 0) + 1);
+    }
+    const top = [...reasonCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+
     perProfile[pid] = {
       label: getProfile(pid).label,
       positions,
@@ -71,6 +122,13 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
       net: Math.round((pl.totalPL - cost.total) * 100) / 100,
       scanned: Number(c?.n ?? 0),
       valid: Number(c?.v ?? 0),
+      rzToday: sumRealized(closed, dayStart),
+      rzYest: sumRealized(closed, yStart, dayStart),
+      rzWeek: sumRealized(closed, weekStart),
+      winsToday: todayClosed.filter((r) => r.rp != null && Number(r.rp) > 0).length,
+      lossesToday: todayClosed.filter((r) => r.rp != null && Number(r.rp) < 0).length,
+      skipsToday: skips.length,
+      topSkip: top ? `${top[0]} (${top[1]}x)` : "",
     };
   }
 
@@ -202,5 +260,36 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
     }),
   };
 
-  return { date: runDate, embed, markdown: L.join("\n"), filename: `vega-report-${runDate}.md`, hasActivity };
+  // ---- Plain-English recap (Discord message body, above the file) ----
+  const dot = (n: number) => (n > 0 ? "🟢" : n < 0 ? "🔴" : "⚪");
+  const N: string[] = [`**📊 Vega recap — ${runDate}**`, ""];
+  for (const pid of UI_PROFILE_IDS) {
+    const p = perProfile[pid];
+    const placed = executed.filter((t) => t.profileId === pid).length;
+    const wl = p.winsToday + p.lossesToday > 0 ? ` (${p.winsToday}W/${p.lossesToday}L)` : "";
+    let line = `${dot(p.rzToday)} **${p.label}** — Today: placed ${placed} trade${placed === 1 ? "" : "s"}, realized ${signMoney(p.rzToday)}${wl}. `;
+    line += `Yesterday ${signMoney(p.rzYest)}, this week ${signMoney(p.rzWeek)}. Account overall ${signMoney(p.net)}`;
+    line += p.positions.length ? `, ${p.positions.length} still open.` : ".";
+    if (p.skipsToday > 0) line += ` It passed on ${p.skipsToday} setup${p.skipsToday === 1 ? "" : "s"} today${p.topSkip ? ` — mostly "${p.topSkip}"` : ""}.`;
+    N.push(line);
+  }
+  const totalToday = Math.round(UI_PROFILE_IDS.reduce((s, pid) => s + perProfile[pid].rzToday, 0) * 100) / 100;
+  const totalWeek = Math.round(UI_PROFILE_IDS.reduce((s, pid) => s + perProfile[pid].rzWeek, 0) * 100) / 100;
+  N.push("", `**Overall:** ${signMoney(totalToday)} today, ${signMoney(totalWeek)} this week across both accounts.`);
+  // Main issue: flag any account that traded nothing (and why).
+  const idle = UI_PROFILE_IDS.filter((pid) => executed.filter((t) => t.profileId === pid).length === 0);
+  if (idle.length) {
+    N.push(
+      `**Main issue:** ${idle
+        .map((pid) => {
+          const p = perProfile[pid];
+          return `${p.label} placed no trades today${p.skipsToday ? ` — every setup was passed on (mostly "${p.topSkip}")` : " (no setups reached its zones)"}`;
+        })
+        .join("; ")}.`,
+    );
+  }
+  N.push("", "_Full trade-by-trade audit attached below._");
+  const narrative = N.join("\n").slice(0, 1900);
+
+  return { date: runDate, embed, narrative, markdown: L.join("\n"), filename: `vega-report-${runDate}.md`, hasActivity };
 }

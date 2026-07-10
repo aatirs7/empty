@@ -43,7 +43,7 @@ export async function GET(req: Request) {
       if (!report.hasActivity) return NextResponse.json({ ok: true, skipped: "no activity today" });
     }
 
-    const res = await postDiscordReport(report.embed, report.markdown, report.filename);
+    const res = await postDiscordReport(report.embed, report.markdown, report.filename, report.narrative);
     if (res.ok) {
       await db.insert(researchRuns).values({ runDate: today, status: "complete", model: "daily-report", marketContext: "Daily report posted to Discord." });
     }
