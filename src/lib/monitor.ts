@@ -22,8 +22,6 @@ import { classifyAndScore } from "./playbook";
 import { parseOcc } from "./format";
 import { sendPush } from "./push";
 import { getProfile, activeProfiles } from "./profiles";
-import { computeZones } from "./zones";
-import { detectFlips, DEFAULT_FLIP_OPTIONS } from "./flips";
 import { scanProfile } from "./scanner";
 import { zoneOfPosition } from "./manage";
 import { getProfileSettings } from "./profile-settings";
@@ -374,24 +372,16 @@ export async function monitorTick(): Promise<Fire[]> {
       pb = null;
     }
 
-    // SBv2: re-validate the flip on the FRESH settled daily bars before committing —
-    // the scan is hours old. Exclude today's in-progress candle (the live retest tap
-    // is exactly what we're firing on; including it would self-invalidate). If the
-    // flip closed back inside / went stale / already retested on a completed bar, skip.
+    // SBv2 flip validity is fixed at the scan (off the settled daily close) — it can't
+    // change intraday because there's no new daily close during the session. We do NOT
+    // re-derive it from a fresh data fetch (that fetch can disagree with the scanner's
+    // and falsely invalidate a good flip). The real intraday guard is execute.ts's
+    // live price-vs-zone check (rejects a wrong-way entry if price has crossed the zone).
+    // We only guard against an ANCIENT candidate (a missed nightly scan).
     if (profile.entryKind === "flip_retest") {
-      let stillValid = false;
-      try {
-        const completed = bars.filter((b) => b.t.slice(0, 10) < today);
-        const { zones } = computeZones(completed, profile.zoneTimeframes[0].opts);
-        const fresh = detectFlips(completed, zones, DEFAULT_FLIP_OPTIONS);
-        const setup = c.setup as { flipped_boundary?: number } | null;
-        const wantBound = setup?.flipped_boundary ?? (direction === "call" ? z.top : z.bottom);
-        stillValid = fresh.some((f) => f.direction === direction && Math.abs(f.flippedBoundary - wantBound) / wantBound < 0.005);
-      } catch {
-        stillValid = false;
-      }
-      if (!stillValid) {
-        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "flip invalidated (stale) — skipped" });
+      const scanAgeDays = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${c.runDate}T00:00:00Z`)) / 86_400_000;
+      if (scanAgeDays > 3) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `flip scan ${Math.round(scanAgeDays)}d old (missed scan) — skipped` });
         continue;
       }
     }
