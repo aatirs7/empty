@@ -121,14 +121,18 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
             } else if (lastClose != null && zone.direction === "put" && lastClose > zone.top) {
               reason = `swing invalidated — daily close ${lastClose} back above the zone`;
             } else {
-              let target: number | null = null;
-              try {
-                target = classifyAndScore(bars, { bottom: zone.bottom, top: zone.top }, zone.direction, underlyingNow).safeTarget;
-              } catch {
-                target = null;
+              // Prefer the reaction-DB target persisted at entry (SBv2). Fall back to the
+              // playbook safe-target when absent (SBv1 — unchanged behavior).
+              let target: number | null = zone.predictedTarget;
+              if (target == null) {
+                try {
+                  target = classifyAndScore(bars, { bottom: zone.bottom, top: zone.top }, zone.direction, underlyingNow).safeTarget;
+                } catch {
+                  target = null;
+                }
               }
               if (target != null && ((zone.direction === "call" && underlyingNow >= target) || (zone.direction === "put" && underlyingNow <= target))) {
-                reason = `hit first target ${target} (underlying ${underlyingNow})`;
+                reason = `hit target ${target} (underlying ${underlyingNow})`;
               }
             }
           }
@@ -329,6 +333,12 @@ export async function monitorTick(): Promise<Fire[]> {
       // The daily flip state is re-validated below before the order is placed.
       if (prev === undefined) continue; // first sighting: establish baseline
       if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
+      // Zone-tap AUDIT notification (SBv2): fire the moment the flipped boundary is
+      // retested, for ALL watchlist setups — so alert timing/accuracy can be audited
+      // after the fact. tapCrossing is a one-tick edge, so this fires once per genuine
+      // crossing, not every minute while price rests at the zone.
+      await sendPush(`${c.symbol} zone tap ${cur}`, `enter ${direction.toUpperCase()} now`, "/positions").catch(() => {});
+      await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `zone tap ${cur} — enter ${direction.toUpperCase()}` }]);
       // Best-effort confirmation candle for the execution-quality score — NOT required
       // (the spec enters on the first clean retest tap itself).
       try {
@@ -385,47 +395,69 @@ export async function monitorTick(): Promise<Fire[]> {
         continue;
       }
     }
-    if (!pb || pb.score < profile.minScore) {
+    // SBv2 (flip_retest) enters MECHANICALLY on a valid first-retest tap: NO playbook
+    // score gate and NO adversarial sniper engine (per sniperbot-daily-swing-v2.md). It
+    // keeps only the spec's light gates: a valid DB target (reward/move large enough) +
+    // the news-against veto. SBv1/QQQ keep the score gate + sniper engine unchanged.
+    const mechanical = profile.entryKind === "flip_retest";
+    if (!pb) {
+      fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "could not score; skipped" });
+      continue;
+    }
+    if (!mechanical && pb.score < profile.minScore) {
       fires.push({
         symbol: c.symbol,
         direction,
         candidateId: c.id,
         price: cur,
         placed: false,
-        detail: pb ? `score ${pb.score}/100 < ${profile.minScore} (${pb.playbook}); skipped` : "could not score; skipped",
+        detail: `score ${pb.score}/100 < ${profile.minScore} (${pb.playbook}); skipped`,
       });
       continue;
     }
 
-    // SniperBot confidence engine: 3 code scores + adversarial review + catalyst
-    // check. Only setups that survive EVERY gate are promoted.
+    // Confidence engine (SBv1/QQQ) or mechanical flip vet (SBv2). Both use the reaction
+    // DB for numbers; neither lets the model produce a probability/target.
     let sniperConfidence = pb.score / 100;
     let sniperSummary = "";
     if (profile.confirmation.enabled) {
-      // Reaction-DB prediction (probability / expected move / targets from history).
       const marketAlign = ((marketCtx.spy + marketCtx.qqq) / 2) * (direction === "call" ? 1 : -1);
       const pred = await predict(c.symbol, cur, c.timeframe, direction, c.approach ?? "", marketAlign);
-      const isIntraday = profile.exit.style === "intraday"; // QQQ 0DTE — judge as a same-day scalp
-      const ev = evaluateSniper(pb, bars, direction, execScore, c.clearRunway, marketCtx, pred, isIntraday);
-      if (!ev.passed) {
-        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
-        continue;
+      if (mechanical) {
+        // Reward / "move large enough": require a reaction-DB target — no target means
+        // thin history or too small a projected move, so skip.
+        if (pred.targetMain == null) {
+          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — no DB target (move too small / thin history)" });
+          continue;
+        }
+        // Flip-aware news veto (fails open): skip only if fresh news contradicts the flip.
+        const cat = await checkCatalyst(c.symbol, 5, c.profileId, { direction });
+        if (cat.catalyst) {
+          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
+          continue;
+        }
+        if (cat.newsAgainst) {
+          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — news contradicts the flip: ${cat.newsSummary ?? ""}`.trim() });
+          continue;
+        }
+        sniperConfidence = Math.max(0, Math.min(1, pred.probability / 100));
+        const newsNote = cat.newsFor ? ` News supports it: ${cat.newsSummary ?? ""}.` : cat.newsSummary ? ` News: ${cat.newsSummary}.` : "";
+        sniperSummary = ` ${pred.reason} Target ${pred.targetMain}.${newsNote}${cat.checked ? "" : " (catalyst unchecked)"}`;
+      } else {
+        const isIntraday = profile.exit.style === "intraday"; // QQQ 0DTE — judge as a same-day scalp
+        const ev = evaluateSniper(pb, bars, direction, execScore, c.clearRunway, marketCtx, pred, isIntraday);
+        if (!ev.passed) {
+          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
+          continue;
+        }
+        const cat = await checkCatalyst(c.symbol, 5, c.profileId); // tap setups: plain scheduled catalyst check
+        if (cat.catalyst) {
+          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
+          continue;
+        }
+        sniperConfidence = ev.overall / 100;
+        sniperSummary = ` ${pred.reason} ${ev.summary}${cat.checked ? "" : " (catalyst unchecked)"}`;
       }
-      // Flip setups (SBv2) also get a flip-aware NEWS-CONTEXT read (does fresh news
-      // support or contradict the accepted breakout?); tap setups keep the plain
-      // scheduled-catalyst check. Both fail open.
-      const cat = await checkCatalyst(c.symbol, 5, c.profileId, profile.entryKind === "flip_retest" ? { direction } : undefined);
-      if (cat.catalyst) {
-        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
-        continue;
-      }
-      if (cat.newsAgainst) {
-        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — news contradicts the flip: ${cat.newsSummary ?? ""}`.trim() });
-        continue;
-      }
-      sniperConfidence = ev.overall / 100;
-      const newsNote = cat.newsFor ? ` News supports it: ${cat.newsSummary ?? ""}.` : cat.newsSummary ? ` News: ${cat.newsSummary}.` : "";
-      sniperSummary = ` ${pred.reason} ${ev.summary}${newsNote}${cat.checked ? "" : " (catalyst unchecked)"}`;
     }
 
     const zoneWord = direction === "call" ? "support" : "resistance";

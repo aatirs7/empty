@@ -44,8 +44,11 @@ export interface ManageSummary {
   actions: ManageAction[];
 }
 
-/** The zone a position was opened from (latest order -> proposal.zoneSetup), or null. */
-export async function zoneOfPosition(occSymbol: string): Promise<{ bottom: number; top: number; direction: "call" | "put" } | null> {
+/** The zone a position was opened from (latest order -> proposal.zoneSetup), or null.
+ *  `predictedTarget` is the reaction-DB target price persisted at entry (SBv2), when present. */
+export async function zoneOfPosition(
+  occSymbol: string,
+): Promise<{ bottom: number; top: number; direction: "call" | "put"; predictedTarget: number | null } | null> {
   const [ord] = await db
     .select()
     .from(orders)
@@ -54,9 +57,10 @@ export async function zoneOfPosition(occSymbol: string): Promise<{ bottom: numbe
     .limit(1);
   if (!ord?.proposalId) return null;
   const [prop] = await db.select().from(proposals).where(eq(proposals.id, ord.proposalId)).limit(1);
-  const zs = prop?.zoneSetup as ZoneSetup | null;
+  const zs = prop?.zoneSetup as (ZoneSetup & { predictedTarget?: number | null }) | null;
   if (!zs?.active_zone || (zs.direction !== "call" && zs.direction !== "put")) return null;
-  return { bottom: zs.active_zone.bottom, top: zs.active_zone.top, direction: zs.direction };
+  const predictedTarget = typeof zs.predictedTarget === "number" ? zs.predictedTarget : null;
+  return { bottom: zs.active_zone.bottom, top: zs.active_zone.top, direction: zs.direction, predictedTarget };
 }
 
 /** Most recent COMPLETED daily close of the underlying (excludes today's forming bar). */

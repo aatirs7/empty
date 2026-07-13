@@ -77,8 +77,19 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
   const ords = propIds.length ? await db.select().from(orders).where(inArray(orders.proposalId, propIds)) : [];
   const orderByProp = new Map(ords.map((o) => [o.proposalId, o]));
 
-  // Activity log (buys/sells/skips) for today.
+  // Activity log (buys/sells/skips/taps) for today.
   const acts = await db.select().from(activityLog).where(eq(activityLog.runDate, runDate)).orderBy(activityLog.createdAt);
+
+  // SBv2 flip funnel — why broken/accepted zones were NOT promoted to live flips
+  // (logged by the scanner into the scan run's marketContext). Geometry rejections;
+  // the liquidity/reward rejections show up below as monitor skips.
+  const [scanRun] = await db
+    .select({ ctx: researchRuns.marketContext })
+    .from(researchRuns)
+    .where(and(eq(researchRuns.model, "scan"), eq(researchRuns.runDate, runDate)))
+    .orderBy(desc(researchRuns.id))
+    .limit(1);
+  const flipFunnel = scanRun?.ctx?.match(/flip funnel — ([^.|]+)/i)?.[1]?.trim() ?? "";
 
   // Closed-today orders (exits with realized P&L).
   const soldToday = await db.select().from(orders).where(gte(orders.exitAt, dayStart)).orderBy(desc(orders.exitAt));
@@ -232,10 +243,25 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
   }
   L.push("");
 
+  // SBv2 flip funnel (scan-time geometry rejections)
+  if (flipFunnel) {
+    L.push(`## SBv2 scan funnel (zones not promoted to flips)`, "");
+    L.push(`Rejected at scan: ${flipFunnel}.`);
+    L.push(`_Liquidity/spread + reward-too-small rejections happen at contract selection and appear under "Setups considered but NOT taken" above._`, "");
+  }
+
+  // Zone-tap audit trail (SBv2): every watchlist tap, timestamped, for alert-accuracy review.
+  const taps = acts.filter((a) => a.kind === "tap");
+  if (taps.length) {
+    L.push(`## Zone taps (audit)`, "");
+    for (const t of taps) L.push(`- ${et(t.createdAt)} **${t.symbol ?? ""}** ${t.direction ?? ""} — ${t.detail ?? ""}`);
+    L.push("");
+  }
+
   // Decision timeline
   L.push(`## Buy / sell timeline`, "");
   if (buys.length + sells.length === 0) L.push("_No fills._");
-  for (const a of acts.filter((x) => x.kind !== "skip")) {
+  for (const a of acts.filter((x) => x.kind === "buy" || x.kind === "sell")) {
     L.push(`- ${et(a.createdAt)} **${a.kind.toUpperCase()}** ${a.symbol ?? ""} ${a.direction ?? ""} — ${a.detail ?? ""}`);
   }
   L.push("");

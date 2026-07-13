@@ -36,12 +36,28 @@ export interface FlipOptions {
 
 export const DEFAULT_FLIP_OPTIONS: FlipOptions = { maxSessionsSinceFlip: 2 };
 
+/** Why a broken/accepted zone was NOT promoted to a live flip (funnel audit).
+ *  `too_far` is applied downstream in buildFlipSetupsDetailed (distance filter). */
+export type FlipRejection = "wick_only" | "closed_back_inside" | "already_retested" | "stale" | "too_far";
+
+/** Human labels for the funnel line in the scan log / daily report. */
+export const FLIP_REJECTION_LABELS: Record<FlipRejection, string> = {
+  wick_only: "wick-through only (no acceptance)",
+  closed_back_inside: "closed back inside the zone",
+  already_retested: "first retest already happened",
+  stale: ">2 sessions since acceptance",
+  too_far: "price too far to retest soon",
+};
+
+type FlipCheck = { flip: Flip } | { reason: FlipRejection } | null;
+
 /**
- * Analyze one zone for a flip in the given direction. Returns the Flip if a valid,
- * not-yet-first-retested flip exists, else null. `bars` must be settled daily bars,
- * most recent last (exclude any in-progress candle before calling for a live re-check).
+ * Analyze one zone for a flip in the given direction. Returns `{ flip }` for a valid
+ * not-yet-first-retested flip, `{ reason }` when the zone broke/wicked but failed an
+ * invalidation (funnel audit), or `null` when the zone was never even approached (not
+ * a flip candidate). `bars` must be settled daily bars, most recent last.
  */
-function analyzeFlip(bars: Bar[], z: Zone, direction: "call" | "put", opts: FlipOptions): Flip | null {
+function analyzeFlip(bars: Bar[], z: Zone, direction: "call" | "put", opts: FlipOptions): FlipCheck {
   const lastIdx = bars.length - 1;
   const boundary = direction === "call" ? z.top : z.bottom;
   // "beyond" = accepted on the correct side of the WHOLE zone.
@@ -56,38 +72,63 @@ function analyzeFlip(bars: Bar[], z: Zone, direction: "call" | "put", opts: Flip
       break;
     }
   }
-  if (k === -1) return null; // never accepted (only wicked, or no break) → not a flip
+  if (k === -1) {
+    // No acceptance close. If price WICKED beyond recently without closing beyond,
+    // that's the spec's "wick-through only" rejection; otherwise it never approached.
+    const window = opts.maxSessionsSinceFlip + 1;
+    const wicked = (b: Bar) => (direction === "call" ? b.h > z.top : b.l < z.bottom);
+    for (let i = lastIdx; i >= Math.max(0, lastIdx - window); i--) {
+      if (wicked(bars[i]) && !beyond(bars[i].c)) return { reason: "wick_only" };
+    }
+    return null; // never approached — not a flip candidate
+  }
 
   const sessionsSinceFlip = lastIdx - k;
-  if (sessionsSinceFlip > opts.maxSessionsSinceFlip) return null; // stale
+  if (sessionsSinceFlip > opts.maxSessionsSinceFlip) return { reason: "stale" };
 
   // Inspect the candles AFTER acceptance for invalidations.
   for (let j = k + 1; j <= lastIdx; j++) {
-    // Closed back inside/through the zone against the flip → flip failed.
-    if (!beyond(bars[j].c)) return null;
-    // First retest already happened on a completed daily bar → we missed the live entry.
+    if (!beyond(bars[j].c)) return { reason: "closed_back_inside" };
     const tappedBoundary = direction === "call" ? bars[j].l <= z.top : bars[j].h >= z.bottom;
-    if (tappedBoundary) return null;
+    if (tappedBoundary) return { reason: "already_retested" };
   }
 
-  return { zone: { bottom: z.bottom, top: z.top }, direction, flippedBoundary: boundary, acceptedAt: bars[k].t, sessionsSinceFlip };
+  return { flip: { zone: { bottom: z.bottom, top: z.top }, direction, flippedBoundary: boundary, acceptedAt: bars[k].t, sessionsSinceFlip } };
+}
+
+export interface FlipDetection {
+  flips: Flip[];
+  rejections: Partial<Record<FlipRejection, number>>; // funnel tally (one per zone, most-informative)
 }
 
 /**
- * Detect every valid, not-yet-first-retested daily flip across the given zones.
- * A single zone can only flip one way at a time (price is on one side), so at most
- * one of {call, put} returns for each zone.
+ * Detect every valid, not-yet-first-retested daily flip across the given zones, and
+ * tally WHY the rest were rejected (funnel audit). A single zone can only flip one
+ * way at a time, so at most one of {call, put} promotes; the rejection recorded is the
+ * most informative of the two directions' checks (at most one per zone).
  */
-export function detectFlips(bars: Bar[], zones: Zone[], opts: FlipOptions = DEFAULT_FLIP_OPTIONS): Flip[] {
+export function detectFlipsDetailed(bars: Bar[], zones: Zone[], opts: FlipOptions = DEFAULT_FLIP_OPTIONS): FlipDetection {
   const flips: Flip[] = [];
+  const rejections: Partial<Record<FlipRejection, number>> = {};
   for (const z of zones) {
     const call = analyzeFlip(bars, z, "call", opts);
-    if (call) {
-      flips.push(call);
+    if (call && "flip" in call) {
+      flips.push(call.flip);
       continue;
     }
     const put = analyzeFlip(bars, z, "put", opts);
-    if (put) flips.push(put);
+    if (put && "flip" in put) {
+      flips.push(put.flip);
+      continue;
+    }
+    // Neither direction is a valid flip; record the most informative rejection reason.
+    const r = call && "reason" in call ? call : put && "reason" in put ? put : null;
+    if (r) rejections[r.reason] = (rejections[r.reason] ?? 0) + 1;
   }
-  return flips;
+  return { flips, rejections };
+}
+
+/** Thin wrapper — valid flips only (unchanged callers). */
+export function detectFlips(bars: Bar[], zones: Zone[], opts: FlipOptions = DEFAULT_FLIP_OPTIONS): Flip[] {
+  return detectFlipsDetailed(bars, zones, opts).flips;
 }

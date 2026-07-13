@@ -149,20 +149,24 @@ const SBV2: Profile = {
   confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.3 },
   requireClearRunway: false, // empty-space read is informational; flip validity + first-retest gate instead
   watchPerTimeframe: 3, // a symbol may carry more than one flipped zone awaiting a retest
-  minScore: 75,
+  minScore: 75, // retained for display/shadow only — the live flip_retest entry is MECHANICAL (no score gate)
   contract: {
+    // Cheap ~$0.30 far-OTM weeklies (owner: "$0.30 contracts set up to go to $3-5").
+    // Cheap ⇒ further OTM, so widen the strike window; the ask band admits ~$0.18-0.45.
     expiryKind: "friday", // nearest weekly ≥ the predicted 1-2 day hold (selectByEV horizon-matches)
-    otmPct: 8, // a 1-2 day move is smaller than a 1-2 week swing — don't reach as far OTM
+    otmPct: 25, // mega-cap ~$0.30 weeklies sit far OTM; reach far enough to find quoted strikes
     itmPct: 4,
-    priceFloor: 0.4,
-    priceIdeal: 0.8,
-    priceCap: 1.5,
-    liquiditySpread: 0.6,
+    priceFloor: 0.15,
+    priceIdeal: 0.3,
+    priceCap: 0.6, // "around $0.30" with headroom for expensive names where the nearest cheap strike quotes higher
+    liquiditySpread: 0.5, // (unused on the selectByEV path SBv2 takes; kept for consistency)
   },
-  caps: { perTradeBudget: 120, maxContracts: 1, maxOpenPositions: 10 },
-  // Swing exit mirrors SBv1's owner-tuned rule: ride to $2, swing-invalidation close,
-  // catastrophe floor ($0.15) only within 2 days of expiry. NO mid-swing hard stop.
-  exit: { style: "swing", targetPremium: 2.0, catastropheFloor: 0.15, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  caps: { perTradeBudget: 100, maxContracts: 3, maxOpenPositions: 10 }, // 2-3 contracts at ~$0.30
+  // Swing exit: sell when the UNDERLYING reaches the reaction-DB target (predict.targetMain,
+  // persisted at entry). NO $2 premium ride — the DB target drives the exit. Safeties kept:
+  // swing-invalidation (daily close back through the flipped zone) + a catastrophe floor
+  // ($0.10) only within 2 days of expiry. No mid-swing hard stop.
+  exit: { style: "swing", catastropheFloor: 0.1, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: false, // OFF until the owner enables it in settings (shadow-measured first)
   baselineSymbol: "SPY",
 };

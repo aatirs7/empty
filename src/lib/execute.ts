@@ -77,6 +77,10 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
 
   const direction = proposal.direction as "call" | "put";
   let resolved: ResolvedContract;
+  // Reaction-DB target(s) captured at entry so the swing exit can sell when the
+  // UNDERLYING reaches the projected target (SBv2). Null for the non-confirmation path.
+  let predictedTarget: number | null = null;
+  let predictedTargetSafe: number | null = null;
   if (profile.confirmation.enabled) {
     // Confirmation profiles (SniperBot, QQQ): pick by EXPECTED VALUE off the
     // reaction-DB prediction (highest-EV contract), not a plain price band.
@@ -86,6 +90,8 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     const spot = await getUnderlyingPrice(proposal.symbol);
     const tf = cand?.timeframe ?? "daily";
     const pred = await predict(proposal.symbol, spot, tf, direction, cand?.approach ?? "", 0);
+    predictedTarget = pred.targetMain;
+    predictedTargetSafe = pred.targetSafe;
     // HORIZON MATCH: the option must survive the expected time-to-target. Size the
     // minimum expiry to the predicted hold (+25% margin) so we never buy a 1-DTE
     // contract for a multi-day move. Sub-day holds (intraday 0DTE) keep a 0 floor —
@@ -95,7 +101,9 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     const minDaysToExpiry = holdDays >= 1 ? Math.ceil(holdDays * 1.25) : 0;
     // Per-timeframe expiry: QQQ 15m/1h → same-day 0DTE, 4h → next-day swing.
     const contractCfg = contractForTimeframe(profile, tf);
-    const sel = await selectByEV(proposal.symbol, direction, spot, pred, contractCfg, minDaysToExpiry);
+    // SBv2 sells at the DB target, so the strike must be reachable by it (ITM/ATM at
+    // target) — otherwise the cheap OTM contract can't deliver the intended move.
+    const sel = await selectByEV(proposal.symbol, direction, spot, pred, contractCfg, minDaysToExpiry, profile.entryKind === "flip_retest");
     if (!sel.primary) {
       throw new ExecuteError(
         `No contract fits ${proposal.symbol}'s horizon (~${holdDays.toFixed(1)}d to target; needs expiry ≥ ${minDaysToExpiry}d in the price band) — rejected.`,
@@ -185,8 +193,13 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     })
     .returning({ id: orders.id });
 
-  // Order is placed -> proposal moves to "approved" (then "filled" on fill).
-  await db.update(proposals).set({ status: "approved" }).where(eq(proposals.id, proposalId));
+  // Order is placed -> proposal moves to "approved" (then "filled" on fill). Persist the
+  // reaction-DB target into the zoneSetup jsonb (no migration) so the swing exit can sell
+  // when the underlying reaches it. Only when we actually have a DB target.
+  const zsBlob = (proposal.zoneSetup as Record<string, unknown> | null) ?? {};
+  const zoneSetupUpdate =
+    predictedTarget != null ? { zoneSetup: { ...zsBlob, predictedTarget, predictedTargetSafe } } : {};
+  await db.update(proposals).set({ status: "approved", ...zoneSetupUpdate }).where(eq(proposals.id, proposalId));
 
   // Poll for the fill.
   const final = await broker.waitForFill(alpacaOrder.id);

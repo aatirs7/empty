@@ -18,7 +18,7 @@
  */
 import type { Bar } from "./alpaca";
 import { computeZones, type Zone, type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
-import { detectFlips, DEFAULT_FLIP_OPTIONS } from "./flips";
+import { detectFlipsDetailed, DEFAULT_FLIP_OPTIONS, type FlipRejection } from "./flips";
 
 export interface ZoneSetup {
   active_zone: { bottom: number; top: number } | null; // no demand/supply label
@@ -172,13 +172,19 @@ export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRA
 const FLIP_MAX_DISTANCE_PCT = 12;
 const FLIP_RUNWAY_PCT = 4;
 
+export interface FlipBuild {
+  setups: ZoneSetup[];
+  rejections: Partial<Record<FlipRejection, number>>; // funnel: broke/wicked but not promoted
+}
+
 /**
- * Build up to `limit` tradeable FLIP setups (SBv2): a daily zone that broke and
- * ACCEPTED through, flipped role, and is awaiting its FIRST retest of the flipped
- * boundary. Same `bars → ZoneSetup[]` shape as buildZoneSetups so the scanner loop
- * is unchanged; direction/edge come from the flip, never from a stateless side test.
+ * Build up to `limit` tradeable FLIP setups (SBv2) AND the rejection funnel: a daily
+ * zone that broke and ACCEPTED through, flipped role, awaiting its FIRST retest of the
+ * flipped boundary. Same `bars → ZoneSetup[]` shape as buildZoneSetups; direction/edge
+ * come from the flip, never a stateless side test. `rejections` tallies why the rest
+ * were dropped (wick-only, closed back inside, already retested, >2 sessions, too far).
  */
-export function buildFlipSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS, limit = 1): ZoneSetup[] {
+export function buildFlipSetupsDetailed(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS, limit = 1): FlipBuild {
   const { zones, lastBar } = computeZones(bars, opts.zone);
   const price = lastBar.c;
   const empty: ZoneSetup = {
@@ -194,13 +200,19 @@ export function buildFlipSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STR
     price,
     setup_kind: "flip",
   };
-  if (zones.length === 0) return [empty];
+  if (zones.length === 0) return { setups: [empty], rejections: {} };
 
-  const flips = detectFlips(bars, zones, DEFAULT_FLIP_OPTIONS)
+  const { flips: rawFlips, rejections } = detectFlipsDetailed(bars, zones, DEFAULT_FLIP_OPTIONS);
+  const tally: Partial<Record<FlipRejection, number>> = { ...rejections };
+  const flips = rawFlips
     .map((f) => ({ ...f, distPct: (Math.abs(price - f.flippedBoundary) / price) * 100 }))
-    .filter((f) => f.distPct <= FLIP_MAX_DISTANCE_PCT)
+    .filter((f) => {
+      if (f.distPct <= FLIP_MAX_DISTANCE_PCT) return true;
+      tally.too_far = (tally.too_far ?? 0) + 1; // price ran too far to plausibly retest soon
+      return false;
+    })
     .sort((a, b) => a.distPct - b.distPct);
-  if (flips.length === 0) return [empty];
+  if (flips.length === 0) return { setups: [empty], rejections: tally };
 
   const band = price * (FLIP_RUNWAY_PCT / 100);
   const out: ZoneSetup[] = [];
@@ -233,5 +245,10 @@ export function buildFlipSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STR
     });
     if (out.length >= limit) break;
   }
-  return out.length ? out : [empty];
+  return { setups: out.length ? out : [empty], rejections: tally };
+}
+
+/** Thin wrapper — flip setups only (unchanged callers). */
+export function buildFlipSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS, limit = 1): ZoneSetup[] {
+  return buildFlipSetupsDetailed(bars, opts, limit).setups;
 }

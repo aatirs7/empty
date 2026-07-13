@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getLatestScan } from "@/lib/queries";
+import { getLatestScan, getTodayMonitorTrades } from "@/lib/queries";
 import { PageTitle, Empty } from "@/components/ui";
 import { companyName } from "@/lib/format";
 import { getProfile } from "@/lib/profiles";
@@ -29,6 +29,8 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
   const byScore = (a: { score: number | null }, b: { score: number | null }) => (b.score ?? -1) - (a.score ?? -1);
   const valid = scan.candidates.filter((c) => c.setupValid).sort(byScore);
   const watching = scan.candidates.filter((c) => !c.setupValid).sort(byScore);
+  // Tapped today = the profile's live monitor trades (same funnel value Today shows).
+  const tappedToday = (await getTodayMonitorTrades(profileId)).filter((p) => p.strategy !== "no_trade").length;
 
   return (
     <div className="space-y-5">
@@ -38,11 +40,11 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
 
       <p className="text-center text-sm text-muted leading-relaxed">
         {getProfile(profileId).description} Checked{" "}
-        <span className="text-foreground font-medium">{scan.candidates.length}</span> names,{" "}
+        <span className="text-foreground font-medium">{scan.candidates.length}</span> names ·{" "}
         <span className="text-foreground font-medium">
-          {valid.length} {valid.length === 1 ? "ready setup" : "ready setups"}
-        </span>
-        .
+          {valid.length} valid setup{valid.length === 1 ? "" : "s"}
+        </span>{" "}
+        · <span className="text-foreground font-medium">{tappedToday}</span> tapped today.
       </p>
 
       {profileId === "qqq_0dte" && <QqqPrediction />}

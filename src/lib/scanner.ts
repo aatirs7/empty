@@ -8,7 +8,8 @@ import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "../db";
 import { universe as universeTable, candidates as candidatesTable, researchRuns } from "../db/schema";
 import { getMultiStockBars, getIntradayBars, type Bar } from "./alpaca";
-import { buildZoneSetups, buildFlipSetups } from "./strategy";
+import { buildZoneSetups, buildFlipSetupsDetailed } from "./strategy";
+import { FLIP_REJECTION_LABELS, type FlipRejection } from "./flips";
 import { classifyAndScore } from "./playbook";
 import { activeProfiles, type Profile, type ZoneTimeframe } from "./profiles";
 import { ALPACA_TF, SCAN_LOOKBACK_MIN } from "./timeframes";
@@ -33,6 +34,17 @@ export interface ScanResult {
   scanned: number;
   candidates: number;
   validSetups: number;
+  rejections?: Partial<Record<FlipRejection, number>>; // flip profiles only (SBv2 funnel)
+}
+
+/** One-line funnel string for the scan log, e.g. "wick-through only (no acceptance) 12, ...". */
+export function flipFunnelLine(rejections?: Partial<Record<FlipRejection, number>>): string {
+  if (!rejections) return "";
+  const parts = Object.entries(rejections)
+    .filter(([, n]) => (n ?? 0) > 0)
+    .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
+    .map(([k, n]) => `${FLIP_REJECTION_LABELS[k as FlipRejection]} ${n}`);
+  return parts.join(", ");
 }
 
 /** Scan one timeframe (daily batched, 4H per-symbol) → profile+timeframe candidates. */
@@ -41,7 +53,7 @@ async function scanTimeframe(
   ztf: ZoneTimeframe,
   symbols: string[],
   runDate: string,
-): Promise<{ candidates: number; valid: number }> {
+): Promise<{ candidates: number; valid: number; rejections: Partial<Record<FlipRejection, number>> }> {
   const barsBySymbol: Record<string, Bar[]> = {};
   if (ztf.timeframe === "daily") {
     for (let i = 0; i < symbols.length; i += CHUNK) {
@@ -63,14 +75,21 @@ async function scanTimeframe(
   const strat = { ...profile.strategy, zone: ztf.opts };
   const watch = profile.watchPerTimeframe ?? 1; // nearest N zones per symbol/tf
   const rows: (typeof candidatesTable.$inferInsert)[] = [];
+  const rejections: Partial<Record<FlipRejection, number>> = {}; // flip funnel tally
   for (const sym of symbols) {
     const bars = barsBySymbol[sym];
     if (!bars || bars.length < 60) continue;
     let setups;
     try {
-      // SBv2 builds daily FLIP setups (broke + accepted, awaiting first retest);
-      // all other profiles use the stateless tap builder.
-      setups = profile.setupKind === "flip" ? buildFlipSetups(bars, strat, watch) : buildZoneSetups(bars, strat, watch);
+      // SBv2 builds daily FLIP setups (broke + accepted, awaiting first retest) and
+      // tallies WHY zones were rejected; other profiles use the stateless tap builder.
+      if (profile.setupKind === "flip") {
+        const built = buildFlipSetupsDetailed(bars, strat, watch);
+        setups = built.setups;
+        for (const [k, n] of Object.entries(built.rejections)) rejections[k as FlipRejection] = (rejections[k as FlipRejection] ?? 0) + (n ?? 0);
+      } else {
+        setups = buildZoneSetups(bars, strat, watch);
+      }
     } catch {
       continue;
     }
@@ -114,7 +133,7 @@ async function scanTimeframe(
     .where(and(eq(candidatesTable.runDate, runDate), eq(candidatesTable.profileId, profile.id), eq(candidatesTable.timeframe, ztf.timeframe)));
   if (rows.length) await db.insert(candidatesTable).values(rows);
 
-  return { candidates: rows.length, valid: rows.filter((r) => r.setupValid).length };
+  return { candidates: rows.length, valid: rows.filter((r) => r.setupValid).length, rejections };
 }
 
 export async function scanProfile(profile: Profile, runDate: string): Promise<ScanResult> {
@@ -129,12 +148,14 @@ export async function scanProfile(profile: Profile, runDate: string): Promise<Sc
     .where(and(eq(candidatesTable.runDate, runDate), eq(candidatesTable.profileId, profile.id), notInArray(candidatesTable.timeframe, keepTfs)));
   let candidates = 0;
   let validSetups = 0;
+  const rejections: Partial<Record<FlipRejection, number>> = {};
   for (const ztf of profile.zoneTimeframes) {
     const r = await scanTimeframe(profile, ztf, symbols, runDate);
     candidates += r.candidates;
     validSetups += r.valid;
+    for (const [k, n] of Object.entries(r.rejections)) rejections[k as FlipRejection] = (rejections[k as FlipRejection] ?? 0) + (n ?? 0);
   }
-  return { ...base, candidates, validSetups };
+  return { ...base, candidates, validSetups, rejections: profile.setupKind === "flip" ? rejections : undefined };
 }
 
 export async function runScan(runDate = new Date().toISOString().slice(0, 10)): Promise<ScanResult[]> {
@@ -146,13 +167,18 @@ export async function runScan(runDate = new Date().toISOString().slice(0, 10)): 
   const totalScanned = results.reduce((s, r) => s + r.scanned, 0);
   const totalValid = results.reduce((s, r) => s + r.validSetups, 0);
   const perProfile = results.map((r) => `${r.profileId}: ${r.validSetups}/${r.candidates}`).join(", ");
+  // Flip funnel (SBv2): why broken/accepted zones were NOT promoted to live flips.
+  const funnels = results
+    .map((r) => (r.rejections && flipFunnelLine(r.rejections) ? `${r.profileId} flip funnel — ${flipFunnelLine(r.rejections)}` : ""))
+    .filter(Boolean)
+    .join(" | ");
 
   // Log the scan as a run so it shows on the Log page with its time.
   await db.insert(researchRuns).values({
     runDate,
     status: "complete",
     model: "scan",
-    marketContext: `Scanned ${totalScanned} names across ${results.length} profiles — ${totalValid} live setups (${perProfile}).`,
+    marketContext: `Scanned ${totalScanned} names across ${results.length} profiles — ${totalValid} live setups (${perProfile}).${funnels ? ` ${funnels}.` : ""}`,
     searchCount: 0,
     inputTokens: 0,
     outputTokens: 0,

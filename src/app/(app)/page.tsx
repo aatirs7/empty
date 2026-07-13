@@ -23,10 +23,11 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const openTrades = trades.filter((p) => p.status !== "closed");
   const closedTrades = trades.filter((p) => p.status === "closed");
   const cands = scan?.candidates ?? [];
+  const readyCount = cands.filter((c) => c.setupValid).length; // full count (funnel), NOT the top-5 slice
   const validSetups = cands
     .filter((c) => c.setupValid)
     .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
-    .slice(0, 5);
+    .slice(0, 5); // rendered list only — the count above is uncapped so Today matches Setups
   // When nothing is tapped/ready, still show the nearest zones approaching (so a
   // profile like QQQ 0DTE — which fires intraday, not from a daily-scan tap —
   // isn't a blank page).
@@ -47,17 +48,12 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
 
       <p className="text-center text-sm text-muted leading-relaxed">
         {stripDash(profile.description)}{" "}
-        {trades.length > 0 ? (
-          <span className="text-foreground font-medium">
-            {trades.length} trade{trades.length === 1 ? "" : "s"} today — {openTrades.length} open, {closedTrades.length}{" "}
-            closed.
-          </span>
-        ) : (
-          <span className="text-muted">
-            Watching <span className="text-foreground font-medium">{cands.length}</span> names,{" "}
-            <span className="text-foreground font-medium">{validSetups.length}</span> ready.
-          </span>
-        )}
+        <span className="text-muted">
+          Checked <span className="text-foreground font-medium">{cands.length}</span> names ·{" "}
+          <span className="text-foreground font-medium">{readyCount}</span> valid setup{readyCount === 1 ? "" : "s"} ·{" "}
+          <span className="text-foreground font-medium">{trades.length}</span> tapped today
+          {trades.length > 0 ? ` (${openTrades.length} open, ${closedTrades.length} closed)` : ""}.
+        </span>
       </p>
 
       <Link href={`/setups?profile=${profileId}`} className="block text-center text-xs text-accent">

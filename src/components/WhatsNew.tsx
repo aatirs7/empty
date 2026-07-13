@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-13-v10";
+const VERSION = "2026-07-13-v11";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "SBv2 tuned: tap alerts, mechanical entry, cheap contracts",
+    body: "Four SBv2 upgrades from the strategy owner. (1) Zone-tap alerts: the moment ANY SBv2 watchlist stock retests its flipped level, you get a push — \"NVDA zone tap 134.32 — enter PUT now\" — so alert timing and accuracy can be audited after the fact. (2) Mechanical entry: SBv2 now enters on that first clean retest tap directly (no extra score gate), matching the reset spec — it still skips on a news headline that contradicts the breakout. (3) Cheap contracts: it buys 2-3 far-OTM ~$0.30 contracts, sized and strike-picked so a move to the historical-database target can multiply them, and sells when the underlying reaches that target (not a fixed ratio). Names too expensive for a cheap contract that can actually reach the target are skipped. (4) The Today and Setups screens now show the same funnel — checked names → valid setups → tapped today — instead of two different \"ready\" numbers. The scan also logs why zones weren't promoted to flips (wick-only, closed back inside, already retested, too old).",
+  },
   {
     title: "SBv2: a second SniperBot, running in parallel",
     body: "Farrukh reset SniperBot's entry logic, so instead of replacing the current one we're running BOTH side by side to see which wins. SBv1 is exactly today's SniperBot (unchanged). SBv2 is the new idea: it waits for a daily order block to be BROKEN and ACCEPTED through (the zone flips from resistance to support, or vice-versa), then buys the FIRST pullback that retests the flipped level — a 1-2 day swing. Same watchlist, its own separate $1000 paper account, its own log / P&L / scorecard, never blended. Every page's tab bar now shows SBv1 · SBv2 · QQQ, and the daily report compares SBv1 vs SBv2 head-to-head each day (plus a plain SPY benchmark). SBv2 starts in shadow-measurement mode — it's tracked but not auto-trading until it's switched on.",

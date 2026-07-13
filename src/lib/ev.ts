@@ -64,6 +64,12 @@ export async function selectByEV(
   pred: Prediction,
   contract: ContractConfig,
   minDaysToExpiry = 0,
+  // When true, only consider strikes the projected target actually REACHES (call:
+  // strike ≤ target, put: strike ≥ target) so the contract is ITM/ATM at the target
+  // and the "sell at the DB target" exit genuinely profits. Off by default (SBv1/QQQ
+  // unchanged); SBv2 turns it on. Prevents picking an ultra-deep-OTM strike whose
+  // linear-delta EV is overstated but which stays worthless at the target.
+  requireTargetReachable = false,
 ): Promise<EvSelection> {
   const target = pred.targetMain ?? (direction === "call" ? spot * 1.02 : spot * 0.98);
   const P = Math.max(0.1, Math.min(0.95, pred.probability / 100));
@@ -89,8 +95,15 @@ export async function selectByEV(
   // Strike window around spot from the profile.
   const lo = direction === "call" ? spot * (1 - contract.itmPct / 100) : spot * (1 - contract.otmPct / 100);
   const hi = direction === "call" ? spot * (1 + contract.otmPct / 100) : spot * (1 + contract.itmPct / 100);
+  // Target reachability (SBv2): keep only strikes the target brings ITM/ATM.
+  const reachable = (strike: number) => !requireTargetReachable || (direction === "call" ? strike <= target : strike >= target);
   const pool: OptionContract[] = contracts.filter(
-    (c) => c.expiration_date === expiry && Number(c.strike_price) >= lo && Number(c.strike_price) <= hi && c.tradable !== false,
+    (c) =>
+      c.expiration_date === expiry &&
+      Number(c.strike_price) >= lo &&
+      Number(c.strike_price) <= hi &&
+      reachable(Number(c.strike_price)) &&
+      c.tradable !== false,
   );
   if (!pool.length) return { primary: null, aggressive: null, conservative: null };
 

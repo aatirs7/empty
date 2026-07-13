@@ -9,7 +9,7 @@ import { activityLog } from "../db/schema";
 export interface ActivityEntry {
   profileId?: string | null;
   symbol?: string | null;
-  kind: "buy" | "sell" | "skip";
+  kind: "buy" | "sell" | "skip" | "tap"; // "tap" = a zone-tap audit event (not a trade decision)
   direction?: string | null;
   price?: number | null;
   candidateId?: number | null;
