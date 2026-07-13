@@ -150,6 +150,19 @@ Follow-ups on the shipped SBv2, all branching on `profileId`/`entryKind` so **SB
 - **Flip funnel logging** (`flips.ts` `detectFlipsDetailed` + `FLIP_REJECTION_LABELS`, `strategy.ts` `buildFlipSetupsDetailed`, `scanner.ts`): scan tallies WHY zones weren't promoted (wick_only / closed_back_inside / already_retested / stale / too_far) into the scan run's `marketContext`; daily report surfaces it as "SBv2 scan funnel". Liquidity/reward rejections still log as monitor skips (the two together = full funnel).
 - **Display fix**: Today capped its "ready" count at `.slice(0,5)` while Setups showed the uncapped 48 — both now show the same funnel: "Checked N names · V valid setups · T tapped today" (`page.tsx` `readyCount`; `setups/page.tsx` loads `getTodayMonitorTrades` for T).
 
+### SBv2 entry bugs fixed (2026-07-13, market-hours) — CRITICAL
+Two stacked bugs meant SBv2 had NEVER placed a trade despite firing tap alerts:
+1. **False flip invalidation** (`monitor.ts`): the monitor re-derived the flip from a fresh `getStockBars` fetch that disagreed with the scanner's `getMultiStockBars` data → every tap skipped as "flip invalidated (stale)". Daily flip validity can't change intraday (no new close), so the re-derivation was removed; kept only a >3d-old-scan guard. execute.ts's live price-vs-zone check remains the wrong-way safety.
+2. **Tick timeout** (`monitor.ts`): the 40s catalyst/news web-search call ran on the every-minute hot path; when several names tapped in one tick (AMD+SBUX+DELL) it blew the 60s `maxDuration` → nothing committed. REMOVED the catalyst call from SBv2's mechanical path (news-vet belongs in the nightly scan — TODO). Also dropped the dead `confirmEntry` call from the flip entry.
+- **Notifications reworked** (owner ask): tap push now says "SYM zone tap PRICE — DIR checking…" (not "enter now"); a SECOND push reports the outcome — "Bought …" (executeProposal) or "SYM not entered — DIR blocked — <why>" via `notifyBlocked` + `friendlyBlock` (no cheap contract that reaches target / position cap / wrong way / market closed).
+- **Setups cards** (`setups/page.tsx` + `setup/[id]`): CALL/PUT badge + live tap time ("Tapped 3:37 PM" / "Awaiting retest") from `getCandidateTaps` (reads the `tap` activity rows).
+
+### QQQ 0DTE loss fix (2026-07-13) — don't touch SBv1/SBv2
+QQQ lost -$181 (1-for-12) trading ~50% coin-flip setups that can't beat spread+theta on 0DTE. Fixes (per-profile, QQQ-only):
+- `Profile.minProbability` (QQQ=60): HARD floor on the reaction-DB hit rate, gated in `monitor.ts` right after `predict` (`pred.probability < minProbability` → skip "coin flip"). SBv1/SBv2 leave it unset → unchanged.
+- `Profile.netContractCosts` (QQQ=true): `selectByEV` gains a `netCosts` param — subtracts the round-trip SPREAD (ask−bid; was only netting theta, never the exit spread) from both the win and the miss, and REJECTS (no contract) if the best EV is still ≤0 after spread+theta. So the expected move must clear the round-trip cost or it's no trade. execute.ts passes `profile.netContractCosts===true`; SBv1/SBv2 pass false → unchanged.
+- Positions page: **Today / All-time toggle** on the Closed tab (`PositionsView` `ClosedView`) — realized P&L + trade list filter by ET date.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.

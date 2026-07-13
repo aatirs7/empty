@@ -95,6 +95,14 @@ export interface Profile {
   watchPerTimeframe?: number; // how many nearest zones to watch per symbol/timeframe
   // (default 1). Single-ticker profiles (QQQ) watch several levels above+below price.
   minScore: number; // playbook/confidence gate
+  // HARD floor on the reaction-DB hit rate (%). Below this = no trade, full stop. Set
+  // for 0DTE where a ~50% coin flip loses to spread+theta regardless of direction.
+  // Undefined = no extra floor (SBv1/SBv2 unchanged).
+  minProbability?: number;
+  // Require the selected contract's EXPECTED VALUE to be net-positive AFTER the
+  // round-trip spread (+ theta over the hold). If nothing clears the cost, no trade.
+  // On for 0DTE (spread is a big fraction of a $0.40 contract); off elsewhere.
+  netContractCosts?: boolean;
   contract: ContractConfig;
   caps: ProfileCaps;
   exit: ExitConfig;
@@ -186,6 +194,11 @@ const QQQ_0DTE: Profile = {
   requireClearRunway: false, // intraday zones sit close; the confirmation candle gates instead
   watchPerTimeframe: 4, // single ticker — watch the nearest 4 levels per timeframe, not 1
   minScore: 55, // 0DTE playbook score gate — the 80 (weekly) gate blocked all QQQ setups
+  // 0DTE bleeds on coin-flip setups: a ~50% DB hit rate can't overcome spread + same-day
+  // theta. HARD-floor the DB probability at 60 and require the contract's EV to clear the
+  // round-trip cost before trading. If the DB says ~50%, the correct action is NO trade.
+  minProbability: 60,
+  netContractCosts: true,
   contract: {
     expiryKind: "zeroDte", // default; the 4H swing tf overrides to oneDay
     otmPct: 1.5, // 0DTE wants near-the-money to have any delta

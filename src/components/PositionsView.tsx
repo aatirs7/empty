@@ -189,21 +189,45 @@ function OpenView({ data, closing, onClose }: { data: Data | null; closing: stri
 }
 
 function ClosedView({ closed }: { closed: ClosedData | null }) {
+  const [period, setPeriod] = useState<"today" | "all">("all");
   if (!closed) return <p className="text-sm text-muted text-center py-8">Loading…</p>;
   if (!closed.trades.length) return <p className="text-sm text-muted text-center py-12">No closed trades yet.</p>;
 
+  // Today = the trade's exit landed on today's date in ET.
+  const todayET = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York" });
+  const isToday = (d: string | null) => (d ? new Date(d).toLocaleDateString("en-US", { timeZone: "America/New_York" }) === todayET : false);
+  const trades = period === "today" ? closed.trades.filter((t) => isToday(t.exitAt)) : closed.trades;
+  const realized = trades.reduce((s, t) => s + (t.realizedPl != null ? Number(t.realizedPl) : 0), 0);
+
   return (
     <div className="space-y-3">
-      <div className="bg-panel border border-border rounded-2xl p-5 text-center lg:p-6">
-        <p className="text-xs text-muted">Realized P&amp;L (closed trades)</p>
-        <p className={`text-3xl font-bold num mt-1 ${closed.realized >= 0 ? "text-up" : "text-down"}`}>
-          {closed.realized >= 0 ? "+" : ""}
-          {usd(closed.realized)}
-        </p>
+      {/* Today / All-time toggle */}
+      <div className="grid grid-cols-2 gap-1 bg-panel-2 border border-border rounded-2xl p-1">
+        {(["today", "all"] as const).map((p) => (
+          <button
+            key={p}
+            onClick={() => setPeriod(p)}
+            className={`rounded-xl py-1.5 text-sm font-medium transition-colors ${period === p ? "bg-panel text-foreground shadow-sm" : "text-muted"}`}
+          >
+            {p === "today" ? "Today" : "All time"}
+          </button>
+        ))}
       </div>
 
+      <div className="bg-panel border border-border rounded-2xl p-5 text-center lg:p-6">
+        <p className="text-xs text-muted">Realized P&amp;L · {period === "today" ? "today" : "all time"}</p>
+        <p className={`text-3xl font-bold num mt-1 ${realized >= 0 ? "text-up" : "text-down"}`}>
+          {realized >= 0 ? "+" : ""}
+          {usd(realized)}
+        </p>
+        <p className="text-xs text-muted num mt-1">{trades.length} trade{trades.length === 1 ? "" : "s"}</p>
+      </div>
+
+      {trades.length === 0 ? (
+        <p className="text-sm text-muted text-center py-12">No trades closed today.</p>
+      ) : (
       <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3">
-        {closed.trades.map((t) => {
+        {trades.map((t) => {
           const occ = t.contractSymbol ? parseOcc(t.contractSymbol) : null;
           const company = occ ? companyName(occ.underlying) : t.contractSymbol ?? "—";
           const dir = (t.direction ?? occ?.type) === "call" ? "up" : "down";
@@ -241,6 +265,7 @@ function ClosedView({ closed }: { closed: ClosedData | null }) {
           );
         })}
       </div>
+      )}
     </div>
   );
 }

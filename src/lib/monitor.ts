@@ -422,6 +422,13 @@ export async function monitorTick(): Promise<Fire[]> {
     if (profile.confirmation.enabled) {
       const marketAlign = ((marketCtx.spy + marketCtx.qqq) / 2) * (direction === "call" ? 1 : -1);
       const pred = await predict(c.symbol, cur, c.timeframe, direction, c.approach ?? "", marketAlign);
+      // HARD probability floor (QQQ 0DTE): a ~50% coin flip loses to spread + same-day
+      // theta, so below the floor the correct action is NO trade. Only profiles that set
+      // minProbability are affected (SBv1/SBv2 leave it unset → unchanged).
+      if (profile.minProbability != null && pred.probability < profile.minProbability) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — probability ${Math.round(pred.probability)}% < ${profile.minProbability}% floor (coin flip)` });
+        continue;
+      }
       if (mechanical) {
         // Reward / "move large enough": require a reaction-DB target — no target means
         // thin history or too small a projected move, so skip. The news/catalyst vet is

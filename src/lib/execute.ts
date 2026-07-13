@@ -102,8 +102,18 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     // Per-timeframe expiry: QQQ 15m/1h → same-day 0DTE, 4h → next-day swing.
     const contractCfg = contractForTimeframe(profile, tf);
     // SBv2 sells at the DB target, so the strike must be reachable by it (ITM/ATM at
-    // target) — otherwise the cheap OTM contract can't deliver the intended move.
-    const sel = await selectByEV(proposal.symbol, direction, spot, pred, contractCfg, minDaysToExpiry, profile.entryKind === "flip_retest");
+    // target). QQQ 0DTE nets the round-trip spread + theta and rejects if nothing clears
+    // the cost. Both flags are per-profile so SBv1's selection is unchanged.
+    const sel = await selectByEV(
+      proposal.symbol,
+      direction,
+      spot,
+      pred,
+      contractCfg,
+      minDaysToExpiry,
+      profile.entryKind === "flip_retest",
+      profile.netContractCosts === true,
+    );
     if (!sel.primary) {
       throw new ExecuteError(
         `No contract fits ${proposal.symbol}'s horizon (~${holdDays.toFixed(1)}d to target; needs expiry ≥ ${minDaysToExpiry}d in the price band) — rejected.`,

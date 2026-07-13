@@ -70,6 +70,11 @@ export async function selectByEV(
   // unchanged); SBv2 turns it on. Prevents picking an ultra-deep-OTM strike whose
   // linear-delta EV is overstated but which stays worthless at the target.
   requireTargetReachable = false,
+  // When true, net the ROUND-TRIP SPREAD (buy at ask, sell at bid) into every gain/loss
+  // and REJECT (return no contract) if the best expected value is still non-positive
+  // after spread + theta. On for 0DTE (spread is a big fraction of a $0.40 contract);
+  // off elsewhere (SBv1/SBv2 unchanged).
+  netCosts = false,
 ): Promise<EvSelection> {
   const target = pred.targetMain ?? (direction === "call" ? spot * 1.02 : spot * 0.98);
   const P = Math.max(0.1, Math.min(0.95, pred.probability / 100));
@@ -122,9 +127,13 @@ export async function selectByEV(
     // Second-order price estimate at the target, less theta decay over the hold.
     const est = ask + delta * move + 0.5 * gamma * move * move + theta * holdDays;
     const valueAtTarget = Math.max(0, est);
-    const gain = valueAtTarget - ask;
+    // Round-trip spread cost (buy at ask, sell at bid). netCosts subtracts it from BOTH
+    // the win (you exit at the bid, not fair value) and the loss (you still cross it).
+    const bid = s?.bid && s.bid > 0 ? s.bid : null;
+    const spread = netCosts ? (bid != null ? Math.max(0, ask - bid) : ask * 0.15) : 0;
+    const gain = valueAtTarget - spread - ask;
     const gainPct = gain / ask;
-    const lossIfMiss = -ask * 0.5; // approximate downside if the move fails
+    const lossIfMiss = -ask * 0.5 - spread; // downside if the move fails (+ exit spread)
     const evPct = (P * gain + (1 - P) * lossIfMiss) / ask;
     if (!Number.isFinite(evPct)) continue;
     scored.push({ occ: c.symbol, strike, expiry, ask: Math.round(ask * 100) / 100, delta: Math.round(delta * 100) / 100, gainPct: Math.round(gainPct * 100) / 100, evPct: Math.round(evPct * 100) / 100 });
@@ -134,5 +143,8 @@ export async function selectByEV(
   const byEv = [...scored].sort((a, b) => b.evPct - a.evPct);
   const byGain = [...scored].sort((a, b) => b.gainPct - a.gainPct);
   const byDelta = [...scored].sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  // Cost gate: if the best contract still has non-positive EV after spread + theta, the
+  // expected move doesn't clear the round-trip cost → NO trade (reject).
+  if (netCosts && (byEv[0]?.evPct ?? -1) <= 0) return { primary: null, aggressive: null, conservative: null };
   return { primary: byEv[0], aggressive: byGain[0], conservative: byDelta[0] };
 }
