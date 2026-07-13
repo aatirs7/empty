@@ -28,6 +28,7 @@ function friendlyReason(detail: string): string {
   if (s.includes("risk/reward")) return "poor risk/reward";
   if (s.includes("too small")) return "expected move too small";
   if (s.includes("score")) return "quality score too low";
+  if (s.includes("news contradicts")) return "news contradicts the flip";
   if (s.includes("catalyst")) return "earnings/Fed catalyst nearby";
   if (s.includes("rarely respected")) return "zone rarely respected historically";
   if (s.includes("thin history")) return "thin history at the level";

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { usd, parseOcc, companyName, etDateTime, daysUntil } from "@/lib/format";
+import { DEFAULT_UI_PROFILE } from "@/lib/ui-profiles";
 
 interface Pos {
   symbol: string;
@@ -40,7 +41,7 @@ interface ClosedData {
 }
 
 export default function PositionsView() {
-  const profile = useSearchParams().get("profile") ?? "sniper_swing";
+  const profile = useSearchParams().get("profile") ?? DEFAULT_UI_PROFILE;
   const q = `?profile=${profile}`;
   const [tab, setTab] = useState<"open" | "closed">("open");
   const [data, setData] = useState<Data | null>(null);

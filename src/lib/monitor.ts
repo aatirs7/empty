@@ -411,13 +411,21 @@ export async function monitorTick(): Promise<Fire[]> {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
         continue;
       }
-      const cat = await checkCatalyst(c.symbol, 5, c.profileId);
+      // Flip setups (SBv2) also get a flip-aware NEWS-CONTEXT read (does fresh news
+      // support or contradict the accepted breakout?); tap setups keep the plain
+      // scheduled-catalyst check. Both fail open.
+      const cat = await checkCatalyst(c.symbol, 5, c.profileId, profile.entryKind === "flip_retest" ? { direction } : undefined);
       if (cat.catalyst) {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
         continue;
       }
+      if (cat.newsAgainst) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — news contradicts the flip: ${cat.newsSummary ?? ""}`.trim() });
+        continue;
+      }
       sniperConfidence = ev.overall / 100;
-      sniperSummary = ` ${pred.reason} ${ev.summary}${cat.checked ? "" : " (catalyst unchecked)"}`;
+      const newsNote = cat.newsFor ? ` News supports it: ${cat.newsSummary ?? ""}.` : cat.newsSummary ? ` News: ${cat.newsSummary}.` : "";
+      sniperSummary = ` ${pred.reason} ${ev.summary}${newsNote}${cat.checked ? "" : " (catalyst unchecked)"}`;
     }
 
     const zoneWord = direction === "call" ? "support" : "resistance";
