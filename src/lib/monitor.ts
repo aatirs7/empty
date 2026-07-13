@@ -22,6 +22,8 @@ import { classifyAndScore } from "./playbook";
 import { parseOcc } from "./format";
 import { sendPush } from "./push";
 import { getProfile, activeProfiles } from "./profiles";
+import { computeZones } from "./zones";
+import { detectFlips, DEFAULT_FLIP_OPTIONS } from "./flips";
 import { scanProfile } from "./scanner";
 import { zoneOfPosition } from "./manage";
 import { getProfileSettings } from "./profile-settings";
@@ -291,6 +293,7 @@ export async function monitorTick(): Promise<Fire[]> {
   const prices = await getLatestPrices([...new Set(cands.map((c) => c.symbol))]);
   const nextPrices = { ...prevPrices };
   const fires: Fire[] = [];
+  const today = new Date().toISOString().slice(0, 10);
 
   // Market context for the SniperBot confidence engine (fetched once per tick).
   const hasConfirm = cands.some((c) => getProfile(c.profileId).confirmation.enabled);
@@ -320,8 +323,23 @@ export async function monitorTick(): Promise<Fire[]> {
     // Decide whether this candidate triggers NOW.
     let confirmReason = "";
     let execScore = 0;
-    if (profile.confirmation.enabled) {
-      // Confirmation profiles (SniperBot, QQQ 0DTE): fire only when price is AT the
+    if (profile.entryKind === "flip_retest") {
+      // SBv2: fire on the FIRST live tap of the flipped boundary (a crossing between
+      // ticks). Durable dedup (firedSet) guarantees only the first retest ever fires.
+      // The daily flip state is re-validated below before the order is placed.
+      if (prev === undefined) continue; // first sighting: establish baseline
+      if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
+      // Best-effort confirmation candle for the execution-quality score — NOT required
+      // (the spec enters on the first clean retest tap itself).
+      try {
+        const conf = await confirmEntry(c.symbol, direction, z, profile.confirmation.minRelVolume);
+        execScore = conf.executionScore;
+        confirmReason = conf.confirmed ? ` First retest + ${conf.reason}.` : ` First retest of the flipped boundary.`;
+      } catch {
+        confirmReason = " First retest of the flipped boundary.";
+      }
+    } else if (profile.confirmation.enabled) {
+      // Confirmation profiles (SBv1, QQQ 0DTE): fire only when price is AT the
       // zone AND an intraday confirmation candle prints (rejection/engulf/strong
       // close + relative volume) — never on a bare tap.
       const atZone = cur >= z.bottom * 0.99 && cur <= z.top * 1.01;
@@ -344,6 +362,28 @@ export async function monitorTick(): Promise<Fire[]> {
       pb = classifyAndScore(bars, z, direction, cur);
     } catch {
       pb = null;
+    }
+
+    // SBv2: re-validate the flip on the FRESH settled daily bars before committing —
+    // the scan is hours old. Exclude today's in-progress candle (the live retest tap
+    // is exactly what we're firing on; including it would self-invalidate). If the
+    // flip closed back inside / went stale / already retested on a completed bar, skip.
+    if (profile.entryKind === "flip_retest") {
+      let stillValid = false;
+      try {
+        const completed = bars.filter((b) => b.t.slice(0, 10) < today);
+        const { zones } = computeZones(completed, profile.zoneTimeframes[0].opts);
+        const fresh = detectFlips(completed, zones, DEFAULT_FLIP_OPTIONS);
+        const setup = c.setup as { flipped_boundary?: number } | null;
+        const wantBound = setup?.flipped_boundary ?? (direction === "call" ? z.top : z.bottom);
+        stillValid = fresh.some((f) => f.direction === direction && Math.abs(f.flippedBoundary - wantBound) / wantBound < 0.005);
+      } catch {
+        stillValid = false;
+      }
+      if (!stillValid) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "flip invalidated (stale) — skipped" });
+        continue;
+      }
     }
     if (!pb || pb.score < profile.minScore) {
       fires.push({
@@ -400,7 +440,13 @@ export async function monitorTick(): Promise<Fire[]> {
           confidence: String(sniperConfidence),
           pricedInAssessment: "unclear",
           rationale: `${alert} ${pb.reason}`,
-          plainExplanation: `${c.symbol} just tapped its zone live (${pb.playbook}), betting on a ${direction === "call" ? "bounce up off support" : "rejection down off resistance"} over the next 1-2 weeks.`,
+          plainExplanation: `${
+            profile.entryKind === "flip_retest"
+              ? `${c.symbol} just retested a flipped daily order block live (${pb.playbook})`
+              : `${c.symbol} just tapped its zone live (${pb.playbook})`
+          }, betting on a ${direction === "call" ? "bounce up off support" : "rejection down off resistance"} ${
+            profile.exit.style === "intraday" ? "intraday" : profile.id === "sbv2" ? "over the next 1-2 days" : "over the next 1-2 weeks"
+          }.`,
           sources: [],
           status: "pending" as const,
           variant: "news_plus_zones",
@@ -454,7 +500,7 @@ export async function monitorTick(): Promise<Fire[]> {
         // best-effort
       }
     }
-    for (const pid of ["sniper_swing", "qqq_0dte"]) {
+    for (const pid of ["sniper_swing", "sbv2", "qqq_0dte"]) {
       try {
         if (!(await getProfileSettings(pid)).autoManage) continue;
         fires.push(...(await manageExits(pid, nearClose)));

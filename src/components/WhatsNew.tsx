@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-09-v9";
+const VERSION = "2026-07-13-v10";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "SBv2: a second SniperBot, running in parallel",
+    body: "Farrukh reset SniperBot's entry logic, so instead of replacing the current one we're running BOTH side by side to see which wins. SBv1 is exactly today's SniperBot (unchanged). SBv2 is the new idea: it waits for a daily order block to be BROKEN and ACCEPTED through (the zone flips from resistance to support, or vice-versa), then buys the FIRST pullback that retests the flipped level — a 1-2 day swing. Same watchlist, its own separate $1000 paper account, its own log / P&L / scorecard, never blended. Every page's tab bar now shows SBv1 · SBv2 · QQQ, and the daily report compares SBv1 vs SBv2 head-to-head each day (plus a plain SPY benchmark). SBv2 starts in shadow-measurement mode — it's tracked but not auto-trading until it's switched on.",
+  },
   {
     title: "QQQ is now truly intraday",
     body: "QQQ was reading multi-day (daily) levels and pricing same-day options against them — so it looked like a 5-day swing on a contract that expires today. It's been rebuilt around intraday zones: 15-minute and 1-hour levels drive same-day 0DTE day-trades, and 4-hour levels drive a next-day 1-day swing (a contract that expires tomorrow). Expected hold now reads in minutes/hours, not bars, and QQQ's zones refresh every few minutes while the market is open instead of once overnight. All numbers still come from the reaction database — now backed by 124,000 intraday reactions.",

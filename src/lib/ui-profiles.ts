@@ -7,7 +7,8 @@
  * references on the server, so `UI_PROFILE_IDS.includes(...)` would blow up.
  */
 export const UI_PROFILE_TABS = [
-  { id: "sniper_swing", label: "SniperBot" },
+  { id: "sniper_swing", label: "SBv1" },
+  { id: "sbv2", label: "SBv2" },
   { id: "qqq_0dte", label: "QQQ 0DTE" },
 ] as const;
 

@@ -9,8 +9,10 @@ import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { researchRuns, proposals, orders, candidates, activityLog } from "../db/schema";
 import { getBroker } from "./broker";
+import { getStockBars } from "./alpaca";
 import { getProfileCost } from "./cost";
 import { getProfile } from "./profiles";
+import { getProfileSettings } from "./profile-settings";
 import { UI_PROFILE_IDS } from "./ui-profiles";
 
 const money = (n: number | null | undefined) => (n == null ? "—" : `${n >= 0 ? "" : "-"}$${Math.abs(n).toFixed(2)}`);
@@ -85,7 +87,7 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
     label: string; positions: Awaited<ReturnType<ReturnType<typeof getBroker>["listPositions"]>>;
     tradePL: number; cost: number; net: number; scanned: number; valid: number;
     rzToday: number; rzYest: number; rzWeek: number; winsToday: number; lossesToday: number;
-    skipsToday: number; topSkip: string;
+    winsWeek: number; lossesWeek: number; skipsToday: number; topSkip: string; autoOn: boolean;
   }> = {};
   for (const pid of UI_PROFILE_IDS) {
     const broker = getBroker(pid);
@@ -104,6 +106,7 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
       .innerJoin(proposals, eq(orders.proposalId, proposals.id))
       .where(and(eq(proposals.profileId, pid), isNotNull(orders.exitAt)));
     const todayClosed = closed.filter((r) => r.exitAt && r.exitAt >= dayStart);
+    const weekClosed = closed.filter((r) => r.exitAt && r.exitAt >= weekStart);
 
     // Top skip reason today (why it passed on setups).
     const skips = acts.filter((a) => a.profileId === pid && a.kind === "skip");
@@ -127,8 +130,11 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
       rzWeek: sumRealized(closed, weekStart),
       winsToday: todayClosed.filter((r) => r.rp != null && Number(r.rp) > 0).length,
       lossesToday: todayClosed.filter((r) => r.rp != null && Number(r.rp) < 0).length,
+      winsWeek: weekClosed.filter((r) => r.rp != null && Number(r.rp) > 0).length,
+      lossesWeek: weekClosed.filter((r) => r.rp != null && Number(r.rp) < 0).length,
       skipsToday: skips.length,
       topSkip: top ? `${top[0]} (${top[1]}x)` : "",
+      autoOn: await getProfileSettings(pid).then((s) => s.autoExecute).catch(() => false),
     };
   }
 
@@ -275,9 +281,39 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
   }
   const totalToday = Math.round(UI_PROFILE_IDS.reduce((s, pid) => s + perProfile[pid].rzToday, 0) * 100) / 100;
   const totalWeek = Math.round(UI_PROFILE_IDS.reduce((s, pid) => s + perProfile[pid].rzWeek, 0) * 100) / 100;
-  N.push("", `**Overall:** ${signMoney(totalToday)} today, ${signMoney(totalWeek)} this week across both accounts.`);
-  // Main issue: flag any account that traded nothing (and why).
-  const idle = UI_PROFILE_IDS.filter((pid) => executed.filter((t) => t.profileId === pid).length === 0);
+  N.push("", `**Overall:** ${signMoney(totalToday)} today, ${signMoney(totalWeek)} this week across accounts.`);
+
+  // SBv1 vs SBv2 head-to-head (the whole point of running both) — this week's REAL
+  // realized activity per account, plus SPY buy-and-hold as a plain market benchmark.
+  // (SBv2 stays flat here until its auto is enabled; the mechanical shadow tracker
+  // measures every SBv2 setup vs SPY in the meantime.)
+  let spyWeekPct: number | null = null;
+  try {
+    const spy = await getStockBars("SPY", 10);
+    const base = spy.find((b) => b.t.slice(0, 10) >= weekStart.toISOString().slice(0, 10)) ?? spy[0];
+    const cur = spy[spy.length - 1];
+    if (base && cur && base.o > 0) spyWeekPct = Math.round(((cur.c - base.o) / base.o) * 1000) / 10;
+  } catch {
+    /* benchmark is best-effort */
+  }
+  const hh = (pid: string) => {
+    const p = perProfile[pid];
+    if (!p) return "";
+    const wl = p.winsWeek + p.lossesWeek > 0 ? ` (${p.winsWeek}W/${p.lossesWeek}L)` : "";
+    return `${p.label} ${signMoney(p.rzWeek)}${wl}`;
+  };
+  if (perProfile.sniper_swing && perProfile.sbv2) {
+    N.push(
+      "",
+      `**SBv1 vs SBv2 (this week, realized):** ${hh("sniper_swing")} · ${hh("sbv2")}${
+        spyWeekPct != null ? ` · SPY buy-and-hold ${spyWeekPct >= 0 ? "+" : ""}${spyWeekPct}%` : ""
+      }.`,
+    );
+  }
+  // Main issue: flag any AUTO-ON account that traded nothing (and why). Auto-off
+  // profiles (e.g. SBv2 while it's being shadow-measured) are expected to be flat —
+  // not a problem to surface.
+  const idle = UI_PROFILE_IDS.filter((pid) => perProfile[pid].autoOn && executed.filter((t) => t.profileId === pid).length === 0);
   if (idle.length) {
     N.push(
       `**Main issue:** ${idle
@@ -288,6 +324,9 @@ export async function buildDailyReport(runDate = new Date().toISOString().slice(
         .join("; ")}.`,
     );
   }
+  // Note auto-off tracks so the flat line reads as intentional, not broken.
+  const shadowed = UI_PROFILE_IDS.filter((pid) => !perProfile[pid].autoOn);
+  if (shadowed.length) N.push(`_${shadowed.map((pid) => perProfile[pid].label).join(", ")}: auto off — shadow-measured only._`);
   N.push("", "_Full trade-by-trade audit attached below._");
   const narrative = N.join("\n").slice(0, 1900);
 

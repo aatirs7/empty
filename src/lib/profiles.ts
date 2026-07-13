@@ -10,7 +10,7 @@
 import { type StrategyOptions, DEFAULT_STRATEGY_OPTIONS } from "./strategy";
 import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
-export type ProfileId = "sniper_swing" | "qqq_0dte" | "zones_legacy";
+export type ProfileId = "sniper_swing" | "sbv2" | "qqq_0dte" | "zones_legacy";
 
 /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day;
  *  oneDay = next trading day (the QQQ 1-day-swing leg). */
@@ -80,6 +80,13 @@ export interface Profile {
   active: boolean; // scanner still produces candidates (e.g. for shadow measurement)
   shelved?: boolean; // quarantined: the live monitor ignores it (no proposals/signals)
   // and it's excluded from the daily report. Kept scanned only for shadow history.
+  // How the scanner builds setups: "tap" (default — stateless edge tap, SBv1) or
+  // "flip" (SBv2 — a daily order-block that broke + accepted, awaiting first retest).
+  setupKind?: "tap" | "flip";
+  // How the live monitor triggers an entry: "tap" (default — a boundary crossing /
+  // confirmation candle) or "flip_retest" (SBv2 — the FIRST live tap of the flipped
+  // boundary, re-validated against the daily flip state at fire time).
+  entryKind?: "tap" | "flip_retest";
   strategy: StrategyOptions;
   zoneTimeframes: ZoneTimeframe[]; // zone timeframes to scan (QQQ = Daily + 4H)
   confirmation: ConfirmationConfig;
@@ -99,7 +106,7 @@ export interface Profile {
 // confirmation-gated, far-OTM cheap contracts sized for the $500 paper account.
 const SNIPER_SWING: Profile = {
   id: "sniper_swing",
-  label: "SniperBot",
+  label: "SBv1",
   description: "Large/mega-cap order-block swing setups, confirmed, weekly options.",
   active: true,
   strategy: DEFAULT_STRATEGY_OPTIONS,
@@ -120,6 +127,43 @@ const SNIPER_SWING: Profile = {
   // NO mid-swing stop. Catastrophe floor ($0.15) only bites within 2 days of expiry.
   exit: { style: "swing", targetPremium: 2.0, catastropheFloor: 0.15, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: true, // owner chose to auto-trade SniperBot on the paper account
+  baselineSymbol: "SPY",
+};
+
+// SBv2 — SniperBot v2 (Farrukh's LOGIC RESET, sniperbot-daily-swing-v2.md). A
+// genuinely DIFFERENT setup from SBv1: daily order-block FLIP + FIRST retest, run in
+// PARALLEL for a head-to-head comparison. A daily zone that price breaks AND accepts
+// through (daily close / overnight gap+hold) flips (resistance→support, support→
+// resistance); the FIRST live tap of the flipped boundary is the entry. Same universe
+// as SBv1, its OWN paper account (ALPACA_*_3), its OWN log/P&L/shadow/scorecard track.
+// Auto OFF until the owner enables it. PAPER-ONLY.
+const SBV2: Profile = {
+  id: "sbv2",
+  label: "SBv2",
+  description: "Daily order-block FLIP + first retest, 1-2 day swing. Parallel to SBv1 for comparison.",
+  active: true,
+  setupKind: "flip", // scanner builds flip setups (broke + accepted, awaiting first retest)
+  entryKind: "flip_retest", // monitor fires on the FIRST live tap of the flipped boundary
+  strategy: DEFAULT_STRATEGY_OPTIONS,
+  zoneTimeframes: [DAILY_TF], // DAILY ONLY qualifies a flip (1D / ATR50 / disp 1.7)
+  confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.3 },
+  requireClearRunway: false, // empty-space read is informational; flip validity + first-retest gate instead
+  watchPerTimeframe: 3, // a symbol may carry more than one flipped zone awaiting a retest
+  minScore: 75,
+  contract: {
+    expiryKind: "friday", // nearest weekly ≥ the predicted 1-2 day hold (selectByEV horizon-matches)
+    otmPct: 8, // a 1-2 day move is smaller than a 1-2 week swing — don't reach as far OTM
+    itmPct: 4,
+    priceFloor: 0.4,
+    priceIdeal: 0.8,
+    priceCap: 1.5,
+    liquiditySpread: 0.6,
+  },
+  caps: { perTradeBudget: 120, maxContracts: 1, maxOpenPositions: 10 },
+  // Swing exit mirrors SBv1's owner-tuned rule: ride to $2, swing-invalidation close,
+  // catastrophe floor ($0.15) only within 2 days of expiry. NO mid-swing hard stop.
+  exit: { style: "swing", targetPremium: 2.0, catastropheFloor: 0.15, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  autoDefault: false, // OFF until the owner enables it in settings (shadow-measured first)
   baselineSymbol: "SPY",
 };
 
@@ -183,11 +227,12 @@ const ZONES_LEGACY: Profile = {
 
 export const PROFILES: Record<ProfileId, Profile> = {
   sniper_swing: SNIPER_SWING,
+  sbv2: SBV2,
   qqq_0dte: QQQ_0DTE,
   zones_legacy: ZONES_LEGACY,
 };
 
-export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "qqq_0dte", "zones_legacy"];
+export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "qqq_0dte", "zones_legacy"];
 
 export function getProfile(id: string | null | undefined): Profile {
   return PROFILES[(id ?? "sniper_swing") as ProfileId] ?? SNIPER_SWING;

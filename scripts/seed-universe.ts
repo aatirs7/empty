@@ -1,6 +1,7 @@
 /**
  * Seed the scanner universe, tagged per strategy profile:
- *   - sniper_swing : large/mega-cap US names (SniperBot Master).
+ *   - sniper_swing : large/mega-cap US names (SBv1 / SniperBot Master).
+ *   - sbv2         : SAME mega-cap list as SBv1 (apples-to-apples head-to-head).
  *   - qqq_0dte     : QQQ only.
  *   - zones_legacy : the previous cheap ($5-65) list, kept for its shadow track.
  * Idempotent: clears and re-inserts. Run: npm run seed:universe
@@ -47,6 +48,7 @@ async function main() {
     });
   };
   add(SNIPER, "sniper_swing");
+  add(SNIPER, "sbv2"); // SBv2 shares SBv1's universe for a clean comparison
   add(QQQ, "qqq_0dte");
   add(ZONES, "zones_legacy");
 

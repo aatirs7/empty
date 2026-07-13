@@ -8,7 +8,7 @@ import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "../db";
 import { universe as universeTable, candidates as candidatesTable, researchRuns } from "../db/schema";
 import { getMultiStockBars, getIntradayBars, type Bar } from "./alpaca";
-import { buildZoneSetups } from "./strategy";
+import { buildZoneSetups, buildFlipSetups } from "./strategy";
 import { classifyAndScore } from "./playbook";
 import { activeProfiles, type Profile, type ZoneTimeframe } from "./profiles";
 import { ALPACA_TF, SCAN_LOOKBACK_MIN } from "./timeframes";
@@ -68,7 +68,9 @@ async function scanTimeframe(
     if (!bars || bars.length < 60) continue;
     let setups;
     try {
-      setups = buildZoneSetups(bars, strat, watch);
+      // SBv2 builds daily FLIP setups (broke + accepted, awaiting first retest);
+      // all other profiles use the stateless tap builder.
+      setups = profile.setupKind === "flip" ? buildFlipSetups(bars, strat, watch) : buildZoneSetups(bars, strat, watch);
     } catch {
       continue;
     }

@@ -18,6 +18,7 @@
  */
 import type { Bar } from "./alpaca";
 import { computeZones, type Zone, type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
+import { detectFlips, DEFAULT_FLIP_OPTIONS } from "./flips";
 
 export interface ZoneSetup {
   active_zone: { bottom: number; top: number } | null; // no demand/supply label
@@ -30,6 +31,12 @@ export interface ZoneSetup {
   distance_to_edge_pct: number | null;
   setup_valid: boolean;
   price: number;
+  // Flip fields (SBv2 only; absent/`"tap"` for SBv1 tap setups). When setup_kind is
+  // "flip", tapped_edge/flipped_boundary is the flipped boundary to retest.
+  setup_kind?: "tap" | "flip";
+  flipped_boundary?: number;
+  accepted_at?: string;
+  sessions_since_flip?: number;
 }
 
 export interface StrategyOptions {
@@ -157,4 +164,74 @@ export function buildZoneSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STR
 /** Backward-compatible single-setup builder (the nearest/best zone). */
 export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS): ZoneSetup {
   return buildZoneSetups(bars, opts, 1)[0];
+}
+
+// SBv2 won't watch a flip whose retest is already implausibly far away (spec:
+// "price has moved too far away from the entry"). Beyond this % from the boundary,
+// a retest inside the 1-2 session window is unlikely — drop it.
+const FLIP_MAX_DISTANCE_PCT = 12;
+const FLIP_RUNWAY_PCT = 4;
+
+/**
+ * Build up to `limit` tradeable FLIP setups (SBv2): a daily zone that broke and
+ * ACCEPTED through, flipped role, and is awaiting its FIRST retest of the flipped
+ * boundary. Same `bars → ZoneSetup[]` shape as buildZoneSetups so the scanner loop
+ * is unchanged; direction/edge come from the flip, never from a stateless side test.
+ */
+export function buildFlipSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS, limit = 1): ZoneSetup[] {
+  const { zones, lastBar } = computeZones(bars, opts.zone);
+  const price = lastBar.c;
+  const empty: ZoneSetup = {
+    active_zone: null,
+    tapped_edge: null,
+    trigger_edge: "first_touch",
+    approach: null,
+    direction: null,
+    clear_runway: false,
+    tap_granularity: "daily_scan",
+    distance_to_edge_pct: null,
+    setup_valid: false,
+    price,
+    setup_kind: "flip",
+  };
+  if (zones.length === 0) return [empty];
+
+  const flips = detectFlips(bars, zones, DEFAULT_FLIP_OPTIONS)
+    .map((f) => ({ ...f, distPct: (Math.abs(price - f.flippedBoundary) / price) * 100 }))
+    .filter((f) => f.distPct <= FLIP_MAX_DISTANCE_PCT)
+    .sort((a, b) => a.distPct - b.distPct);
+  if (flips.length === 0) return [empty];
+
+  const band = price * (FLIP_RUNWAY_PCT / 100);
+  const out: ZoneSetup[] = [];
+  const seen = new Set<string>();
+  for (const f of flips) {
+    const key = `${f.zone.bottom.toFixed(4)}-${f.zone.top.toFixed(4)}-${f.direction}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // White space in the TRADE direction (continuation area): for a call (breaking up)
+    // no zone directly above the flipped top within the band; for a put, none below.
+    const blocking =
+      f.direction === "call"
+        ? zones.some((z) => z.bottom > f.zone.top && z.bottom <= f.zone.top + band)
+        : zones.some((z) => z.top < f.zone.bottom && z.top >= f.zone.bottom - band);
+    out.push({
+      active_zone: { bottom: f.zone.bottom, top: f.zone.top },
+      tapped_edge: Math.round(f.flippedBoundary * 100) / 100,
+      trigger_edge: "first_touch",
+      approach: f.direction === "call" ? "from_above" : "from_below", // retest taps the boundary from the accepted side
+      direction: f.direction,
+      clear_runway: !blocking,
+      tap_granularity: "daily_scan",
+      distance_to_edge_pct: Math.round(f.distPct * 100) / 100,
+      setup_valid: true, // a valid flip awaiting its first live retest
+      price,
+      setup_kind: "flip",
+      flipped_boundary: Math.round(f.flippedBoundary * 100) / 100,
+      accepted_at: f.acceptedAt,
+      sessions_since_flip: f.sessionsSinceFlip,
+    });
+    if (out.length >= limit) break;
+  }
+  return out.length ? out : [empty];
 }

@@ -38,11 +38,19 @@ export interface BrokerAdapter {
   getWeeklyPL(): Promise<{ weeklyPL: number; currentEquity: number }>;
 }
 
-/** Account keys for a profile: QQQ 0DTE uses the second paper account; others default. */
+/** Account keys for a profile: each strategy trades its OWN paper account so P&L
+ *  never blends. QQQ 0DTE → ALPACA_*_2, SBv2 → ALPACA_*_3. SBv1 (sniper_swing) and
+ *  the shelved zones_legacy share the default keys. Falls back to the default keys
+ *  when a profile's own account isn't configured (shadow-only until then). */
 function accountKeysFor(profileId?: string): AccountKeys | null {
   if (profileId === "qqq_0dte") {
     const id = process.env.ALPACA_API_KEY_ID2?.trim();
     const secret = process.env.ALPACA_API_SECRET_KEY2?.trim();
+    if (id && secret) return { id, secret };
+  }
+  if (profileId === "sbv2") {
+    const id = process.env.ALPACA_API_KEY_ID3?.trim();
+    const secret = process.env.ALPACA_API_SECRET_KEY3?.trim();
     if (id && secret) return { id, secret };
   }
   return null; // default keys

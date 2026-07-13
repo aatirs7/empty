@@ -96,3 +96,9 @@ DATABASE_URL, ANTHROPIC_API_KEY, RESEARCH_MODEL=claude-sonnet-5, ALPACA_API_KEY_
 
 ## Conventions
 Mobile-first, calm decision surface. Plain English for a layman; downside gets equal billing with upside. No em dashes in UI copy (stripDash sanitizes model text). All dollar figures code-computed.
+
+## Update 2026-07-13 — SBv2 parallel strategy (see CLAUDE.md build status for the authoritative, current architecture; this HANDOFF's "Current state" above is pre-S/Q-series and stale)
+The single strategy became a PROFILE registry (`src/lib/profiles.ts`): SBv1 (`sniper_swing`, main, auto ON), SBv2 (`sbv2`, NEW, auto OFF), QQQ 0DTE (`qqq_0dte`, own account, auto ON), zones_legacy (shelved). Each profile trades its OWN paper account (`broker.accountKeysFor`: SBv1=default, QQQ=`ALPACA_*_2`, SBv2=`ALPACA_*_3`); P&L/log/shadow/scorecard never blend.
+- **SBv2** = daily Order-Block FLIP + FIRST retest (Farrukh's `sniperbot-daily-swing-v2.md` reset). New `src/lib/flips.ts` (`detectFlips`) + `buildFlipSetups` (strategy.ts); scanner/monitor branch on `Profile.setupKind`/`entryKind`. No new DB table — flip state re-derived from settled daily bars each scan. Contract via the horizon-matched `selectByEV`. Auto OFF until `npm run profile-auto -- sbv2 on`.
+- Env add: `ALPACA_API_KEY_ID3` / `ALPACA_API_SECRET_KEY3` (SBv2's paper account).
+- New scripts: `npm run profile-auto [-- <profile> on|off|buy-only]` (per-profile auto toggle; there is no UI toggle).
