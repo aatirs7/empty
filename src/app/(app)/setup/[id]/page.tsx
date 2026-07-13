@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCandidateById } from "@/lib/queries";
+import { getCandidateById, getCandidateTaps } from "@/lib/queries";
 import { getStockBars } from "@/lib/alpaca";
 import { classifyAndScore } from "@/lib/playbook";
-import { companyName } from "@/lib/format";
+import { companyName, etDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +31,8 @@ export default async function SetupDetailPage({ params }: { params: Promise<{ id
   const z = c.zone as { bottom: number; top: number };
   const dir = c.direction as "call" | "put";
   const isCall = dir === "call";
+  const taps = await getCandidateTaps(c.profileId ?? "sniper_swing");
+  const tapAt = taps[c.id] ?? null;
 
   let pb: ReturnType<typeof classifyAndScore> | null = null;
   try {
@@ -52,6 +54,12 @@ export default async function SetupDetailPage({ params }: { params: Promise<{ id
         <p className={`mt-1 font-medium ${isCall ? "text-up" : "text-down"}`}>
           {isCall ? `Bet ${c.symbol} bounces up off support` : `Bet ${c.symbol} gets pushed down off resistance`}
         </p>
+        <div className="mt-1.5 flex items-center justify-center gap-2 text-xs">
+          <span className={`px-2 py-0.5 rounded-full font-semibold ${isCall ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}>
+            {isCall ? "CALL" : "PUT"}
+          </span>
+          <span className="text-muted num">{tapAt ? `Tapped ${etDateTime(tapAt)}` : "Awaiting retest"}</span>
+        </div>
         {pb && (
           <p className="text-xs text-accent mt-1">
             {pb.playbook} · Score {pb.displayScore}/100 {c.setupValid ? "· tapped" : "· approaching"}
@@ -75,6 +83,8 @@ export default async function SetupDetailPage({ params }: { params: Promise<{ id
         <Row label="Distance to the edge" value={`${Number(c.distanceToEdgePct).toFixed(2)}%`} />
         <Row label="Approach" value={(c.approach ?? "").replace(/_/g, " ")} />
         <Row label="Clear runway" value={c.clearRunway ? "yes" : "no"} />
+        <Row label="Direction" value={isCall ? "CALL" : "PUT"} />
+        <Row label="Live tap" value={tapAt ? etDateTime(tapAt) : "not yet"} />
         <Row label="Status" value={c.setupValid ? "tapped — live setup" : "approaching (watching)"} />
       </Card>
 

@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { getLatestScan, getTodayMonitorTrades } from "@/lib/queries";
+import { getLatestScan, getTodayMonitorTrades, getCandidateTaps } from "@/lib/queries";
 import { PageTitle, Empty } from "@/components/ui";
-import { companyName } from "@/lib/format";
+import { companyName, etDateTime } from "@/lib/format";
 import { getProfile } from "@/lib/profiles";
 import ProfileTabs from "@/components/ProfileTabs";
 import { resolveUiProfile } from "@/lib/ui-profiles";
@@ -31,6 +31,8 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
   const watching = scan.candidates.filter((c) => !c.setupValid).sort(byScore);
   // Tapped today = the profile's live monitor trades (same funnel value Today shows).
   const tappedToday = (await getTodayMonitorTrades(profileId)).filter((p) => p.strategy !== "no_trade").length;
+  // Per-candidate live tap times (for the card badges).
+  const taps = await getCandidateTaps(profileId);
 
   return (
     <div className="space-y-5">
@@ -73,6 +75,16 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
                 </div>
                 <div className={`text-sm font-medium ${isCall ? "text-up" : "text-down"}`}>
                   {isCall ? `Bet ${c.symbol} bounces up` : `Bet ${c.symbol} gets pushed down`}
+                </div>
+                <div className="flex items-center justify-center gap-2 text-[11px]">
+                  <span
+                    className={`px-2 py-0.5 rounded-full font-semibold ${isCall ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}
+                  >
+                    {isCall ? "CALL" : "PUT"}
+                  </span>
+                  <span className="text-muted num">
+                    {taps[c.id] ? `Tapped ${etDateTime(taps[c.id])}` : "Awaiting retest"}
+                  </span>
                 </div>
                 {c.score != null && (
                   <div className="text-xs num">

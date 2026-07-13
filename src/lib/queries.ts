@@ -8,11 +8,26 @@ import {
   proposals,
   orders,
   candidates,
+  activityLog,
   type ResearchRun,
   type ProposalRow,
   type OrderRow,
   type CandidateRow,
 } from "../db/schema";
+
+/** Latest live zone-tap time per candidate (from the tap audit log), for the Setups
+ *  cards. Keyed by candidateId → ISO timestamp of the most recent tap. */
+export async function getCandidateTaps(profileId: string): Promise<Record<number, string>> {
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await db
+    .select({ cid: activityLog.candidateId, at: activityLog.createdAt })
+    .from(activityLog)
+    .where(and(eq(activityLog.profileId, profileId), eq(activityLog.kind, "tap"), eq(activityLog.runDate, today)))
+    .orderBy(asc(activityLog.createdAt));
+  const map: Record<number, string> = {};
+  for (const r of rows) if (r.cid != null && r.at) map[r.cid] = new Date(r.at).toISOString();
+  return map;
+}
 
 /** The latest scan for a profile: its date + that profile's candidates. */
 export async function getLatestScan(
