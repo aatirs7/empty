@@ -65,6 +65,16 @@ async function ensureMonitorRun(): Promise<number> {
   return r.id;
 }
 
+/** Turn a raw execute error into a short, plain "why it didn't buy" for the push. */
+function friendlyBlock(msg: string): string {
+  const s = msg.toLowerCase();
+  if (s.includes("no affordable") || s.includes("price cap") || s.includes("no contract fits") || s.includes("no_quote")) return "no cheap contract that reaches the target";
+  if (s.includes("open-position cap") || s.includes("open_cap")) return "position cap reached";
+  if (s.includes("invalidated") || s.includes("crossed the zone")) return "price moved the wrong way";
+  if (s.includes("market closed")) return "market closed";
+  return msg.slice(0, 60);
+}
+
 /** A boundary-tap crossing for the setup's direction, else false. */
 function tapCrossing(direction: "call" | "put", prev: number, cur: number, bottom: number, top: number): boolean {
   if (direction === "put") return prev < bottom && cur >= bottom; // rose into resistance from below
@@ -296,6 +306,10 @@ export async function monitorTick(): Promise<Fire[]> {
   const nextPrices = { ...prevPrices };
   const fires: Fire[] = [];
   const today = new Date().toISOString().slice(0, 10);
+  // Outcome push for a tapped SBv2 setup that did NOT enter (pairs with the "checking"
+  // alert): the owner sees checking -> bought (via executeProposal) OR not-entered here.
+  const notifyBlocked = (sym: string, dir: string, why: string) =>
+    sendPush(`${sym} not entered`, `${dir.toUpperCase()} blocked — ${why}`, "/positions").catch(() => {});
 
   // Market context for the SniperBot confidence engine (fetched once per tick).
   const hasConfirm = cands.some((c) => getProfile(c.profileId).confirmation.enabled);
@@ -331,21 +345,14 @@ export async function monitorTick(): Promise<Fire[]> {
       // The daily flip state is re-validated below before the order is placed.
       if (prev === undefined) continue; // first sighting: establish baseline
       if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
-      // Zone-tap AUDIT notification (SBv2): fire the moment the flipped boundary is
-      // retested, for ALL watchlist setups — so alert timing/accuracy can be audited
-      // after the fact. tapCrossing is a one-tick edge, so this fires once per genuine
-      // crossing, not every minute while price rests at the zone.
-      await sendPush(`${c.symbol} zone tap ${cur}`, `enter ${direction.toUpperCase()} now`, "/positions").catch(() => {});
-      await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `zone tap ${cur} — enter ${direction.toUpperCase()}` }]);
-      // Best-effort confirmation candle for the execution-quality score — NOT required
-      // (the spec enters on the first clean retest tap itself).
-      try {
-        const conf = await confirmEntry(c.symbol, direction, z, profile.confirmation.minRelVolume);
-        execScore = conf.executionScore;
-        confirmReason = conf.confirmed ? ` First retest + ${conf.reason}.` : ` First retest of the flipped boundary.`;
-      } catch {
-        confirmReason = " First retest of the flipped boundary.";
-      }
+      // "Checking" audit alert (SBv2): fire the moment the flipped boundary is retested,
+      // for ALL watchlist setups, so alert timing/accuracy can be audited. This is NOT a
+      // command — the buy may still be blocked; a separate "Bought"/"not entered" push
+      // follows once the outcome is known. tapCrossing is a one-tick edge, so this fires
+      // once per genuine crossing, not every minute while price rests at the zone.
+      await sendPush(`${c.symbol} zone tap ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
+      await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `zone tap ${cur} — checking ${direction.toUpperCase()}` }]);
+      confirmReason = " First retest of the flipped boundary.";
     } else if (profile.confirmation.enabled) {
       // Confirmation profiles (SBv1, QQQ 0DTE): fire only when price is AT the
       // zone AND an intraday confirmation candle prints (rejection/engulf/strong
@@ -382,6 +389,7 @@ export async function monitorTick(): Promise<Fire[]> {
       const scanAgeDays = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${c.runDate}T00:00:00Z`)) / 86_400_000;
       if (scanAgeDays > 3) {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `flip scan ${Math.round(scanAgeDays)}d old (missed scan) — skipped` });
+        await notifyBlocked(c.symbol, direction, "watchlist scan too old");
         continue;
       }
     }
@@ -392,6 +400,7 @@ export async function monitorTick(): Promise<Fire[]> {
     const mechanical = profile.entryKind === "flip_retest";
     if (!pb) {
       fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "could not score; skipped" });
+      if (mechanical) await notifyBlocked(c.symbol, direction, "could not read the chart");
       continue;
     }
     if (!mechanical && pb.score < profile.minScore) {
@@ -415,24 +424,17 @@ export async function monitorTick(): Promise<Fire[]> {
       const pred = await predict(c.symbol, cur, c.timeframe, direction, c.approach ?? "", marketAlign);
       if (mechanical) {
         // Reward / "move large enough": require a reaction-DB target — no target means
-        // thin history or too small a projected move, so skip.
+        // thin history or too small a projected move, so skip. The news/catalyst vet is
+        // deliberately NOT on this hot path: a ~40s web-search call blows the 60s tick
+        // when several names tap in the same minute (that's what was silently killing
+        // every SBv2 buy). It belongs in the nightly scan (stored on the candidate).
         if (pred.targetMain == null) {
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — no DB target (move too small / thin history)" });
-          continue;
-        }
-        // Flip-aware news veto (fails open): skip only if fresh news contradicts the flip.
-        const cat = await checkCatalyst(c.symbol, 5, c.profileId, { direction });
-        if (cat.catalyst) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
-          continue;
-        }
-        if (cat.newsAgainst) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — news contradicts the flip: ${cat.newsSummary ?? ""}`.trim() });
+          await notifyBlocked(c.symbol, direction, "no historical target (move too small)");
           continue;
         }
         sniperConfidence = Math.max(0, Math.min(1, pred.probability / 100));
-        const newsNote = cat.newsFor ? ` News supports it: ${cat.newsSummary ?? ""}.` : cat.newsSummary ? ` News: ${cat.newsSummary}.` : "";
-        sniperSummary = ` ${pred.reason} Target ${pred.targetMain}.${newsNote}${cat.checked ? "" : " (catalyst unchecked)"}`;
+        sniperSummary = ` ${pred.reason} Target ${pred.targetMain}.`;
       } else {
         const isIntraday = profile.exit.style === "intraday"; // QQQ 0DTE — judge as a same-day scalp
         const ev = evaluateSniper(pb, bars, direction, execScore, c.clearRunway, marketCtx, pred, isIntraday);
@@ -502,6 +504,7 @@ export async function monitorTick(): Promise<Fire[]> {
             .set({ status: "expired", zoneRead: `${alert} Auto-skip: ${why}` })
             .where(eq(proposals.id, prop.id));
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: why });
+          if (profile.entryKind === "flip_retest") await notifyBlocked(c.symbol, direction, friendlyBlock(why));
         }
       } else {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "proposal created (auto-buy off)" });
