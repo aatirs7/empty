@@ -430,18 +430,31 @@ export async function monitorTick(): Promise<Fire[]> {
         continue;
       }
       if (mechanical) {
+        // News veto — read the verdict the NIGHTLY vet (/api/vet-flips) stored on the
+        // candidate. Zero hot-path Claude cost (the ~40s web-search call would blow the
+        // 60s tick when several names tap at once). Block on a scheduled earnings/Fed
+        // catalyst or fresh news against the accepted breakout. Un-vetted flips have no
+        // verdict → fail open (trade).
+        const news = (c.setup as { news?: { catalyst?: boolean; event?: string; newsAgainst?: boolean; newsFor?: boolean; summary?: string } } | null)?.news;
+        if (news?.catalyst) {
+          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${news.event ?? "scheduled event"}` });
+          await notifyBlocked(c.symbol, direction, `earnings/Fed: ${news.event || "scheduled event"}`);
+          continue;
+        }
+        if (news?.newsAgainst) {
+          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — news contradicts the flip: ${news.summary ?? ""}`.trim() });
+          await notifyBlocked(c.symbol, direction, "fresh news against the breakout");
+          continue;
+        }
         // Reward / "move large enough": require a reaction-DB target — no target means
-        // thin history or too small a projected move, so skip. The news/catalyst vet is
-        // deliberately NOT on this hot path: a ~40s web-search call blows the 60s tick
-        // when several names tap in the same minute (that's what was silently killing
-        // every SBv2 buy). It belongs in the nightly scan (stored on the candidate).
+        // thin history or too small a projected move, so skip.
         if (pred.targetMain == null) {
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — no DB target (move too small / thin history)" });
           await notifyBlocked(c.symbol, direction, "no historical target (move too small)");
           continue;
         }
         sniperConfidence = Math.max(0, Math.min(1, pred.probability / 100));
-        sniperSummary = ` ${pred.reason} Target ${pred.targetMain}.`;
+        sniperSummary = ` ${pred.reason} Target ${pred.targetMain}.${news?.newsFor ? " News supports it." : ""}`;
       } else {
         const isIntraday = profile.exit.style === "intraday"; // QQQ 0DTE — judge as a same-day scalp
         const ev = evaluateSniper(pb, bars, direction, execScore, c.clearRunway, marketCtx, pred, isIntraday);
