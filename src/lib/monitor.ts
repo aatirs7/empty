@@ -14,7 +14,7 @@
  */
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
-import { candidates, monitorState, orders, proposals, researchRuns } from "../db/schema";
+import { candidates, monitorState, orders, proposals, researchRuns, activityLog } from "../db/schema";
 import { getLatestPrices, getStockBars, getOptionQuotes, midPrice, getClock } from "./alpaca";
 import { getBroker } from "./broker";
 import { executeProposal } from "./execute";
@@ -64,6 +64,11 @@ async function ensureMonitorRun(): Promise<number> {
     .returning({ id: researchRuns.id });
   return r.id;
 }
+
+// SBv2 enters when price is within this fraction of the flipped boundary — "taps the
+// level". Wide enough to catch the tap at minute granularity, tight enough to be a real
+// touch. Deduped to once per candidate per day (see tappedSet).
+const FLIP_TAP_BAND = 0.004; // 0.4%
 
 /** Turn a raw execute error into a short, plain "why it didn't buy" for the push. */
 function friendlyBlock(msg: string): string {
@@ -310,6 +315,16 @@ export async function monitorTick(): Promise<Fire[]> {
   // alert): the owner sees checking -> bought (via executeProposal) OR not-entered here.
   const notifyBlocked = (sym: string, dir: string, why: string) =>
     sendPush(`${sym} not entered`, `${dir.toUpperCase()} blocked — ${why}`, "/positions").catch(() => {});
+  // Durable dedup for the SBv2 tap trigger: candidates that already logged a tap today.
+  // The flip entry fires on a boundary TAP (not a crossing edge), so it needs this to
+  // fire once per candidate per day (a proposal isn't always created — e.g. a skip).
+  const tapRows = cands.length
+    ? await db
+        .select({ cid: activityLog.candidateId })
+        .from(activityLog)
+        .where(and(eq(activityLog.kind, "tap"), eq(activityLog.runDate, today), inArray(activityLog.candidateId, cands.map((c) => c.id))))
+    : [];
+  const tappedSet = new Set(tapRows.map((r) => r.cid));
 
   // Market context for the SniperBot confidence engine (fetched once per tick).
   const hasConfirm = cands.some((c) => getProfile(c.profileId).confirmation.enabled);
@@ -340,16 +355,19 @@ export async function monitorTick(): Promise<Fire[]> {
     let confirmReason = "";
     let execScore = 0;
     if (profile.entryKind === "flip_retest") {
-      // SBv2: fire on the FIRST live tap of the flipped boundary (a crossing between
-      // ticks). Durable dedup (firedSet) guarantees only the first retest ever fires.
-      // The daily flip state is re-validated below before the order is placed.
-      if (prev === undefined) continue; // first sighting: establish baseline
-      if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
-      // "Checking" audit alert (SBv2): fire the moment the flipped boundary is retested,
+      // SBv2: enter on the FIRST TAP of the flipped boundary — price reaching the level
+      // (within a small band), NOT a strict two-tick crossing (which can miss a fast tap
+      // that happens between minute ticks). Deduped via tappedSet so it fires once per
+      // candidate per day even when a tap doesn't result in a proposal.
+      if (tappedSet.has(c.id)) continue; // already tapped today
+      const boundary = (c.setup as { flipped_boundary?: number } | null)?.flipped_boundary ?? (direction === "call" ? z.top : z.bottom);
+      const atBoundary = boundary > 0 && Math.abs(cur - boundary) / boundary <= FLIP_TAP_BAND;
+      if (!atBoundary) continue;
+      // "Checking" audit alert (SBv2): fire the moment the flipped boundary is tapped,
       // for ALL watchlist setups, so alert timing/accuracy can be audited. This is NOT a
       // command — the buy may still be blocked; a separate "Bought"/"not entered" push
-      // follows once the outcome is known. tapCrossing is a one-tick edge, so this fires
-      // once per genuine crossing, not every minute while price rests at the zone.
+      // follows once the outcome is known. Logging the tap below adds this candidate to
+      // tappedSet on the next tick, so it won't re-fire while price rests at the zone.
       await sendPush(`${c.symbol} zone tap ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
       await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `zone tap ${cur} — checking ${direction.toUpperCase()}` }]);
       confirmReason = " First retest of the flipped boundary.";
