@@ -4,9 +4,21 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-13-v11";
+const VERSION = "2026-07-15-v12";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "SBv2 enters on the tap + honest notifications",
+    body: "SBv2 now buys the moment price actually TOUCHES its flipped level (within 0.4%) instead of waiting for a clean two-tick crossing that could miss a fast move between checks — once per setup per day. Notifications got honest too: the tap alert now says \"checking…\", then a second push tells you the outcome — \"Bought\" or exactly why it was blocked (no cheap contract that reaches the target, position cap, news against the breakout). Two launch bugs that silently blocked EVERY SBv2 entry were also found and fixed, and the overnight news-vet now runs after each scan so taps trade instantly with zero API cost.",
+  },
+  {
+    title: "QQQ 0DTE: no more coin flips",
+    body: "QQQ lost money taking setups its own history rated ~50/50 — on a same-day option, a coin flip structurally loses to the spread plus time decay. It now refuses anything below a 60% historical hit rate, and the contract picker subtracts the full round-trip cost (spread + theta) from every candidate — if the expected move doesn't clear the cost, it's no trade. Expect far fewer QQQ trades; that's the point.",
+  },
+  {
+    title: "Today vs all-time P&L",
+    body: "Positions → Closed now has a Today / All time toggle, so you can see today's realized profit or loss on its own — or the full history — per strategy account. Late-filling buy orders also now sync their real fill price back into the log automatically.",
+  },
   {
     title: "SBv2 tuned: tap alerts, mechanical entry, cheap contracts",
     body: "Four SBv2 upgrades from the strategy owner. (1) Zone-tap alerts: the moment ANY SBv2 watchlist stock retests its flipped level, you get a push — \"NVDA zone tap 134.32 — enter PUT now\" — so alert timing and accuracy can be audited after the fact. (2) Mechanical entry: SBv2 now enters on that first clean retest tap directly (no extra score gate), matching the reset spec — it still skips on a news headline that contradicts the breakout. (3) Cheap contracts: it buys 2-3 far-OTM ~$0.30 contracts, sized and strike-picked so a move to the historical-database target can multiply them, and sells when the underlying reaches that target (not a fixed ratio). Names too expensive for a cheap contract that can actually reach the target are skipped. (4) The Today and Setups screens now show the same funnel — checked names → valid setups → tapped today — instead of two different \"ready\" numbers. The scan also logs why zones weren't promoted to flips (wick-only, closed back inside, already retested, too old).",
