@@ -60,6 +60,26 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         See the latest scan &amp; setups &rarr;
       </Link>
 
+      {profileId === "qqq_manual" && (
+        <div className="bg-panel border border-accent/30 rounded-2xl p-5 text-center space-y-3">
+          <p className="text-sm font-medium">Your levels, Vega&apos;s discipline</p>
+          <p className="text-xs text-muted leading-relaxed">
+            Each morning, enter the QQQ levels you&apos;ve marked on your 5m, 15m, and 1h charts. Levels below the
+            current price become CALL setups (support), levels above become PUT setups (resistance). Vega then watches
+            them live all day — but it never buys a bare touch: it waits for a 5-minute candle to actually confirm the
+            level (a rejection with real volume), checks that this kind of setup has won at least 60% of the time
+            historically, and only picks a same-day contract whose expected payoff beats the spread and time decay.
+            If any of those checks fail, it sits out. Positions flatten before the close — nothing held overnight.
+          </p>
+          <Link
+            href="/setups?profile=qqq_manual"
+            className="inline-block rounded-xl bg-accent text-white px-5 py-2.5 text-sm font-semibold"
+          >
+            {cands.length > 0 ? `Update today's levels (${cands.length} set)` : "Add today's levels"}
+          </Link>
+        </div>
+      )}
+
       <div className="space-y-3">
         {proposals.map((p) => {
           const isTrade = p.strategy !== "no_trade";
@@ -162,9 +182,11 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
 
       {openTrades.length === 0 && watchList.length === 0 && (
         <p className="text-center text-xs text-muted leading-relaxed">
-          {profileId === "qqq_0dte"
-            ? "No QQQ zone in play right now. QQQ 0DTE fires intraday when price reaches a Daily/4H level — see the live prediction on the "
-            : "No setups in play right now. The scanner runs after each close — check back, or see the "}
+          {profileId === "qqq_manual"
+            ? "No levels entered for today yet. Add your morning levels with the button above, or on the "
+            : profileId === "qqq_0dte"
+              ? "No QQQ zone in play right now. QQQ 0DTE fires intraday when price reaches a Daily/4H level — see the live prediction on the "
+              : "No setups in play right now. The scanner runs after each close — check back, or see the "}
           <Link href={`/setups?profile=${profileId}`} className="text-accent">
             Setups page →
           </Link>

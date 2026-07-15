@@ -33,7 +33,11 @@ export interface CatalystOptions {
   timeoutMs?: number;
 }
 
-const MODEL = process.env.CATALYST_MODEL ?? process.env.RESEARCH_MODEL ?? "claude-sonnet-5";
+// Haiku by default (2026-07-15 cost cut): this is a yes/no news gate — no numbers, no
+// judgment beyond "is there a scheduled event / contradicting headline". Haiku input
+// is ~1/3 the price of Sonnet and web-search results ARE the input (30-100k tokens per
+// call), so this cuts the biggest recurring spend line ~65%. Override via CATALYST_MODEL.
+const MODEL = process.env.CATALYST_MODEL ?? "claude-haiku-4-5";
 
 // profileId attributes this call's API spend to the account that triggered it
 // (SBv1 / SBv2 in practice). QQQ 0DTE never calls this.
@@ -73,7 +77,10 @@ Then STOP searching and output ONLY this JSON object as your entire final reply 
           model: MODEL,
           max_tokens: 900,
           messages: msgs,
-          tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 2 }],
+          // Search results dominate the cost of this call. The plain scheduled-catalyst
+          // question needs one earnings-calendar search; only the flip news-context read
+          // (3 questions) gets a second search.
+          tools: [{ type: "web_search_20260209", name: "web_search", max_uses: dir ? 2 : 1 }],
         },
         { signal: controller.signal },
       );
