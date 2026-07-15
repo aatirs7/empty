@@ -235,6 +235,42 @@ async function refreshIntradayScans(): Promise<void> {
   }
 }
 
+/** Heal the ENTRY side of DB/broker drift: a limit buy that fills AFTER execute's
+ *  short fill-wait stays `new` with no fill price forever (e.g. F filled 13 min after
+ *  submission on 2026-07-14). Poll those orders' broker status each tick and record
+ *  the fill — or the terminal cancel/reject — so P&L, reports, and reconciliation
+ *  (which only matches status='filled' rows) see the truth. */
+export async function syncPendingBuyFills(profileId: string): Promise<void> {
+  const broker = getBroker(profileId);
+  const rows = await db
+    .select({ oid: orders.id, aid: orders.alpacaOrderId })
+    .from(orders)
+    .innerJoin(proposals, eq(orders.proposalId, proposals.id))
+    .where(
+      and(
+        eq(proposals.profileId, profileId),
+        isNull(orders.filledPrice),
+        inArray(orders.status, ["new", "submitted", "accepted", "partially_filled", "pending_new"]),
+      ),
+    );
+  for (const r of rows) {
+    if (!r.aid) continue;
+    try {
+      const o = await broker.waitForFill(r.aid, 1, 1); // single status read, no polling loop
+      if (o.status === "filled" && o.filled_avg_price) {
+        await db
+          .update(orders)
+          .set({ status: "filled", filledPrice: o.filled_avg_price, filledAt: o.filled_at ? new Date(o.filled_at) : new Date() })
+          .where(eq(orders.id, r.oid));
+      } else if (["canceled", "rejected", "expired"].includes(o.status)) {
+        await db.update(orders).set({ status: o.status }).where(eq(orders.id, r.oid));
+      }
+    } catch {
+      /* retry next tick */
+    }
+  }
+}
+
 /** Heal DB/broker drift: if a filled order's contract is no longer held at the
  *  broker but we never recorded an exit, mark it closed (recovering the exit fill
  *  from Alpaca). Without this, a position closed outside our close path stays
@@ -480,7 +516,39 @@ export async function monitorTick(): Promise<Fire[]> {
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
           continue;
         }
-        const cat = await checkCatalyst(c.symbol, 5, c.profileId); // tap setups: plain scheduled catalyst check
+        // ONE catalyst check per symbol/profile/day, cached in the activity log (durable
+        // across serverless ticks AND QQQ's ~5-min candidate re-scans). Without this, a
+        // setup that passes the engine but dies downstream (contract band, caps) re-burned
+        // a web-search Claude call EVERY minute — ~65 QQQ calls on 2026-07-13 alone, which
+        // drained the API credits. Fail-open results are cached for the day too: a timeout
+        // abort still consumes tokens, so retrying it each tick is the same leak.
+        const [cachedCat] = await db
+          .select({ meta: activityLog.meta })
+          .from(activityLog)
+          .where(
+            and(
+              eq(activityLog.kind, "catalyst"),
+              eq(activityLog.runDate, today),
+              eq(activityLog.symbol, c.symbol),
+              eq(activityLog.profileId, c.profileId),
+            ),
+          )
+          .limit(1);
+        let cat = cachedCat?.meta as { catalyst: boolean; event: string; checked: boolean } | undefined;
+        if (!cat) {
+          cat = await checkCatalyst(c.symbol, 5, c.profileId); // tap setups: plain scheduled catalyst check
+          await logActivity([
+            {
+              profileId: c.profileId,
+              symbol: c.symbol,
+              kind: "catalyst",
+              direction,
+              candidateId: c.id,
+              detail: cat.catalyst ? `catalyst: ${cat.event}` : cat.checked ? "no catalyst" : "unchecked (call failed — fails open)",
+              meta: { catalyst: cat.catalyst, event: cat.event, checked: cat.checked },
+            },
+          ]);
+        }
         if (cat.catalyst) {
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
           continue;
@@ -566,7 +634,8 @@ export async function monitorTick(): Promise<Fire[]> {
     // "open" trades), including shelved zones_legacy on the shared account.
     for (const p of activeProfiles()) {
       try {
-        await reconcileClosedPositions(p.id);
+        await syncPendingBuyFills(p.id); // record late entry fills FIRST...
+        await reconcileClosedPositions(p.id); // ...so reconcile (status='filled' only) sees them
       } catch {
         // best-effort
       }

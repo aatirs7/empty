@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 
 // Public paths that never require a session.
-const PUBLIC = ["/login", "/api/login", "/api/logout", "/api/monitor", "/api/scan", "/api/shadow", "/api/daily-report"];
+const PUBLIC = ["/login", "/api/login", "/api/logout", "/api/monitor", "/api/scan", "/api/shadow", "/api/daily-report", "/api/vet-flips"];
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
