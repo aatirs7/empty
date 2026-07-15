@@ -13,13 +13,26 @@ import { eq, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { apiCosts } from "../db/schema";
 
-// Active Sonnet 5 pricing ($/1M tokens) + per-search fee. Mirrors anthropic.ts.
-const INPUT_RATE = 3;
-const OUTPUT_RATE = 15;
+// Per-model pricing ($/1M tokens) + per-search fee. The catalyst gate moved to
+// Haiku (1/3 the input rate) on 2026-07-15 — billing every call at Sonnet rates
+// would overstate spend 3x, so rate by the model family on the row.
 const SEARCH_RATE = 0.01;
+const MODEL_RATES: Record<string, { input: number; output: number }> = {
+  haiku: { input: 1, output: 5 },
+  sonnet: { input: 3, output: 15 },
+  opus: { input: 5, output: 25 },
+};
 
-export function estimateCost(inputTokens: number, outputTokens: number, searchCount: number): number {
-  return (inputTokens / 1e6) * INPUT_RATE + (outputTokens / 1e6) * OUTPUT_RATE + searchCount * SEARCH_RATE;
+function ratesFor(model?: string | null): { input: number; output: number } {
+  const m = (model ?? "").toLowerCase();
+  if (m.includes("haiku")) return MODEL_RATES.haiku;
+  if (m.includes("opus")) return MODEL_RATES.opus;
+  return MODEL_RATES.sonnet; // default (research model)
+}
+
+export function estimateCost(inputTokens: number, outputTokens: number, searchCount: number, model?: string | null): number {
+  const r = ratesFor(model);
+  return (inputTokens / 1e6) * r.input + (outputTokens / 1e6) * r.output + searchCount * SEARCH_RATE;
 }
 
 export interface CostEntry {
@@ -37,7 +50,7 @@ export async function logApiCost(entry: CostEntry): Promise<number> {
   const input = entry.inputTokens ?? 0;
   const output = entry.outputTokens ?? 0;
   const searches = entry.searchCount ?? 0;
-  const cost = estimateCost(input, output, searches);
+  const cost = estimateCost(input, output, searches, entry.model);
   try {
     await db.insert(apiCosts).values({
       profileId: entry.profileId ?? null,

@@ -38,6 +38,10 @@ export interface CatalystOptions {
 // is ~1/3 the price of Sonnet and web-search results ARE the input (30-100k tokens per
 // call), so this cuts the biggest recurring spend line ~65%. Override via CATALYST_MODEL.
 const MODEL = process.env.CATALYST_MODEL ?? "claude-haiku-4-5";
+// Haiku only supports the basic web-search tool; the dynamic-filtering variant
+// (web_search_20260209) is Opus/Sonnet-only and 400s on Haiku (which would silently
+// fail OPEN here — verified 2026-07-15).
+const SEARCH_TOOL = MODEL.includes("haiku") ? "web_search_20250305" : "web_search_20260209";
 
 // profileId attributes this call's API spend to the account that triggered it
 // (SBv1 / SBv2 in practice). QQQ 0DTE never calls this.
@@ -80,7 +84,7 @@ Then STOP searching and output ONLY this JSON object as your entire final reply 
           // Search results dominate the cost of this call. The plain scheduled-catalyst
           // question needs one earnings-calendar search; only the flip news-context read
           // (3 questions) gets a second search.
-          tools: [{ type: "web_search_20260209", name: "web_search", max_uses: dir ? 2 : 1 }],
+          tools: [{ type: SEARCH_TOOL, name: "web_search", max_uses: dir ? 2 : 1 } as unknown as Anthropic.ToolUnion],
         },
         { signal: controller.signal },
       );
