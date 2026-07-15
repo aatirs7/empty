@@ -60,7 +60,11 @@ Then STOP searching and output ONLY this JSON object as your entire final reply 
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 40_000);
   try {
-    const client = new Anthropic({ maxRetries: 1 });
+    // maxRetries 4: concurrent vet calls trip the per-minute token limit (fast 429s,
+    // no tokens consumed) — on 2026-07-15, 15/18 vet calls failed open that way with
+    // maxRetries 1. The SDK backs off on 429; the abort deadline above still bounds
+    // the TOTAL wall time (signal cancels mid-backoff), so this can't starve a tick.
+    const client = new Anthropic({ maxRetries: 4 });
     let msgs: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
     let response: Anthropic.Message | undefined;
     for (let i = 0; i < 4; i++) {

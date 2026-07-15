@@ -52,10 +52,12 @@ export async function vetFlipProfile(profile: Profile, runDate: string): Promise
     .from(candidates)
     .where(and(eq(candidates.profileId, profile.id), eq(candidates.runDate, runDate), eq(candidates.setupValid, true)));
 
-  // Nearest-to-retest first (most likely to actually trade); skip already-vetted rows
-  // so a re-run is cheap/idempotent.
+  // Nearest-to-retest first (most likely to actually trade). Skip rows whose vet
+  // COMPLETED (checked=true) so a re-run is cheap/idempotent — but DO retry rows that
+  // failed open (rate-limit 429s / timeouts), so manually re-triggering /api/vet-flips
+  // fills in the gaps instead of skipping them.
   const todo = rows
-    .filter((r) => (r.direction === "call" || r.direction === "put") && !(r.setup as { news?: FlipNews } | null)?.news?.checkedAt)
+    .filter((r) => (r.direction === "call" || r.direction === "put") && (r.setup as { news?: FlipNews } | null)?.news?.checked !== true)
     .sort((a, b) => Number(a.distanceToEdgePct ?? 999) - Number(b.distanceToEdgePct ?? 999))
     .slice(0, LIMIT);
 
