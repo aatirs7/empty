@@ -595,8 +595,18 @@ export async function monitorTick(): Promise<Fire[]> {
         })
         .returning({ id: proposals.id });
 
-      const autoOn = (await getProfileSettings(c.profileId)).autoExecute;
-      if (autoOn) {
+      // QQQ Manual trades ONLY its own account: without ALPACA_*_4 its broker falls
+      // back to the qqq_0dte account, and two profiles placing/flattening the same
+      // 0DTE contracts on one account is indistinguishable — so no keys, no auto-buy.
+      const noOwnAccount = c.profileId === "qqq_manual" && !process.env.ALPACA_API_KEY_ID4?.trim();
+      const autoOn = !noOwnAccount && (await getProfileSettings(c.profileId)).autoExecute;
+      if (noOwnAccount) {
+        await db
+          .update(proposals)
+          .set({ status: "expired", zoneRead: `${alert} Auto-skip: qqq_manual has no dedicated account (set ALPACA_*_4)` })
+          .where(eq(proposals.id, prop.id));
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — qqq_manual needs its own account (ALPACA_*_4)" });
+      } else if (autoOn) {
         try {
           const r = await executeProposal(prop.id, "auto");
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: true, detail: `order #${r.orderId} ${r.orderStatus}` });
@@ -640,8 +650,12 @@ export async function monitorTick(): Promise<Fire[]> {
         // best-effort
       }
     }
-    for (const pid of ["sniper_swing", "sbv2", "qqq_0dte"]) {
+    for (const pid of ["sniper_swing", "sbv2", "qqq_0dte", "qqq_manual"]) {
       try {
+        // qqq_manual without its own account falls back to the qqq_0dte account for
+        // reads — managing exits there would double-manage (and flatten) qqq_0dte's
+        // positions, so it only manages once ALPACA_*_4 is configured.
+        if (pid === "qqq_manual" && !process.env.ALPACA_API_KEY_ID4?.trim()) continue;
         if (!(await getProfileSettings(pid)).autoManage) continue;
         fires.push(...(await manageExits(pid, nearClose)));
       } catch {

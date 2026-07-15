@@ -17,7 +17,7 @@ import { activeProfiles, type Profile } from "./profiles";
 
 /** Shadow exit rule per track (measurement; distinct from the live exit). */
 function shadowExit(profileId: string): { tp: number; sl: number } {
-  return profileId === "qqq_0dte" ? { tp: 0.6, sl: -0.4 } : { tp: 0.5, sl: -0.4 };
+  return profileId === "qqq_0dte" || profileId === "qqq_manual" ? { tp: 0.6, sl: -0.4 } : { tp: 0.5, sl: -0.4 };
 }
 
 const expiryHintFor = (p: Profile) => (p.contract.expiryKind === "zeroDte" ? "0dte" : "friday");

@@ -161,6 +161,7 @@ export async function scanProfile(profile: Profile, runDate: string): Promise<Sc
 export async function runScan(runDate = new Date().toISOString().slice(0, 10)): Promise<ScanResult[]> {
   const results: ScanResult[] = [];
   for (const profile of activeProfiles()) {
+    if (profile.manualLevels) continue; // levels are hand-entered (/api/manual-levels), never scanned
     results.push(await scanProfile(profile, runDate));
   }
 

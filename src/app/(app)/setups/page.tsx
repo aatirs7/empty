@@ -6,6 +6,7 @@ import { getProfile } from "@/lib/profiles";
 import ProfileTabs from "@/components/ProfileTabs";
 import { resolveUiProfile } from "@/lib/ui-profiles";
 import QqqPrediction from "@/components/QqqPrediction";
+import ManualLevels from "@/components/ManualLevels";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,11 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
       <div className="space-y-5">
         <PageTitle title="Setups" />
         {tabs}
-        <Empty>No scan yet for {getProfile(profileId).label}. The scanner runs overnight.</Empty>
+        {profileId === "qqq_manual" ? (
+          <ManualLevels />
+        ) : (
+          <Empty>No scan yet for {getProfile(profileId).label}. The scanner runs overnight.</Empty>
+        )}
       </div>
     );
   }
@@ -50,6 +55,7 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
       </p>
 
       {profileId === "qqq_0dte" && <QqqPrediction />}
+      {profileId === "qqq_manual" && <ManualLevels />}
 
       {valid.length === 0 ? (
         <Empty>No ready setups from the latest scan. That&apos;s normal on quiet days.</Empty>

@@ -10,7 +10,7 @@
 import { type StrategyOptions, DEFAULT_STRATEGY_OPTIONS } from "./strategy";
 import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
-export type ProfileId = "sniper_swing" | "sbv2" | "qqq_0dte" | "zones_legacy";
+export type ProfileId = "sniper_swing" | "sbv2" | "qqq_0dte" | "qqq_manual" | "zones_legacy";
 
 /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day;
  *  oneDay = next trading day (the QQQ 1-day-swing leg). */
@@ -108,6 +108,10 @@ export interface Profile {
   exit: ExitConfig;
   autoDefault: boolean; // default auto-execute (overridable in profile_settings)
   baselineSymbol: string; // scorecard benchmark for this track
+  // Levels are hand-entered by the owner (POST /api/manual-levels) instead of scanned.
+  // The scanner + intraday re-scan skip these profiles entirely; candidates come only
+  // from the manual input (which would otherwise be wiped by a re-scan).
+  manualLevels?: boolean;
 }
 
 // SniperBot Master — large/mega-cap institutional order-block swings, weekly options,
@@ -215,6 +219,43 @@ const QQQ_0DTE: Profile = {
   baselineSymbol: "QQQ",
 };
 
+// QQQ Manual (EXPERIMENTAL, owner request 2026-07-15) — QQQ-only 0DTE off levels the
+// owner hand-enters each morning (5m/15m/1h charts), NOT SniperBot zones. Entry is a
+// 5-MINUTE CONFIRMATION CANDLE at the level (never a bare touch). Everything else
+// mirrors qqq_0dte — including the coin-flip protections: the 60% reaction-DB
+// probability floor AND EV-net-of-spread+theta both apply (manual levels don't fix
+// 0DTE losing on ~50% setups; these gates do). Runs ALONGSIDE qqq_0dte, never
+// replaces it. Own measurement track; trades ALPACA_*_4 when configured (falls back
+// to the QQQ account read-only — auto-buy + exits are hard-gated on keys4 so the two
+// QQQ variants can never trade/manage the same account).
+const QQQ_MANUAL: Profile = {
+  id: "qqq_manual",
+  label: "QQQ Manual",
+  description: "QQQ 0DTE off owner-entered 5m/15m/1h levels, 5-min confirmation candle entry. Experimental.",
+  active: true,
+  manualLevels: true, // candidates come ONLY from /api/manual-levels — never scanned
+  strategy: DEFAULT_STRATEGY_OPTIONS,
+  zoneTimeframes: [], // nothing to scan; also keeps refreshIntradayScans away
+  confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 }, // 5-min candle REQUIRED
+  requireClearRunway: false, // manual levels sit wherever the owner draws them
+  minScore: 55, // same 0DTE playbook gate as qqq_0dte
+  minProbability: 60, // HARD floor — keep the coin-flip fix on this variant too
+  netContractCosts: true, // EV must clear round-trip spread + theta — keep it here too
+  contract: {
+    expiryKind: "zeroDte", // 0DTE ONLY
+    otmPct: 1.5,
+    itmPct: 1,
+    priceFloor: 0.4,
+    priceIdeal: 0.8,
+    priceCap: 1.5,
+    liquiditySpread: 0.7,
+  },
+  caps: { perTradeBudget: 160, maxContracts: 1, maxOpenPositions: 2 },
+  exit: { style: "intraday", takeProfit: 0.6, stopLoss: -0.35, sameDayExit: true },
+  autoDefault: false, // experimental — owner enables via profile-auto when ready
+  baselineSymbol: "QQQ",
+};
+
 // Zones legacy — the previous cheap-universe tap-only strategy. SHELVED: no new
 // auto-trades. Kept for its shadow history + ongoing comparison only.
 const ZONES_LEGACY: Profile = {
@@ -246,10 +287,11 @@ export const PROFILES: Record<ProfileId, Profile> = {
   sniper_swing: SNIPER_SWING,
   sbv2: SBV2,
   qqq_0dte: QQQ_0DTE,
+  qqq_manual: QQQ_MANUAL,
   zones_legacy: ZONES_LEGACY,
 };
 
-export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "qqq_0dte", "zones_legacy"];
+export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "qqq_0dte", "qqq_manual", "zones_legacy"];
 
 export function getProfile(id: string | null | undefined): Profile {
   return PROFILES[(id ?? "sniper_swing") as ProfileId] ?? SNIPER_SWING;

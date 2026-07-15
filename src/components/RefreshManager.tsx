@@ -3,14 +3,26 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const THRESHOLD = 70; // px pull to trigger
-const AUTO_MS = 30_000; // always-updating interval
+const AUTO_MS = 60_000; // auto-refresh interval (foreground only)
 
 // Global: pull-down-to-refresh with a visible spinner, plus periodic auto-refresh
 // so every page stays current. Lives in the app shell, so it's on all pages.
+//
+// PHONE-PERF RULES (2026-07-15 device-drain fix — keep these):
+// 1. router.refresh() re-runs EVERY server component on the route (DB + Alpaca
+//    work server-side, full RSC payload + reconcile on the phone). It must only
+//    fire while the app is actually VISIBLE; when the user returns, one refresh
+//    on visibilitychange keeps the "always current when I look" feel.
+// 2. The touch listeners are registered ONCE. The pull distance lives in a ref
+//    (mirrored to state for render) — the old version had [pull] in the effect
+//    deps, so every touchmove frame re-subscribed 3 window listeners (~60x/s
+//    during a drag), which is exactly the systemwide keyboard/scroll jank the
+//    owner reported.
 export default function RefreshManager() {
   const router = useRouter();
   const [pull, setPull] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const pullRef = useRef(0);
   const startY = useRef<number | null>(null);
   const dragging = useRef(false);
 
@@ -21,11 +33,24 @@ export default function RefreshManager() {
   }, [router]);
 
   useEffect(() => {
-    const iv = window.setInterval(doRefresh, AUTO_MS);
-    return () => window.clearInterval(iv);
+    const iv = window.setInterval(() => {
+      if (document.visibilityState === "visible") doRefresh();
+    }, AUTO_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") doRefresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [doRefresh]);
 
   useEffect(() => {
+    const setPullBoth = (v: number) => {
+      pullRef.current = v;
+      setPull(v);
+    };
     const onStart = (e: TouchEvent) => {
       if (window.scrollY <= 0) {
         startY.current = e.touches[0].clientY;
@@ -35,12 +60,12 @@ export default function RefreshManager() {
     const onMove = (e: TouchEvent) => {
       if (!dragging.current || startY.current == null) return;
       const dy = e.touches[0].clientY - startY.current;
-      if (dy > 0 && window.scrollY <= 0) setPull(Math.min(dy * 0.5, 90));
-      else setPull(0);
+      if (dy > 0 && window.scrollY <= 0) setPullBoth(Math.min(dy * 0.5, 90));
+      else if (pullRef.current !== 0) setPullBoth(0);
     };
     const onEnd = () => {
-      if (pull >= THRESHOLD * 0.5) doRefresh();
-      setPull(0);
+      if (pullRef.current >= THRESHOLD * 0.5) doRefresh();
+      setPullBoth(0);
       startY.current = null;
       dragging.current = false;
     };
@@ -52,7 +77,7 @@ export default function RefreshManager() {
       window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
     };
-  }, [pull, doRefresh]);
+  }, [doRefresh]);
 
   const show = refreshing || pull > 4;
   const y = refreshing ? 46 : pull;

@@ -12,11 +12,10 @@ interface Status {
 
 function countdown(toIso: string): string {
   const ms = new Date(toIso).getTime() - Date.now();
-  if (ms <= 0) return "any moment";
+  if (ms <= 60_000) return "any moment";
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
-  const s = Math.floor((ms % 60_000) / 1000);
-  return h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 export default function LogStatus() {
@@ -30,8 +29,17 @@ export default function LogStatus() {
         .then((j) => (j.ok ? setS(j) : null))
         .catch(() => {});
     load();
-    const poll = setInterval(load, 30_000); // refresh status every 30s
-    const clock = setInterval(() => tick((n) => n + 1), 1000); // tick the countdown
+    // Foreground-only: a 1s tick kept the CPU awake re-rendering this component
+    // every second even backgrounded (2026-07-15 device-lag fix). The countdown
+    // renders minute granularity, so a 30s tick is plenty.
+    const whenVisible = (fn: () => void) => () => {
+      if (document.visibilityState === "visible") fn();
+    };
+    const poll = setInterval(whenVisible(load), 30_000); // refresh status every 30s
+    const clock = setInterval(
+      whenVisible(() => tick((n) => n + 1)),
+      30_000,
+    );
     return () => {
       clearInterval(poll);
       clearInterval(clock);

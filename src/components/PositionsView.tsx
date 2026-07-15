@@ -62,14 +62,18 @@ export default function PositionsView() {
 
   useEffect(() => {
     // Just DISPLAY current positions (exits are the monitor cron's job — opening
-    // this page must never close a trade). Poll every 8s + on tab focus so the
-    // live P&L stays current without a manual refresh.
+    // this page must never close a trade). Poll every 15s + on tab focus so the
+    // live P&L stays current without a manual refresh. FOREGROUND ONLY — polling
+    // a backgrounded PWA drains the phone (2026-07-15 device-lag fix); the
+    // visibility/focus handlers below refresh immediately on return.
     const refresh = () => {
       load();
       loadClosed();
     };
     refresh();
-    const iv = window.setInterval(refresh, 8000);
+    const iv = window.setInterval(() => {
+      if (document.visibilityState === "visible") refresh();
+    }, 15_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
