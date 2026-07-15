@@ -6,10 +6,11 @@
  * component — Next replaces a client module's non-component exports with client
  * references on the server, so `UI_PROFILE_IDS.includes(...)` would blow up.
  */
+// qqq_0dte was PAUSED + hidden 2026-07-15 (account handed to qqq_manual); it stays
+// shadow-measured but has no tab, no report section, no scorecard track shown.
 export const UI_PROFILE_TABS = [
   { id: "sbv2", label: "SBv2" },
   { id: "sniper_swing", label: "SBv1" },
-  { id: "qqq_0dte", label: "QQQ 0DTE" },
   { id: "qqq_manual", label: "QQQ Manual" },
 ] as const;
 

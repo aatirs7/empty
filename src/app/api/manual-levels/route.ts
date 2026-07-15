@@ -42,9 +42,8 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     auto: settings.autoExecute,
-    // Trading is hard-gated on a dedicated paper account (ALPACA_*_4) so this
-    // variant can never place/flatten orders on the qqq_0dte account.
-    hasOwnAccount: !!process.env.ALPACA_API_KEY_ID4?.trim(),
+    // Trades the QQQ paper account (ALPACA_*_2, handed over from the paused qqq_0dte).
+    hasOwnAccount: !!process.env.ALPACA_API_KEY_ID2?.trim(),
     levels: rows.map((r) => {
       const manual = (r.setup as { manual?: { tf?: string; level?: number; enteredAt?: string } } | null)?.manual;
       return {
@@ -73,7 +72,7 @@ export async function POST(req: Request) {
   if (typeof body.auto === "boolean") {
     await setProfileAuto(PROFILE_ID, { autoExecute: body.auto, autoManage: body.auto });
     if (!Array.isArray(body.levels)) {
-      return NextResponse.json({ ok: true, auto: body.auto, hasOwnAccount: !!process.env.ALPACA_API_KEY_ID4?.trim() });
+      return NextResponse.json({ ok: true, auto: body.auto, hasOwnAccount: !!process.env.ALPACA_API_KEY_ID2?.trim() });
     }
   }
   if (!Array.isArray(body.levels)) {

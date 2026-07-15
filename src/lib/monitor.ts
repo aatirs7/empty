@@ -595,17 +595,17 @@ export async function monitorTick(): Promise<Fire[]> {
         })
         .returning({ id: proposals.id });
 
-      // QQQ Manual trades ONLY its own account: without ALPACA_*_4 its broker falls
-      // back to the qqq_0dte account, and two profiles placing/flattening the same
-      // 0DTE contracts on one account is indistinguishable — so no keys, no auto-buy.
-      const noOwnAccount = c.profileId === "qqq_manual" && !process.env.ALPACA_API_KEY_ID4?.trim();
+      // QQQ Manual trades the QQQ paper account (ALPACA_*_2 — handed over from the
+      // shelved qqq_0dte on 2026-07-15). Without those keys its broker would fall back
+      // to SBv1's default account, so no keys, no auto-buy.
+      const noOwnAccount = c.profileId === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim();
       const autoOn = !noOwnAccount && (await getProfileSettings(c.profileId)).autoExecute;
       if (noOwnAccount) {
         await db
           .update(proposals)
-          .set({ status: "expired", zoneRead: `${alert} Auto-skip: qqq_manual has no dedicated account (set ALPACA_*_4)` })
+          .set({ status: "expired", zoneRead: `${alert} Auto-skip: qqq_manual has no account keys (set ALPACA_*_2)` })
           .where(eq(proposals.id, prop.id));
-        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — qqq_manual needs its own account (ALPACA_*_4)" });
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — qqq_manual needs its account keys (ALPACA_*_2)" });
       } else if (autoOn) {
         try {
           const r = await executeProposal(prop.id, "auto");
@@ -652,10 +652,14 @@ export async function monitorTick(): Promise<Fire[]> {
     }
     for (const pid of ["sniper_swing", "sbv2", "qqq_0dte", "qqq_manual"]) {
       try {
-        // qqq_manual without its own account falls back to the qqq_0dte account for
-        // reads — managing exits there would double-manage (and flatten) qqq_0dte's
-        // positions, so it only manages once ALPACA_*_4 is configured.
-        if (pid === "qqq_manual" && !process.env.ALPACA_API_KEY_ID4?.trim()) continue;
+        // A shelved profile is PAUSED: no orders, and no exit management — its account
+        // may have been handed to another profile (qqq_0dte → qqq_manual, 2026-07-15),
+        // and two profiles managing one account would flatten each other's positions.
+        // Code-level so a stale autoManage DB flag can't override it.
+        if (getProfile(pid).shelved) continue;
+        // qqq_manual without its keys falls back to SBv1's default account for reads —
+        // never manage exits there.
+        if (pid === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) continue;
         if (!(await getProfileSettings(pid)).autoManage) continue;
         fires.push(...(await manageExits(pid, nearClose)));
       } catch {

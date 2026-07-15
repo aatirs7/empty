@@ -39,19 +39,13 @@ export interface BrokerAdapter {
 }
 
 /** Account keys for a profile: each strategy trades its OWN paper account so P&L
- *  never blends. QQQ 0DTE → ALPACA_*_2, SBv2 → ALPACA_*_3, QQQ Manual → ALPACA_*_4.
+ *  never blends. QQQ account (ALPACA_*_2, PA3NPEDZA11B) → owner handed it from the
+ *  PAUSED qqq_0dte to qqq_manual on 2026-07-15 (qqq_0dte keeps read access to its
+ *  history; it is shelved, so it can place no new orders). SBv2 → ALPACA_*_3.
  *  SBv1 (sniper_swing) and the shelved zones_legacy share the default keys. Falls
- *  back when a profile's own account isn't configured (shadow-only until then).
- *  QQQ Manual falls back to the QQQ account (*_2) for READS only — its auto-buy and
- *  exit management are hard-gated on keys4 in monitor.ts, so the two QQQ variants
- *  can never place or manage orders on the same account. */
+ *  back to the default keys when a profile's account isn't configured. */
 function accountKeysFor(profileId?: string): AccountKeys | null {
   if (profileId === "qqq_0dte" || profileId === "qqq_manual") {
-    if (profileId === "qqq_manual") {
-      const id4 = process.env.ALPACA_API_KEY_ID4?.trim();
-      const secret4 = process.env.ALPACA_API_SECRET_KEY4?.trim();
-      if (id4 && secret4) return { id: id4, secret: secret4 };
-    }
     const id = process.env.ALPACA_API_KEY_ID2?.trim();
     const secret = process.env.ALPACA_API_SECRET_KEY2?.trim();
     if (id && secret) return { id, secret };

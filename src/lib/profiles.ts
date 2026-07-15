@@ -185,11 +185,16 @@ const SBV2: Profile = {
 
 // QQQ 0DTE — single-ticker, same-day-expiry, intraday horizon. High variance / fast
 // decay: its OWN tight caps and its OWN scorecard track. Never shares swing sizing.
+// PAUSED 2026-07-15 (owner): shelved + hidden from the UI; its paper account
+// (PA3NPEDZA11B, ALPACA_*_2) was handed to qqq_manual. Still scanned + shadow-
+// measured for the head-to-head. Unpausing requires unshelving here AND deciding
+// the account split (both QQQ profiles on one account can't both trade).
 const QQQ_0DTE: Profile = {
   id: "qqq_0dte",
   label: "QQQ 0DTE",
   description: "QQQ same-day-expiry intraday setups. High variance, tight caps.",
-  active: true,
+  active: true, // still scanned for shadow measurement
+  shelved: true, // NO live signals/orders — paused, account handed to qqq_manual
   strategy: DEFAULT_STRATEGY_OPTIONS,
   // Purely same-day 0DTE off 15Min + 1H. Daily (~5-day holds) and 4H (~3.7-day
   // holds) were both dropped — they're multi-day swings, not same-day trades.
@@ -224,10 +229,10 @@ const QQQ_0DTE: Profile = {
 // 5-MINUTE CONFIRMATION CANDLE at the level (never a bare touch). Everything else
 // mirrors qqq_0dte — including the coin-flip protections: the 60% reaction-DB
 // probability floor AND EV-net-of-spread+theta both apply (manual levels don't fix
-// 0DTE losing on ~50% setups; these gates do). Runs ALONGSIDE qqq_0dte, never
-// replaces it. Own measurement track; trades ALPACA_*_4 when configured (falls back
-// to the QQQ account read-only — auto-buy + exits are hard-gated on keys4 so the two
-// QQQ variants can never trade/manage the same account).
+// 0DTE losing on ~50% setups; these gates do). Trades the QQQ paper account
+// (ALPACA_*_2, PA3NPEDZA11B) — handed over from qqq_0dte, which is PAUSED/shelved
+// so the two can never trade the same account at once. qqq_0dte stays shadow-
+// measured for the head-to-head.
 const QQQ_MANUAL: Profile = {
   id: "qqq_manual",
   label: "QQQ Manual",

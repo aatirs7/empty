@@ -126,7 +126,7 @@ export default function ManualLevels() {
       {msg && <p className="text-xs text-center text-muted">{msg}</p>}
 
       {/* Auto-trade toggle (paper). Buys are additionally hard-blocked server-side
-          until this profile has its own account keys (ALPACA_*_4). */}
+          if the QQQ account keys (ALPACA_*_2) are missing. */}
       <div className="flex items-center justify-between border-t border-border pt-3">
         <div>
           <p className="text-sm font-medium">Auto-trade these levels</p>
@@ -136,7 +136,7 @@ export default function ManualLevels() {
               : auto
                 ? hasAccount
                   ? "ON — Vega buys confirmed setups itself (paper)."
-                  : "ON, but BLOCKED — add the ALPACA_*_4 account keys first."
+                  : "ON, but BLOCKED — the QQQ account keys are missing."
                 : "OFF — setups appear for manual approval only."}
           </p>
         </div>
