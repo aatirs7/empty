@@ -22,6 +22,8 @@ export default function ManualLevels() {
   const [saved, setSaved] = useState<SavedLevel[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [auto, setAuto] = useState<boolean | null>(null);
+  const [hasAccount, setHasAccount] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -29,6 +31,8 @@ export default function ManualLevels() {
       const j = await r.json();
       if (j.ok) {
         setSaved(j.levels);
+        setAuto(!!j.auto);
+        setHasAccount(!!j.hasOwnAccount);
         const next: Record<Tf, string> = { "5m": "", "15m": "", "1h": "" };
         for (const l of j.levels as SavedLevel[]) {
           const tf = (TFS as readonly string[]).includes(l.tf) ? (l.tf as Tf) : "15m";
@@ -70,6 +74,24 @@ export default function ManualLevels() {
     setBusy(false);
   }
 
+  async function toggleAuto() {
+    if (auto == null) return;
+    const next = !auto;
+    setAuto(next); // optimistic
+    try {
+      const r = await fetch("/api/manual-levels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto: next }),
+      });
+      const j = await r.json();
+      if (!j.ok) setAuto(!next);
+      else setHasAccount(!!j.hasOwnAccount);
+    } catch {
+      setAuto(!next);
+    }
+  }
+
   return (
     <div className="bg-panel border border-accent/30 rounded-2xl p-4 space-y-3">
       <div>
@@ -102,6 +124,33 @@ export default function ManualLevels() {
         {busy ? "Saving…" : "Save today's levels"}
       </button>
       {msg && <p className="text-xs text-center text-muted">{msg}</p>}
+
+      {/* Auto-trade toggle (paper). Buys are additionally hard-blocked server-side
+          until this profile has its own account keys (ALPACA_*_4). */}
+      <div className="flex items-center justify-between border-t border-border pt-3">
+        <div>
+          <p className="text-sm font-medium">Auto-trade these levels</p>
+          <p className="text-[11px] text-muted">
+            {auto == null
+              ? "…"
+              : auto
+                ? hasAccount
+                  ? "ON — Vega buys confirmed setups itself (paper)."
+                  : "ON, but BLOCKED — add the ALPACA_*_4 account keys first."
+                : "OFF — setups appear for manual approval only."}
+          </p>
+        </div>
+        <button
+          onClick={toggleAuto}
+          disabled={auto == null || busy}
+          aria-label="Toggle auto-trade"
+          className={`relative h-7 w-12 rounded-full transition-colors disabled:opacity-40 ${auto ? "bg-accent" : "bg-panel-2 border border-border"}`}
+        >
+          <span
+            className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${auto ? "translate-x-5" : "translate-x-0.5"}`}
+          />
+        </button>
+      </div>
 
       {saved && saved.length > 0 && (
         <div className="space-y-1 pt-1 border-t border-border">

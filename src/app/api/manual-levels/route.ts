@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { candidates } from "@/db/schema";
 import { getUnderlyingPrice } from "@/lib/alpaca";
+import { getProfileSettings, setProfileAuto } from "@/lib/profile-settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,8 +38,13 @@ export async function GET() {
     .select()
     .from(candidates)
     .where(and(eq(candidates.runDate, runDate), eq(candidates.profileId, PROFILE_ID)));
+  const settings = await getProfileSettings(PROFILE_ID);
   return NextResponse.json({
     ok: true,
+    auto: settings.autoExecute,
+    // Trading is hard-gated on a dedicated paper account (ALPACA_*_4) so this
+    // variant can never place/flatten orders on the qqq_0dte account.
+    hasOwnAccount: !!process.env.ALPACA_API_KEY_ID4?.trim(),
     levels: rows.map((r) => {
       const manual = (r.setup as { manual?: { tf?: string; level?: number; enteredAt?: string } } | null)?.manual;
       return {
@@ -54,12 +60,26 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  let body: { levels?: LevelInput[] };
+  let body: { levels?: LevelInput[]; auto?: boolean };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ ok: false, error: "invalid JSON" }, { status: 400 });
   }
+
+  // Auto-mode toggle (PAPER auto-buy + auto-manage for this profile only). A
+  // toggle-only POST must NOT touch the day's levels — levels are replaced only
+  // when a `levels` array is actually sent.
+  if (typeof body.auto === "boolean") {
+    await setProfileAuto(PROFILE_ID, { autoExecute: body.auto, autoManage: body.auto });
+    if (!Array.isArray(body.levels)) {
+      return NextResponse.json({ ok: true, auto: body.auto, hasOwnAccount: !!process.env.ALPACA_API_KEY_ID4?.trim() });
+    }
+  }
+  if (!Array.isArray(body.levels)) {
+    return NextResponse.json({ ok: false, error: "nothing to save" }, { status: 400 });
+  }
+
   const levels = (body.levels ?? []).filter(
     (l): l is LevelInput => (l?.tf === "5m" || l?.tf === "15m" || l?.tf === "1h") && Number.isFinite(l?.price) && l.price > 0,
   );
