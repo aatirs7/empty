@@ -37,14 +37,15 @@ export interface VetResult {
 
 // Bounded so the whole job fits a 300s serverless window: at most LIMIT flips, CONC
 // at a time, each capped at PER_CALL_MS. LIMIT/CONC waves × PER_CALL_MS ≈ budget.
-// The web-search call runs ~33-70s, so give it ~85s here (no 60s TICK pressure at scan
-// time) to actually COMPLETE for almost all names — that's the whole point of moving it
-// off the hot path. 18/6 = 3 waves × 85s ≈ 255s. The reachability filter leaves only
-// ~16 flips tradeable, so the nearest 18 (sorted by distance) cover the tradeable set;
-// any un-vetted flip has no verdict → the monitor fails open (trades) on it.
-const LIMIT = 18;
+// Web-search latency varies WILDLY: ~33-70s measured 2026-07-13, but 150s+ (solo!)
+// on the night of 2026-07-15 — model-independent (Haiku stalled the same), so the
+// tool itself degrades at times. 12 nearest / 6 conc / 120s = 2 waves ≈ 240s: fewer
+// names than before but each call gets real headroom. Failed-open (checked=false)
+// rows are RETRIED on any later manual /api/vet-flips trigger; an un-vetted flip has
+// no verdict → the monitor fails open (trades) on it.
+const LIMIT = 12;
 const CONC = 6;
-const PER_CALL_MS = 85_000;
+const PER_CALL_MS = 120_000;
 
 export async function vetFlipProfile(profile: Profile, runDate: string): Promise<VetResult> {
   const rows = await db
