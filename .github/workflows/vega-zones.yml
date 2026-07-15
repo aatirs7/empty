@@ -3,9 +3,13 @@ name: Vega Zones
 # Pre-market zone research: researches the latest scan's valid zone setups with
 # the zone_setup fed to the Brain as the highest-weight signal. No-op when the
 # last scan produced no valid setups.
+#
+# SCHEDULE REMOVED 2026-07-15: display-only spend (~$1/run) whose proposals are
+# invisible in the profile-tabbed UI (persisted with profileId null), and the
+# giant web-search call had been timing out (>10 min SDK limit) 5 of the last 7
+# runs — billed with nothing persisted. Manual dispatch still works; to revive
+# it properly, stream the research call and give its output a UI surface first.
 on:
-  schedule:
-    - cron: "15 13 * * 1-5" # ~pre-market, reads the prior evening's scan candidates
   workflow_dispatch: {}
 
 jobs:
