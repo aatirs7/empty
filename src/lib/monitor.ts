@@ -349,8 +349,16 @@ export async function monitorTick(): Promise<Fire[]> {
   const today = new Date().toISOString().slice(0, 10);
   // Outcome push for a tapped SBv2 setup that did NOT enter (pairs with the "checking"
   // alert): the owner sees checking -> bought (via executeProposal) OR not-entered here.
-  const notifyBlocked = (sym: string, dir: string, why: string) =>
-    sendPush(`${sym} not entered`, `${dir.toUpperCase()} blocked — ${why}`, "/positions").catch(() => {});
+  // Auto-off profiles stay silent (SBv3 is an undiverged SBv2 clone — pushing for both
+  // would double every alert; a paused profile shouldn't buzz the phone either).
+  const notifyBlocked = async (pid: string, sym: string, dir: string, why: string) => {
+    try {
+      if (!(await getProfileSettings(pid)).autoExecute) return;
+      await sendPush(`${sym} not entered`, `${dir.toUpperCase()} blocked — ${why}`, "/positions");
+    } catch {
+      /* push failures never break the tick */
+    }
+  };
   // Durable dedup for the SBv2 tap trigger: candidates that already logged a tap today.
   // The flip entry fires on a boundary TAP (not a crossing edge), so it needs this to
   // fire once per candidate per day (a proposal isn't always created — e.g. a skip).
@@ -404,7 +412,12 @@ export async function monitorTick(): Promise<Fire[]> {
       // command — the buy may still be blocked; a separate "Bought"/"not entered" push
       // follows once the outcome is known. Logging the tap below adds this candidate to
       // tappedSet on the next tick, so it won't re-fire while price rests at the zone.
-      await sendPush(`${c.symbol} zone tap ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
+      // Pushes only for profiles that can actually BUY (auto on) — SBv3 is an undiverged
+      // SBv2 clone, so alerting for both would double every tap notification; its taps
+      // are still logged for measurement.
+      if ((await getProfileSettings(c.profileId)).autoExecute) {
+        await sendPush(`${c.symbol} zone tap ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
+      }
       await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `zone tap ${cur} — checking ${direction.toUpperCase()}` }]);
       confirmReason = " First retest of the flipped boundary.";
     } else if (profile.confirmation.enabled) {
@@ -443,7 +456,7 @@ export async function monitorTick(): Promise<Fire[]> {
       const scanAgeDays = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${c.runDate}T00:00:00Z`)) / 86_400_000;
       if (scanAgeDays > 3) {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `flip scan ${Math.round(scanAgeDays)}d old (missed scan) — skipped` });
-        await notifyBlocked(c.symbol, direction, "watchlist scan too old");
+        await notifyBlocked(c.profileId, c.symbol, direction, "watchlist scan too old");
         continue;
       }
     }
@@ -454,7 +467,7 @@ export async function monitorTick(): Promise<Fire[]> {
     const mechanical = profile.entryKind === "flip_retest";
     if (!pb) {
       fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "could not score; skipped" });
-      if (mechanical) await notifyBlocked(c.symbol, direction, "could not read the chart");
+      if (mechanical) await notifyBlocked(c.profileId, c.symbol, direction, "could not read the chart");
       continue;
     }
     if (!mechanical && pb.score < profile.minScore) {
@@ -492,19 +505,19 @@ export async function monitorTick(): Promise<Fire[]> {
         const news = (c.setup as { news?: { catalyst?: boolean; event?: string; newsAgainst?: boolean; newsFor?: boolean; summary?: string } } | null)?.news;
         if (news?.catalyst) {
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${news.event ?? "scheduled event"}` });
-          await notifyBlocked(c.symbol, direction, `earnings/Fed: ${news.event || "scheduled event"}`);
+          await notifyBlocked(c.profileId, c.symbol, direction, `earnings/Fed: ${news.event || "scheduled event"}`);
           continue;
         }
         if (news?.newsAgainst) {
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — news contradicts the flip: ${news.summary ?? ""}`.trim() });
-          await notifyBlocked(c.symbol, direction, "fresh news against the breakout");
+          await notifyBlocked(c.profileId, c.symbol, direction, "fresh news against the breakout");
           continue;
         }
         // Reward / "move large enough": require a reaction-DB target — no target means
         // thin history or too small a projected move, so skip.
         if (pred.targetMain == null) {
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — no DB target (move too small / thin history)" });
-          await notifyBlocked(c.symbol, direction, "no historical target (move too small)");
+          await notifyBlocked(c.profileId, c.symbol, direction, "no historical target (move too small)");
           continue;
         }
         sniperConfidence = Math.max(0, Math.min(1, pred.probability / 100));
@@ -595,17 +608,20 @@ export async function monitorTick(): Promise<Fire[]> {
         })
         .returning({ id: proposals.id });
 
-      // QQQ Manual trades the QQQ paper account (ALPACA_*_2 — handed over from the
-      // shelved qqq_0dte on 2026-07-15). Without those keys its broker would fall back
-      // to SBv1's default account, so no keys, no auto-buy.
-      const noOwnAccount = c.profileId === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim();
+      // Profiles whose broker falls back to SBv1's DEFAULT account when their own
+      // keys are missing must never auto-buy in that state: qqq_manual needs the QQQ
+      // account keys (ALPACA_*_2), sbv3 (the SBv2 clone) needs ALPACA_*_5.
+      const noOwnAccount =
+        (c.profileId === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) ||
+        (c.profileId === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim());
       const autoOn = !noOwnAccount && (await getProfileSettings(c.profileId)).autoExecute;
       if (noOwnAccount) {
+        const keysHint = c.profileId === "sbv3" ? "ALPACA_*_5" : "ALPACA_*_2";
         await db
           .update(proposals)
-          .set({ status: "expired", zoneRead: `${alert} Auto-skip: qqq_manual has no account keys (set ALPACA_*_2)` })
+          .set({ status: "expired", zoneRead: `${alert} Auto-skip: ${c.profileId} has no account keys (set ${keysHint})` })
           .where(eq(proposals.id, prop.id));
-        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — qqq_manual needs its account keys (ALPACA_*_2)" });
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — ${c.profileId} needs its account keys (${keysHint})` });
       } else if (autoOn) {
         try {
           const r = await executeProposal(prop.id, "auto");
@@ -620,7 +636,7 @@ export async function monitorTick(): Promise<Fire[]> {
             .set({ status: "expired", zoneRead: `${alert} Auto-skip: ${why}` })
             .where(eq(proposals.id, prop.id));
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: why });
-          if (profile.entryKind === "flip_retest") await notifyBlocked(c.symbol, direction, friendlyBlock(why));
+          if (profile.entryKind === "flip_retest") await notifyBlocked(c.profileId, c.symbol, direction, friendlyBlock(why));
         }
       } else {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "proposal created (auto-buy off)" });
@@ -650,16 +666,17 @@ export async function monitorTick(): Promise<Fire[]> {
         // best-effort
       }
     }
-    for (const pid of ["sniper_swing", "sbv2", "qqq_0dte", "qqq_manual"]) {
+    for (const pid of ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual"]) {
       try {
         // A shelved profile is PAUSED: no orders, and no exit management — its account
         // may have been handed to another profile (qqq_0dte → qqq_manual, 2026-07-15),
         // and two profiles managing one account would flatten each other's positions.
         // Code-level so a stale autoManage DB flag can't override it.
         if (getProfile(pid).shelved) continue;
-        // qqq_manual without its keys falls back to SBv1's default account for reads —
-        // never manage exits there.
+        // Profiles without their own keys fall back to SBv1's default account for
+        // reads — never manage exits there (qqq_manual → keys2, sbv3 → keys5).
         if (pid === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) continue;
+        if (pid === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim()) continue;
         if (!(await getProfileSettings(pid)).autoManage) continue;
         fires.push(...(await manageExits(pid, nearClose)));
       } catch {

@@ -49,6 +49,7 @@ async function main() {
   };
   add(SNIPER, "sniper_swing");
   add(SNIPER, "sbv2"); // SBv2 shares SBv1's universe for a clean comparison
+  add(SNIPER, "sbv3"); // SBv3 = SBv2 clone (Farrukh's next update lands here)
   add(QQQ, "qqq_0dte");
   add(ZONES, "zones_legacy");
 

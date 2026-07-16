@@ -10,6 +10,7 @@
 // shadow-measured but has no tab, no report section, no scorecard track shown.
 export const UI_PROFILE_TABS = [
   { id: "sbv2", label: "SBv2" },
+  { id: "sbv3", label: "SBv3" },
   { id: "sniper_swing", label: "SBv1" },
   { id: "qqq_manual", label: "QQQ Manual" },
 ] as const;

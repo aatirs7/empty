@@ -10,7 +10,7 @@
 import { type StrategyOptions, DEFAULT_STRATEGY_OPTIONS } from "./strategy";
 import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
-export type ProfileId = "sniper_swing" | "sbv2" | "qqq_0dte" | "qqq_manual" | "zones_legacy";
+export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy";
 
 /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day;
  *  oneDay = next trading day (the QQQ 1-day-swing leg). */
@@ -183,6 +183,21 @@ const SBV2: Profile = {
   baselineSymbol: "SPY",
 };
 
+// SBv3 — a SCRATCH CLONE of SBv2 (owner/Farrukh request 2026-07-16): Farrukh has an
+// update to the flip strategy coming and wants it applied on a copy so SBv2 keeps
+// running untouched — "we can scratch this if it doesn't work out". Starts byte-
+// identical to SBv2 (same flip detection, entry, contracts, exits, universe) with its
+// own measurement track. Auto OFF; trades ALPACA_*_5 when configured — without keys5
+// its broker falls back to SBv1's default account, so auto-buy/manage are HARD-GATED
+// on keys5 in monitor.ts (shadow-only until then). Apply Farrukh's changes HERE.
+const SBV3: Profile = {
+  ...SBV2,
+  id: "sbv3",
+  label: "SBv3",
+  description: "SBv2 clone for Farrukh's next strategy update. Experimental — scratch if it doesn't work.",
+  autoDefault: false,
+};
+
 // QQQ 0DTE — single-ticker, same-day-expiry, intraday horizon. High variance / fast
 // decay: its OWN tight caps and its OWN scorecard track. Never shares swing sizing.
 // PAUSED 2026-07-15 (owner): shelved + hidden from the UI; its paper account
@@ -291,12 +306,13 @@ const ZONES_LEGACY: Profile = {
 export const PROFILES: Record<ProfileId, Profile> = {
   sniper_swing: SNIPER_SWING,
   sbv2: SBV2,
+  sbv3: SBV3,
   qqq_0dte: QQQ_0DTE,
   qqq_manual: QQQ_MANUAL,
   zones_legacy: ZONES_LEGACY,
 };
 
-export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "qqq_0dte", "qqq_manual", "zones_legacy"];
+export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy"];
 
 export function getProfile(id: string | null | undefined): Profile {
   return PROFILES[(id ?? "sniper_swing") as ProfileId] ?? SNIPER_SWING;

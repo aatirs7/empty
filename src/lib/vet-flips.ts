@@ -47,7 +47,14 @@ const LIMIT = 12;
 const CONC = 6;
 const PER_CALL_MS = 120_000;
 
-export async function vetFlipProfile(profile: Profile, runDate: string): Promise<VetResult> {
+export async function vetFlipProfile(
+  profile: Profile,
+  runDate: string,
+  // Shared across profiles within one vet run: SBv3 is (for now) an SBv2 clone with
+  // identical candidates, and the news read is symbol+direction-level — re-buying the
+  // same verdict for each clone would double the spend for nothing.
+  verdictCache: Map<string, FlipNews> = new Map(),
+): Promise<VetResult> {
   const rows = await db
     .select()
     .from(candidates)
@@ -72,16 +79,21 @@ export async function vetFlipProfile(profile: Profile, runDate: string): Promise
     await Promise.all(
       chunk.map(async (r) => {
         const direction = r.direction as "call" | "put";
-        const cat = await checkCatalyst(r.symbol, 5, profile.id, { direction, timeoutMs: PER_CALL_MS });
-        const news: FlipNews = {
-          catalyst: cat.catalyst,
-          event: cat.event,
-          newsAgainst: !!cat.newsAgainst,
-          newsFor: !!cat.newsFor,
-          summary: cat.newsSummary ?? "",
-          checked: cat.checked,
-          checkedAt,
-        };
+        const cacheKey = `${r.symbol}:${direction}`;
+        let news = verdictCache.get(cacheKey);
+        if (!news || !news.checked) {
+          const cat = await checkCatalyst(r.symbol, 5, profile.id, { direction, timeoutMs: PER_CALL_MS });
+          news = {
+            catalyst: cat.catalyst,
+            event: cat.event,
+            newsAgainst: !!cat.newsAgainst,
+            newsFor: !!cat.newsFor,
+            summary: cat.newsSummary ?? "",
+            checked: cat.checked,
+            checkedAt,
+          };
+          if (news.checked) verdictCache.set(cacheKey, news);
+        }
         const setup = { ...((r.setup as object | null) ?? {}), news };
         try {
           await db.update(candidates).set({ setup }).where(eq(candidates.id, r.id));
@@ -89,8 +101,8 @@ export async function vetFlipProfile(profile: Profile, runDate: string): Promise
           /* best effort — a failed store just means the monitor fails open on this one */
         }
         vetted++;
-        if (cat.catalyst || cat.newsAgainst) blocked++;
-        if (!cat.checked) failedOpen++;
+        if (news.catalyst || news.newsAgainst) blocked++;
+        if (!news.checked) failedOpen++;
       }),
     );
   }
@@ -100,9 +112,10 @@ export async function vetFlipProfile(profile: Profile, runDate: string): Promise
 
 export async function vetFlips(runDate = new Date().toISOString().slice(0, 10)): Promise<VetResult[]> {
   const results: VetResult[] = [];
+  const verdictCache = new Map<string, FlipNews>(); // shared: clones reuse verdicts
   for (const p of activeProfiles()) {
-    if (p.setupKind !== "flip") continue; // only flip profiles (SBv2)
-    results.push(await vetFlipProfile(p, runDate));
+    if (p.setupKind !== "flip") continue; // only flip profiles (SBv2, SBv3)
+    results.push(await vetFlipProfile(p, runDate, verdictCache));
   }
   return results;
 }

@@ -55,6 +55,14 @@ function accountKeysFor(profileId?: string): AccountKeys | null {
     const secret = process.env.ALPACA_API_SECRET_KEY3?.trim();
     if (id && secret) return { id, secret };
   }
+  if (profileId === "sbv3") {
+    // SBv2 clone for Farrukh's update — own account when keys5 exist; monitor.ts
+    // hard-gates its auto-buy/manage on keys5 so the default-keys fallback stays
+    // read-only (it must never trade SBv1's account).
+    const id = process.env.ALPACA_API_KEY_ID5?.trim();
+    const secret = process.env.ALPACA_API_SECRET_KEY5?.trim();
+    if (id && secret) return { id, secret };
+  }
   return null; // default keys
 }
 
