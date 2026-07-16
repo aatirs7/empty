@@ -201,33 +201,40 @@ function OpenView({ data, closing, onClose }: { data: Data | null; closing: stri
 }
 
 function ClosedView({ closed }: { closed: ClosedData | null }) {
-  const [period, setPeriod] = useState<"today" | "all">("all");
+  const [period, setPeriod] = useState<"today" | "3d" | "all">("all");
   if (!closed) return <p className="text-sm text-muted text-center py-8">Loading…</p>;
   if (!closed.trades.length) return <p className="text-sm text-muted text-center py-12">No closed trades yet.</p>;
 
-  // Today = the trade's exit landed on today's date in ET.
-  const todayET = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York" });
-  const isToday = (d: string | null) => (d ? new Date(d).toLocaleDateString("en-US", { timeZone: "America/New_York" }) === todayET : false);
-  const trades = period === "today" ? closed.trades.filter((t) => isToday(t.exitAt)) : closed.trades;
+  // Period filters compare the trade's EXIT date in ET.
+  const etDate = (d: Date) => d.toLocaleDateString("en-US", { timeZone: "America/New_York" });
+  const todayET = etDate(new Date());
+  const last3 = new Set([0, 1, 2].map((n) => etDate(new Date(Date.now() - n * 86_400_000)))); // today + 2 prior days
+  const inPeriod = (d: string | null) => {
+    if (!d) return false;
+    const day = etDate(new Date(d));
+    return period === "today" ? day === todayET : period === "3d" ? last3.has(day) : true;
+  };
+  const trades = period === "all" ? closed.trades : closed.trades.filter((t) => inPeriod(t.exitAt));
   const realized = trades.reduce((s, t) => s + (t.realizedPl != null ? Number(t.realizedPl) : 0), 0);
+  const periodLabel = period === "today" ? "today" : period === "3d" ? "last 3 days" : "all time";
 
   return (
     <div className="space-y-3">
-      {/* Today / All-time toggle */}
-      <div className="grid grid-cols-2 gap-1 bg-panel-2 border border-border rounded-2xl p-1">
-        {(["today", "all"] as const).map((p) => (
+      {/* Today / Last 3 days / All-time toggle */}
+      <div className="grid grid-cols-3 gap-1 bg-panel-2 border border-border rounded-2xl p-1">
+        {(["today", "3d", "all"] as const).map((p) => (
           <button
             key={p}
             onClick={() => setPeriod(p)}
             className={`rounded-xl py-1.5 text-sm font-medium transition-colors ${period === p ? "bg-panel text-foreground shadow-sm" : "text-muted"}`}
           >
-            {p === "today" ? "Today" : "All time"}
+            {p === "today" ? "Today" : p === "3d" ? "3 days" : "All time"}
           </button>
         ))}
       </div>
 
       <div className="bg-panel border border-border rounded-2xl p-5 text-center lg:p-6">
-        <p className="text-xs text-muted">Realized P&amp;L · {period === "today" ? "today" : "all time"}</p>
+        <p className="text-xs text-muted">Realized P&amp;L · {periodLabel}</p>
         <p className={`text-3xl font-bold num mt-1 ${realized >= 0 ? "text-up" : "text-down"}`}>
           {realized >= 0 ? "+" : ""}
           {usd(realized)}
@@ -236,7 +243,7 @@ function ClosedView({ closed }: { closed: ClosedData | null }) {
       </div>
 
       {trades.length === 0 ? (
-        <p className="text-sm text-muted text-center py-12">No trades closed today.</p>
+        <p className="text-sm text-muted text-center py-12">No trades closed {periodLabel === "all time" ? "yet" : periodLabel}.</p>
       ) : (
       <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3">
         {trades.map((t) => {

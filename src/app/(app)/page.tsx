@@ -60,25 +60,43 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         See the latest scan &amp; setups &rarr;
       </Link>
 
-      {profileId === "qqq_manual" && (
-        <div className="bg-panel border border-accent/30 rounded-2xl p-5 text-center space-y-3">
-          <p className="text-sm font-medium">Your levels, Vega&apos;s discipline</p>
-          <p className="text-xs text-muted leading-relaxed">
-            Each morning, enter the QQQ levels you&apos;ve marked on your 5m, 15m, and 1h charts. Levels below the
-            current price become CALL setups (support), levels above become PUT setups (resistance). Vega then watches
-            them live all day — but it never buys a bare touch: it waits for a 5-minute candle to actually confirm the
-            level (a rejection with real volume), checks that this kind of setup has won at least 60% of the time
-            historically, and only picks a same-day contract whose expected payoff beats the spread and time decay.
-            If any of those checks fail, it sits out. Positions flatten before the close — nothing held overnight.
-          </p>
-          <Link
-            href="/setups?profile=qqq_manual"
-            className="inline-block rounded-xl bg-accent text-white px-5 py-2.5 text-sm font-semibold"
-          >
-            {cands.length > 0 ? `Update today's levels (${cands.length} set)` : "Add today's levels"}
-          </Link>
-        </div>
-      )}
+      {profileId === "qqq_manual" &&
+        (scan?.runDate === new Date().toISOString().slice(0, 10) && cands.length > 0 ? (
+          // Levels are in — stay out of the way: one collapsed row, expandable for the how-it-works.
+          <details className="bg-panel border border-border rounded-2xl px-4 py-3">
+            <summary className="flex items-center justify-between cursor-pointer list-none select-none text-sm">
+              <span>
+                Today&apos;s levels set <span className="num text-accent">({cands.length})</span>
+              </span>
+              <span className="text-xs text-muted">details ▾</span>
+            </summary>
+            <div className="mt-2 space-y-2">
+              <p className="text-[11px] text-muted leading-relaxed">
+                Vega enters 10 same-day contracts (~$0.30) when a level is touched — if its historical hit rate clears
+                60% and the payoff beats spread + decay — then trims 3 at +50%, 6 at +100%, ratchets the stop (−30% →
+                −10% → breakeven), and rides 1 runner to the next level. Flattens before the close.
+              </p>
+              <Link href="/setups?profile=qqq_manual" className="block text-xs text-accent">
+                Update today&apos;s levels →
+              </Link>
+            </div>
+          </details>
+        ) : (
+          // No levels yet — this is the day's first job, so make it loud.
+          <div className="bg-panel border border-accent/30 rounded-2xl p-5 text-center space-y-3">
+            <p className="text-sm font-medium">No levels set for today</p>
+            <p className="text-xs text-muted leading-relaxed">
+              Enter your morning QQQ levels (one list — below price become CALLs, above become PUTs). Vega enters on
+              the touch, works the ladder, and rides the runner to the next level. Nothing trades until levels are in.
+            </p>
+            <Link
+              href="/setups?profile=qqq_manual"
+              className="inline-block rounded-xl bg-accent text-white px-5 py-2.5 text-sm font-semibold"
+            >
+              Add today&apos;s levels
+            </Link>
+          </div>
+        ))}
 
       <div className="space-y-3">
         {proposals.map((p) => {
