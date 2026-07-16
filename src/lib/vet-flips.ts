@@ -114,7 +114,7 @@ export async function vetFlips(runDate = new Date().toISOString().slice(0, 10)):
   const results: VetResult[] = [];
   const verdictCache = new Map<string, FlipNews>(); // shared: clones reuse verdicts
   for (const p of activeProfiles()) {
-    if (p.setupKind !== "flip") continue; // only flip profiles (SBv2, SBv3)
+    if (p.setupKind !== "flip" || p.shelved) continue; // flip profiles only, and not shelved (sbv3)
     results.push(await vetFlipProfile(p, runDate, verdictCache));
   }
   return results;

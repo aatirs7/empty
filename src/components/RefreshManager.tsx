@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const THRESHOLD = 70; // px pull to trigger
-const AUTO_MS = 60_000; // auto-refresh interval (foreground only)
+const AUTO_MS = 120_000; // auto-refresh interval (foreground only; refresh-on-return covers freshness)
 
 // Global: pull-down-to-refresh with a visible spinner, plus periodic auto-refresh
 // so every page stays current. Lives in the app shell, so it's on all pages.

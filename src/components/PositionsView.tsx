@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { usd, parseOcc, companyName, etDateTime, daysUntil } from "@/lib/format";
 import { DEFAULT_UI_PROFILE } from "@/lib/ui-profiles";
@@ -44,6 +44,7 @@ export default function PositionsView() {
   const profile = useSearchParams().get("profile") ?? DEFAULT_UI_PROFILE;
   const q = `?profile=${profile}`;
   const [tab, setTab] = useState<"open" | "closed">("open");
+  const tabRef = useRef(tab); // read by the poll interval without re-subscribing
   const [data, setData] = useState<Data | null>(null);
   const [closed, setClosed] = useState<ClosedData | null>(null);
   const [closing, setClosing] = useState<string | null>(null);
@@ -64,15 +65,18 @@ export default function PositionsView() {
     // Just DISPLAY current positions (exits are the monitor cron's job — opening
     // this page must never close a trade). Poll every 15s + on tab focus so the
     // live P&L stays current without a manual refresh. FOREGROUND ONLY — polling
-    // a backgrounded PWA drains the phone (2026-07-15 device-lag fix); the
-    // visibility/focus handlers below refresh immediately on return.
+    // a backgrounded PWA drains the phone (2026-07-15 device-lag fix) — and only
+    // the ACTIVE tab's endpoint (halves the requests; the other tab's count
+    // refreshes on focus/visibility and on tab switch).
     const refresh = () => {
       load();
       loadClosed();
     };
     refresh();
     const iv = window.setInterval(() => {
-      if (document.visibilityState === "visible") refresh();
+      if (document.visibilityState !== "visible") return;
+      if (tabRef.current === "open") load();
+      else loadClosed();
     }, 15_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") refresh();
@@ -105,7 +109,12 @@ export default function PositionsView() {
         {(["open", "closed"] as const).map((t) => (
           <button
             key={t}
-            onClick={() => setTab(t)}
+            onClick={() => {
+              setTab(t);
+              tabRef.current = t;
+              if (t === "open") load();
+              else loadClosed();
+            }}
             className={`rounded-xl py-2 text-sm font-medium capitalize transition-colors ${
               tab === t ? "bg-panel text-foreground shadow-sm" : "text-muted"
             }`}
@@ -157,8 +166,7 @@ function OpenView({ data, closing, onClose }: { data: Data | null; closing: stri
                       {company} {occ && <span className={dir === "up" ? "text-up" : "text-down"}>({dir})</span>}
                     </p>
                     <p className="text-xs text-muted num">
-                      {p.qty} @ {usd(p.avg_entry_price)}
-                      {occ && ` · target ${usd(occ.strike, 0)}`}
+                      {p.qty} × {occ ? `$${occ.strike} ${occ.type}` : p.symbol} @ {usd(p.avg_entry_price)}
                     </p>
                     {(p.filledAt || p.placedAt) && (
                       <p className="text-[11px] text-muted num mt-0.5">
@@ -247,10 +255,11 @@ function ClosedView({ closed }: { closed: ClosedData | null }) {
                     {company} <span className={dir === "up" ? "text-up" : "text-down"}>({dir})</span>
                   </p>
                   <p className="text-xs text-muted num">
-                    {t.qty ?? 1} @ {entry != null ? usd(entry) : "—"}
+                    {t.qty ?? 1} × {occ ? `$${occ.strike} ${occ.type} exp ${occ.expiry}` : t.contractSymbol} @{" "}
+                    {entry != null ? usd(entry) : "—"}
                     {exit != null ? ` → sold ${usd(exit)}` : ""}
-                    {t.exitReason ? ` · ${t.exitReason}` : ""}
                   </p>
+                  {t.exitReason && <p className="text-[11px] text-muted">{t.exitReason}</p>}
                   {t.exitAt && <p className="text-[11px] text-muted num mt-0.5">Closed {etDateTime(t.exitAt)}</p>}
                 </div>
                 <div className="text-right shrink-0">

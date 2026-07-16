@@ -33,6 +33,17 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
 
   const byScore = (a: { score: number | null }, b: { score: number | null }) => (b.score ?? -1) - (a.score ?? -1);
   const valid = scan.candidates.filter((c) => c.setupValid).sort(byScore);
+  // QQQ Manual: each setup rides to the NEXT level in its direction (Farrukh's
+  // level-to-level plan) — show that target on the card.
+  const manualLevels = scan.candidates
+    .map((c) => (c.setup as { manual?: { level?: number } } | null)?.manual?.level)
+    .filter((n): n is number => n != null);
+  const nextLevelFor = (c: { direction: string | null; setup: unknown }): number | null => {
+    const lvl = (c.setup as { manual?: { level?: number } } | null)?.manual?.level;
+    if (lvl == null) return null;
+    const beyond = c.direction === "call" ? manualLevels.filter((l) => l > lvl) : manualLevels.filter((l) => l < lvl);
+    return beyond.length ? (c.direction === "call" ? Math.min(...beyond) : Math.max(...beyond)) : null;
+  };
   const watching = scan.candidates.filter((c) => !c.setupValid).sort(byScore);
   // Tapped today = the profile's live monitor trades (same funnel value Today shows).
   const tappedToday = (await getTodayMonitorTrades(profileId)).filter((p) => p.strategy !== "no_trade").length;
@@ -99,6 +110,9 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
                     </span>
                     {c.playbook ? <span className="text-muted"> · {c.playbook}</span> : null}
                   </div>
+                )}
+                {profileId === "qqq_manual" && nextLevelFor(c) != null && (
+                  <div className="text-xs num text-accent/90">rides to the next level: {nextLevelFor(c)}</div>
                 )}
                 {z && (
                   <div className="text-xs text-muted num">

@@ -7,7 +7,7 @@
  * Resolves hints -> real contract, places the paper order, computes + stores the
  * code-computed risk math, polls the fill, and updates proposal + order rows.
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { proposals, orders, candidates } from "../db/schema";
 import { getBroker } from "./broker";
@@ -77,10 +77,12 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
 
   const direction = proposal.direction as "call" | "put";
   let resolved: ResolvedContract;
-  // Reaction-DB target(s) captured at entry so the swing exit can sell when the
-  // UNDERLYING reaches the projected target (SBv2). Null for the non-confirmation path.
+  // Reaction-DB target(s) captured at entry so the exit can sell when the UNDERLYING
+  // reaches the projected target. Null for the non-confirmation path. expectedHoldMin
+  // (minutes) feeds the intraday ladder's "bounce never came" time-out.
   let predictedTarget: number | null = null;
   let predictedTargetSafe: number | null = null;
+  let expectedHoldMin: number | null = null;
   if (profile.confirmation.enabled) {
     // Confirmation profiles (SniperBot, QQQ): pick by EXPECTED VALUE off the
     // reaction-DB prediction (highest-EV contract), not a plain price band.
@@ -92,18 +94,40 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     const pred = await predict(proposal.symbol, spot, tf, direction, cand?.approach ?? "", 0);
     predictedTarget = pred.targetMain;
     predictedTargetSafe = pred.targetSafe;
+    // QQQ Manual (Farrukh 2026-07-16): the target is the NEXT LEVEL in the trade's
+    // direction from today's hand-entered list — "enter at one level and ride it to
+    // the next" — not the expected-move projection. Falls back to pred.targetMain
+    // when there is no further level. Also stash the expected hold (minutes) so the
+    // intraday ladder can time-out a bounce that never comes.
+    if (profile.manualLevels && cand) {
+      const entryLevel = (cand.setup as { manual?: { level?: number } } | null)?.manual?.level;
+      if (entryLevel != null) {
+        const dayRows = await db
+          .select()
+          .from(candidates)
+          .where(and(eq(candidates.runDate, cand.runDate), eq(candidates.profileId, profile.id)));
+        const levels = dayRows
+          .map((r) => (r.setup as { manual?: { level?: number } } | null)?.manual?.level)
+          .filter((n): n is number => n != null);
+        const beyond = direction === "call" ? levels.filter((l) => l > entryLevel) : levels.filter((l) => l < entryLevel);
+        if (beyond.length) {
+          predictedTarget = direction === "call" ? Math.min(...beyond) : Math.max(...beyond);
+        }
+      }
+    }
     // HORIZON MATCH: the option must survive the expected time-to-target. Size the
     // minimum expiry to the predicted hold (+25% margin) so we never buy a 1-DTE
     // contract for a multi-day move. Sub-day holds (intraday 0DTE) keep a 0 floor —
     // a same-day option easily covers a few-hour move. If no expiry/contract fits,
     // executeProposal throws below and the setup is rejected.
     const holdDays = holdToDays(pred.expectedHoldBars, tf);
+    expectedHoldMin = Math.max(15, Math.round(holdDays * 390)); // trading-day minutes; floor 15m
     const minDaysToExpiry = holdDays >= 1 ? Math.ceil(holdDays * 1.25) : 0;
     // Per-timeframe expiry: QQQ 15m/1h → same-day 0DTE, 4h → next-day swing.
     const contractCfg = contractForTimeframe(profile, tf);
-    // SBv2 sells at the DB target, so the strike must be reachable by it (ITM/ATM at
-    // target). QQQ 0DTE nets the round-trip spread + theta and rejects if nothing clears
-    // the cost. Both flags are per-profile so SBv1's selection is unchanged.
+    // Reachability OFF everywhere (Farrukh 2026-07-16 for SBv2: "Strike isn't
+    // important — a fast hard move pumps premium across all contracts"). QQQ nets the
+    // round-trip spread + theta and rejects if nothing clears the cost.
     const sel = await selectByEV(
       proposal.symbol,
       direction,
@@ -111,7 +135,7 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
       pred,
       contractCfg,
       minDaysToExpiry,
-      profile.entryKind === "flip_retest",
+      false,
       profile.netContractCosts === true,
     );
     if (!sel.primary) {
@@ -204,11 +228,13 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     .returning({ id: orders.id });
 
   // Order is placed -> proposal moves to "approved" (then "filled" on fill). Persist the
-  // reaction-DB target into the zoneSetup jsonb (no migration) so the swing exit can sell
-  // when the underlying reaches it. Only when we actually have a DB target.
+  // target into the zoneSetup jsonb (no migration) so the exit can sell when the
+  // underlying reaches it, plus the expected hold (minutes) for the ladder's time-out.
   const zsBlob = (proposal.zoneSetup as Record<string, unknown> | null) ?? {};
   const zoneSetupUpdate =
-    predictedTarget != null ? { zoneSetup: { ...zsBlob, predictedTarget, predictedTargetSafe } } : {};
+    predictedTarget != null
+      ? { zoneSetup: { ...zsBlob, predictedTarget, predictedTargetSafe, ...(expectedHoldMin != null ? { expectedHoldMin } : {}) } }
+      : {};
   await db.update(proposals).set({ status: "approved", ...zoneSetupUpdate }).where(eq(proposals.id, proposalId));
 
   // Poll for the fill.

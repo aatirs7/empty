@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getRunsLog } from "@/lib/queries";
 import { getAllApiCost } from "@/lib/cost";
-import { usd, labelStrategy, stripDash, etTime } from "@/lib/format";
+import { usd, labelStrategy, stripDash, etTime, parseOcc } from "@/lib/format";
 import { Empty, PageTitle } from "@/components/ui";
 import LogStatus from "@/components/LogStatus";
 import ProfileTabs from "@/components/ProfileTabs";
@@ -58,11 +58,22 @@ export default async function LogPage({ searchParams }: { searchParams: Promise<
                 ))}
                 {orders.length > 0 && (
                   <div className="pt-1 border-t border-border space-y-1">
-                    {orders.map((o) => (
-                      <div key={o.id} className="text-[11px] text-muted num">
-                        order {o.contractSymbol} · {o.status} · {o.executionMode} · max loss {usd(Number(o.maxLoss), 0)}
-                      </div>
-                    ))}
+                    {orders.map((o) => {
+                      // The exact contract traded, human-readable: "AAPL $230 call · exp 2026-07-25".
+                      const occ = o.contractSymbol ? parseOcc(o.contractSymbol) : null;
+                      const contract = occ ? `${occ.underlying} $${occ.strike} ${occ.type} · exp ${occ.expiry}` : o.contractSymbol;
+                      const fill = o.filledPrice != null ? ` · ${o.qty ?? 1} @ ${usd(o.filledPrice)}` : "";
+                      const exit = o.exitPrice != null ? ` → sold ${usd(o.exitPrice)}` : "";
+                      const pl = o.realizedPl != null ? ` (${Number(o.realizedPl) >= 0 ? "+" : ""}${usd(o.realizedPl)})` : "";
+                      return (
+                        <div key={o.id} className="text-[11px] text-muted num">
+                          {contract}
+                          {fill}
+                          {exit}
+                          {pl} · {o.status} · {o.executionMode}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 <div className="text-[11px] text-muted num">

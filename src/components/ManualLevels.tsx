@@ -3,22 +3,18 @@ import { useCallback, useEffect, useState } from "react";
 
 interface SavedLevel {
   id: number;
-  tf: string;
   level: number | null;
   direction: string | null;
   distancePct: number | null;
   enteredAt: string | null;
 }
 
-const TFS = ["5m", "15m", "1h"] as const;
-type Tf = (typeof TFS)[number];
-
-/** Owner input for the experimental QQQ Manual profile: enter the morning's
- *  5m/15m/1h QQQ levels (comma-separated prices per timeframe). Saving replaces
- *  today's levels. The bot still requires a 5-min confirmation candle at a level,
- *  the 60% probability floor, and positive EV after spread+theta before entering. */
+/** Owner input for the experimental QQQ Manual profile: ONE list of the morning's
+ *  QQQ levels, used across all charts while monitoring (Farrukh 2026-07-16). Saving
+ *  replaces today's levels. Entry = level touch, gated by the 60% probability floor
+ *  and positive EV after spread+theta; exits run Farrukh's ladder to the next level. */
 export default function ManualLevels() {
-  const [inputs, setInputs] = useState<Record<Tf, string>>({ "5m": "", "15m": "", "1h": "" });
+  const [input, setInput] = useState("");
   const [saved, setSaved] = useState<SavedLevel[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -33,12 +29,8 @@ export default function ManualLevels() {
         setSaved(j.levels);
         setAuto(!!j.auto);
         setHasAccount(!!j.hasOwnAccount);
-        const next: Record<Tf, string> = { "5m": "", "15m": "", "1h": "" };
-        for (const l of j.levels as SavedLevel[]) {
-          const tf = (TFS as readonly string[]).includes(l.tf) ? (l.tf as Tf) : "15m";
-          if (l.level != null) next[tf] = next[tf] ? `${next[tf]}, ${l.level}` : String(l.level);
-        }
-        setInputs(next);
+        const lv = (j.levels as SavedLevel[]).map((l) => l.level).filter((n): n is number => n != null);
+        if (lv.length) setInput(lv.join(", "));
       }
     } catch {
       /* leave empty */
@@ -52,13 +44,10 @@ export default function ManualLevels() {
   async function save() {
     setBusy(true);
     setMsg(null);
-    const levels = TFS.flatMap((tf) =>
-      inputs[tf]
-        .split(/[,\s]+/)
-        .map((s) => Number(s))
-        .filter((n) => Number.isFinite(n) && n > 0)
-        .map((price) => ({ tf, price })),
-    );
+    const levels = input
+      .split(/[,\s]+/)
+      .map((s) => Number(s))
+      .filter((n) => Number.isFinite(n) && n > 0);
     try {
       const r = await fetch("/api/manual-levels", {
         method: "POST",
@@ -97,24 +86,22 @@ export default function ManualLevels() {
       <div>
         <p className="text-sm font-medium">Today&apos;s QQQ levels (manual)</p>
         <p className="text-[11px] text-muted leading-relaxed mt-0.5">
-          Enter your marked levels each morning, comma-separated per chart. Levels below the current price become CALL
-          setups (support), above become PUT setups (resistance). Saving replaces today&apos;s levels.
+          One list, comma-separated — used across all charts while monitoring. Levels below the current price become
+          CALL setups (support), above become PUT setups (resistance). Saving replaces today&apos;s levels.
         </p>
       </div>
 
-      {TFS.map((tf) => (
-        <label key={tf} className="block">
-          <span className="text-xs text-muted">{tf} chart levels</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="e.g. 712.50, 718.25"
-            value={inputs[tf]}
-            onChange={(e) => setInputs((p) => ({ ...p, [tf]: e.target.value }))}
-            className="mt-1 w-full rounded-xl border border-border bg-panel-2 px-3 py-2 text-sm num"
-          />
-        </label>
-      ))}
+      <label className="block">
+        <span className="text-xs text-muted">Levels</span>
+        <input
+          type="text"
+          inputMode="decimal"
+          placeholder="e.g. 715.36, 707.13, 700.88, 719.3"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          className="mt-1 w-full rounded-xl border border-border bg-panel-2 px-3 py-2 text-sm num"
+        />
+      </label>
 
       <button
         onClick={save}
@@ -135,7 +122,7 @@ export default function ManualLevels() {
               ? "…"
               : auto
                 ? hasAccount
-                  ? "ON — Vega buys confirmed setups itself (paper)."
+                  ? "ON — Vega buys touched levels itself (paper)."
                   : "ON, but BLOCKED — the QQQ account keys are missing."
                 : "OFF — setups appear for manual approval only."}
           </p>
@@ -156,22 +143,23 @@ export default function ManualLevels() {
         <div className="space-y-1 pt-1 border-t border-border">
           {saved.map((l) => (
             <div key={l.id} className="flex items-center justify-between text-xs num">
-              <span className="text-muted">{l.tf}</span>
               <span>
                 {l.level}{" "}
                 <span className={l.direction === "call" ? "text-up" : "text-down"}>
                   ({l.direction === "call" ? "CALL" : "PUT"})
                 </span>
-                {l.distancePct != null && <span className="text-muted"> · {l.distancePct.toFixed(2)}% away</span>}
               </span>
+              {l.distancePct != null && <span className="text-muted">{l.distancePct.toFixed(2)}% away</span>}
             </div>
           ))}
         </div>
       )}
 
       <p className="text-[11px] text-muted leading-relaxed">
-        Entry still requires a 5-minute confirmation candle at the level — never a bare touch — plus a 60%+ historical
-        hit rate and a contract whose expected value clears the spread and time decay. 0DTE contracts only.
+        Vega enters 10 same-day contracts (~$0.30) the moment a level is touched — if the level&apos;s historical hit
+        rate clears 60% and the contract&apos;s expected value beats the spread and time decay. It trims 3 at +50%, 6
+        at +100%, ratchets the stop up as the trade works (−30% → −10% → breakeven), and rides 1 runner toward the next
+        level. Everything flattens before the close.
       </p>
     </div>
   );

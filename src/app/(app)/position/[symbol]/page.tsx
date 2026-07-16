@@ -30,7 +30,11 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
 
   // Timing estimate: how long the move typically takes at this zone (past taps).
   const proposal = occ ? await getProposalForContract(symbol).catch(() => null) : null;
-  const zone = (proposal?.zoneSetup as { active_zone?: { bottom: number; top: number } } | null)?.active_zone ?? null;
+  const zs = proposal?.zoneSetup as { active_zone?: { bottom: number; top: number }; predictedTarget?: number | null } | null;
+  const zone = zs?.active_zone ?? null;
+  // The REAL exit target persisted at entry (DB target / next manual level) — Vega
+  // sells when the underlying reaches this, NOT at the strike.
+  const exitTarget = typeof zs?.predictedTarget === "number" ? zs.predictedTarget : null;
   let avgDays: number | null = null;
   if (occ && zone && spot != null && bars.length > 30) {
     try {
@@ -84,20 +88,22 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
           </div>
           {(() => {
             const isCall = occ.type === "call";
-            const target = occ.strike;
+            // Sell target = the price persisted at entry (DB target / next manual
+            // level). The strike is just the contract; shown separately below.
+            const target = exitTarget ?? occ.strike;
             const dist = isCall ? target - spot : spot - target; // >0 = still needed in the bet's direction
             const distPct = spot > 0 ? Math.abs(dist / spot) * 100 : 0;
-            const be = isCall ? target + entry : target - entry;
+            const be = isCall ? occ.strike + entry : occ.strike - entry;
             const beDist = isCall ? be - spot : spot - be; // >0 = still needed to reach breakeven
             return (
               <div className="space-y-1 text-sm">
                 <p>
-                  Your target:{" "}
+                  {exitTarget != null ? "Vega sells at" : "Your target:"}{" "}
                   <span className="num text-foreground">
-                    {isCall ? "above" : "below"} {usd(target)}
+                    {exitTarget != null ? usd(target) : `${isCall ? "above" : "below"} ${usd(target)}`}
                   </span>{" "}
                   {dist <= 0 ? (
-                    <span className="text-up">— already past it ✓</span>
+                    <span className="text-up">— already there ✓</span>
                   ) : (
                     <span className="text-muted num">
                       — needs {isCall ? "+" : "−"}
@@ -106,8 +112,8 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
                   )}
                 </p>
                 <p className="text-[11px] text-muted num">
-                  Breakeven at expiry {usd(be)}{" "}
-                  {beDist <= 0 ? "(you're in profit territory ✓)" : `· ${usd(Math.abs(beDist))} to go`}
+                  Contract: ${occ.strike} {occ.type} · exp {occ.expiry} · breakeven at expiry {usd(be)}
+                  {beDist <= 0 ? " ✓" : ` (${usd(Math.abs(beDist))} to go)`}
                 </p>
               </div>
             );
@@ -121,9 +127,11 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
         <div className="bg-panel border border-border rounded-2xl p-4 text-center space-y-1">
           <p className="text-xs uppercase tracking-wide text-muted mb-1">Timing</p>
           <p className="text-sm leading-relaxed">
-            The plan is to hold until it hits the profit target (sell at +100%) or the option expires{" "}
-            <span className="num text-foreground">{longDate(occ.expiry)}</span> — <span className="num">{daysLeft}</span>{" "}
-            {daysLeft === 1 ? "day" : "days"} left. Whichever comes first (or the −30% stop).
+            The plan is to hold until {occ.underlying} reaches{" "}
+            {exitTarget != null ? <span className="num text-foreground">{usd(exitTarget)}</span> : "the exit target"} or
+            the option expires <span className="num text-foreground">{longDate(occ.expiry)}</span> —{" "}
+            <span className="num">{daysLeft}</span> {daysLeft === 1 ? "day" : "days"} left. Whichever comes first (or
+            the setup breaks down / the stop hits).
           </p>
           {avgDays != null && avgDays > 0 && (
             <p className="text-xs text-muted leading-relaxed">

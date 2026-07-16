@@ -4,9 +4,17 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-15-v12";
+const VERSION = "2026-07-16-v13";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "Sell at the target, not at a percentage",
+    body: "Every strategy now exits at the projected TARGET PRICE instead of a percent rule. SBv1 sells when the stock reaches its historical-database target (the old 'ride to $2' bonus rule is gone; its safeties stay). SBv2 now buys ONE contract around $0.50-0.75 — strike doesn't matter, it's betting on a fast hard move pumping every contract — and sells at the target or a 50% stop; this also unlocks the expensive names it used to skip. Position pages now show the real sell target, and every position and log entry shows the exact contract traded (strike + expiry + fill).",
+  },
+  {
+    title: "QQQ Manual: one level list + the ladder",
+    body: "Enter ALL your morning levels in one box — no more per-chart fields. Vega enters 10 same-day contracts (~$0.30) the moment a level is TOUCHED (if its historical hit rate clears 60% and the math beats spread + time decay), then works the ladder: trim 3 at +50% and move the stop to -10%, stop to breakeven past +75%, sell 6 at +100%, and ride the last contract to the NEXT level (selling within ~$0.25 of it). Base stop -30%; everything flattens before the close. SBv3 is shelved for now per Farrukh.",
+  },
   {
     title: "SBv2 enters on the tap + honest notifications",
     body: "SBv2 now buys the moment price actually TOUCHES its flipped level (within 0.4%) instead of waiting for a clean two-tick crossing that could miss a fast move between checks — once per setup per day. Notifications got honest too: the tap alert now says \"checking…\", then a second push tells you the outcome — \"Bought\" or exactly why it was blocked (no cheap contract that reaches the target, position cap, news against the breakout). Two launch bugs that silently blocked EVERY SBv2 entry were also found and fixed, and the overnight news-vet now runs after each scan so taps trade instantly with zero API cost.",

@@ -62,9 +62,27 @@ export interface ExitConfig {
   // catastropheFloor AND <= catastropheDays to expiry). Does NOT fire mid-swing.
   catastropheFloor?: number;
   catastropheDays?: number;
+  // Optional MID-SWING premium stop (Farrukh 2026-07-16: SBv2 "wait to sell at
+  // intended target or 50% stop"). Only read when set — SBv1 leaves it unset and
+  // keeps its deliberate no-mid-swing-stop behavior.
+  swingStopLoss?: number; // e.g. -0.5 => sell if premium falls 50% below entry
   takeProfit: number; // intraday only: +1.0 => +100% of premium
   stopLoss: number; // intraday only: -0.35 => -35% of premium
   sameDayExit: boolean; // 0DTE: flatten before the close
+  // Intraday LADDER (QQQ Manual, Farrukh 2026-07-16): trim tranches at premium
+  // milestones with a ratcheting stop, leave a runner for the next-level target.
+  // Driven by the position_state table; only active when `ladder` is set.
+  ladder?: {
+    trim1Pct: number; // +0.5 => at +50% sell trim1Qty and ratchet stop to stopAfterTrim1
+    trim1Qty: number; // contracts to sell at trim1 (of the ORIGINAL qty)
+    stopAfterTrim1: number; // -0.1 => stop moves to -10% once trim1 fires
+    breakevenPct: number; // 0.75 => past +75% the stop ratchets to breakeven (0%)
+    trim2Pct: number; // +1.0 => at +100% sell trim2Qty more
+    trim2Qty: number; // contracts to sell at trim2
+    // runner (whatever remains) exits at the ratcheted stop, the next-level
+    // target proximity (targetProximity $), or the 0DTE flatten.
+    targetProximity: number; // $ distance from the underlying target that closes the runner
+  };
 }
 
 export interface ConfirmationConfig {
@@ -135,9 +153,11 @@ const SNIPER_SWING: Profile = {
     liquiditySpread: 0.6,
   },
   caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 10 }, // owner raised 3 -> 10 (2026-07-09)
-  // Swing: hold to first target / swing invalidation; ride to $2 as an upside TP.
-  // NO mid-swing stop. Catastrophe floor ($0.15) only bites within 2 days of expiry.
-  exit: { style: "swing", targetPremium: 2.0, catastropheFloor: 0.15, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  // Swing: hold to the DB target / swing invalidation. Farrukh 2026-07-16: "sell at
+  // intended target prices rather than 100%" — the $2 premium ride was REMOVED, so the
+  // exit is purely target-price-driven. Still NO mid-swing stop ("keep the stop" =
+  // keep the existing safeties: invalidation + catastrophe floor + expiry salvage).
+  exit: { style: "swing", catastropheFloor: 0.15, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: true, // owner chose to auto-trade SniperBot on the paper account
   baselineSymbol: "SPY",
 };
@@ -163,22 +183,24 @@ const SBV2: Profile = {
   watchPerTimeframe: 3, // a symbol may carry more than one flipped zone awaiting a retest
   minScore: 75, // retained for display/shadow only — the live flip_retest entry is MECHANICAL (no score gate)
   contract: {
-    // Cheap ~$0.30 far-OTM weeklies (owner: "$0.30 contracts set up to go to $3-5").
-    // Cheap ⇒ further OTM, so widen the strike window; the ask band admits ~$0.18-0.45.
-    expiryKind: "friday", // nearest weekly ≥ the predicted 1-2 day hold (selectByEV horizon-matches)
-    otmPct: 25, // mega-cap ~$0.30 weeklies sit far OTM; reach far enough to find quoted strikes
+    // Farrukh 2026-07-16: "Enter a contract priced around $0.50-0.75, just get one.
+    // Strike isn't important — looking for a fast hard move that causes a premium pump
+    // across all contracts." One mid-priced contract; reachability gate dropped in
+    // execute.ts (requireTargetReachable=false) so expensive names trade again.
+    expiryKind: "friday", // nearest weekly ≥ the predicted 1-3 day hold (selectByEV horizon-matches)
+    otmPct: 25, // wide strike window — strike choice is deliberately unimportant
     itmPct: 4,
-    priceFloor: 0.15,
-    priceIdeal: 0.3,
-    priceCap: 0.6, // "around $0.30" with headroom for expensive names where the nearest cheap strike quotes higher
+    priceFloor: 0.45,
+    priceIdeal: 0.6,
+    priceCap: 0.8, // "around $0.50-0.75" with a little slack on expensive names
     liquiditySpread: 0.5, // (unused on the selectByEV path SBv2 takes; kept for consistency)
   },
-  caps: { perTradeBudget: 100, maxContracts: 3, maxOpenPositions: 10 }, // 2-3 contracts at ~$0.30
+  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 10 }, // "just get one"
   // Swing exit: sell when the UNDERLYING reaches the reaction-DB target (predict.targetMain,
-  // persisted at entry). NO $2 premium ride — the DB target drives the exit. Safeties kept:
-  // swing-invalidation (daily close back through the flipped zone) + a catastrophe floor
-  // ($0.10) only within 2 days of expiry. No mid-swing hard stop.
-  exit: { style: "swing", catastropheFloor: 0.1, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  // persisted at entry) OR the premium drops 50% (Farrukh: "wait to sell at intended
+  // target or 50% stop"). Safeties kept: swing-invalidation + catastrophe floor ($0.10)
+  // within 2 days of expiry.
+  exit: { style: "swing", swingStopLoss: -0.5, catastropheFloor: 0.1, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
   autoDefault: false, // OFF until the owner enables it in settings (shadow-measured first)
   baselineSymbol: "SPY",
 };
@@ -194,7 +216,8 @@ const SBV3: Profile = {
   ...SBV2,
   id: "sbv3",
   label: "SBv3",
-  description: "SBv2 clone for Farrukh's next strategy update. Experimental — scratch if it doesn't work.",
+  description: "SBv2 clone. Disabled per Farrukh 2026-07-16 — his update landed on the existing profiles instead.",
+  shelved: true, // Farrukh: "Close/disable for now." No signals, no orders, no tab. Trivial to revive.
   autoDefault: false,
 };
 
@@ -239,24 +262,27 @@ const QQQ_0DTE: Profile = {
   baselineSymbol: "QQQ",
 };
 
-// QQQ Manual (EXPERIMENTAL, owner request 2026-07-15) — QQQ-only 0DTE off levels the
-// owner hand-enters each morning (5m/15m/1h charts), NOT SniperBot zones. Entry is a
-// 5-MINUTE CONFIRMATION CANDLE at the level (never a bare touch). Everything else
-// mirrors qqq_0dte — including the coin-flip protections: the 60% reaction-DB
-// probability floor AND EV-net-of-spread+theta both apply (manual levels don't fix
-// 0DTE losing on ~50% setups; these gates do). Trades the QQQ paper account
-// (ALPACA_*_2, PA3NPEDZA11B) — handed over from qqq_0dte, which is PAUSED/shelved
-// so the two can never trade the same account at once. qqq_0dte stays shadow-
-// measured for the head-to-head.
+// QQQ Manual (EXPERIMENTAL) — QQQ-only 0DTE off levels the owner hand-enters each
+// morning (ONE list, used across all charts — Farrukh 2026-07-16), NOT SniperBot
+// zones. Entry = LEVEL TOUCH (owner's newest instruction supersedes the earlier
+// confirmation-candle rule) gated by the coin-flip protections: 60% reaction-DB
+// probability floor AND EV-net-of-spread+theta. Farrukh's LADDER drives the exit:
+// 10 × ~$0.30-0.35 contracts, -30% base stop; at +50% trim 3 + stop→-10%; past
+// +75% stop→breakeven; at +100% sell 6; 1 runner rides to the NEXT LEVEL (sell
+// within ~$0.25 of it) or the ratcheted stop; 0DTE flatten before the close.
+// Trades the QQQ paper account (ALPACA_*_2, PA3BS187DK8F) — qqq_0dte is shelved
+// so the two can never trade the same account at once.
 const QQQ_MANUAL: Profile = {
   id: "qqq_manual",
   label: "QQQ Manual",
-  description: "QQQ 0DTE off owner-entered 5m/15m/1h levels, 5-min confirmation candle entry. Experimental.",
+  description: "QQQ 0DTE off owner-entered levels: level-touch entry, laddered exits to the next level. Experimental.",
   active: true,
   manualLevels: true, // candidates come ONLY from /api/manual-levels — never scanned
   strategy: DEFAULT_STRATEGY_OPTIONS,
   zoneTimeframes: [], // nothing to scan; also keeps refreshIntradayScans away
-  confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 }, // 5-min candle REQUIRED
+  // Entry is a LEVEL TOUCH (monitor branches on manualLevels); confirmation config is
+  // kept only for the predict/EV plumbing shared with confirmation profiles.
+  confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 },
   requireClearRunway: false, // manual levels sit wherever the owner draws them
   minScore: 55, // same 0DTE playbook gate as qqq_0dte
   minProbability: 60, // HARD floor — keep the coin-flip fix on this variant too
@@ -265,14 +291,21 @@ const QQQ_MANUAL: Profile = {
     expiryKind: "zeroDte", // 0DTE ONLY
     otmPct: 1.5,
     itmPct: 1,
-    priceFloor: 0.4,
-    priceIdeal: 0.8,
-    priceCap: 1.5,
+    priceFloor: 0.28, // "$0.30-0.35 priced contracts" with a little slack
+    priceIdeal: 0.32,
+    priceCap: 0.38,
     liquiditySpread: 0.7,
   },
-  caps: { perTradeBudget: 160, maxContracts: 1, maxOpenPositions: 2 },
-  exit: { style: "intraday", takeProfit: 0.6, stopLoss: -0.35, sameDayExit: true },
-  autoDefault: false, // experimental — owner enables via profile-auto when ready
+  caps: { perTradeBudget: 350, maxContracts: 10, maxOpenPositions: 2 }, // 10 × ~$0.32 ≈ $320
+  // Ladder exit per Farrukh; stopLoss -0.30 is the base stop (sell ALL remaining).
+  exit: {
+    style: "intraday",
+    takeProfit: 0.6, // fallback TP only when no ladder/target was persisted
+    stopLoss: -0.3,
+    sameDayExit: true,
+    ladder: { trim1Pct: 0.5, trim1Qty: 3, stopAfterTrim1: -0.1, breakevenPct: 0.75, trim2Pct: 1.0, trim2Qty: 6, targetProximity: 0.25 },
+  },
+  autoDefault: false, // experimental — owner enables via the level-editor toggle
   baselineSymbol: "QQQ",
 };
 
