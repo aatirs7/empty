@@ -194,6 +194,12 @@ Per `farrukh-changes-paste.md` + the owner's ladder message (owner decisions: QQ
 - **Contract visibility:** Positions cards show `qty × $strike type @ fill` (strike was mislabeled "target"); Log shows parsed contract + fill→exit + P&L; position detail shows the persisted exit target as "Vega sells at" with the strike as contract info; QQQ Manual setup cards show "rides to the next level: X".
 - **Perf follow-up:** PositionsView polls only the ACTIVE tab (15s foreground); RefreshManager 60s→120s. REMINDER: an already-open PWA runs the old bundle until fully closed + reopened.
 
+### Follow-ups (2026-07-17) — LIVE
+- **Positions accuracy verified** (DB-vs-broker audit clean on all 3 accounts) + Closed tab **Today / 3 days / All time** toggle. FIXED: totals were summed client-side from a 60-row-capped list — now `getClosedTotals` (queries.ts) computes SQL sums over ALL closed rows with ET day boundaries (`AT TIME ZONE 'America/New_York'`); `/api/positions/closed` returns `totals`; cross-checked vs an independent JS bucketing on all profiles. zones_legacy has 14 old closed rows with NULL realizedPl (Jul-9 reconcile, invisible profile) — excluded from sums by design.
+- **SBv2 price-first contract pick** (Farrukh: "don't focus on strike — just enter $0.50-0.75 when the setup is there; zone bounce = liquidity = premium pump"): flip entries use `resolveContract` (ask closest to $0.60 in the 0.45-0.80 band, liquid two-sided market, weekly ≥2d out via new `ResolveInput.minDays` so a Thu tap buys NEXT Friday) — NO selectByEV, NO hold-horizon gate. SBv1/QQQ keep the EV path.
+- **Pushes name the profile**: all notification titles prefixed with `profile.label` (SBv1/SBv2/QQQ Manual) — bought/sold/trimmed/checking/blocked.
+- **QQQ Manual home card** collapses to one row when today's levels are set (big card + Add button only when missing); **8:45 ET levels reminder** cron (`/api/remind-levels`, DST twin crons + ET-hour guard, skips holidays/set days, in middleware PUBLIC).
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.
