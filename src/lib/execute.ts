@@ -7,7 +7,7 @@
  * Resolves hints -> real contract, places the paper order, computes + stores the
  * code-computed risk math, polls the fill, and updates proposal + order rows.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { proposals, orders, candidates } from "../db/schema";
 import { getBroker } from "./broker";
@@ -73,6 +73,25 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   const positions = await broker.listPositions();
   if (positions.length >= openCap) {
     throw new ExecuteError(`Open-position cap reached (${positions.length}/${openCap}).`, "open_cap");
+  }
+
+  // Daily trade cap (Farrukh 2026-07-17: max 3/day per profile — "be patient for the
+  // top setups"). Counts today's PLACED buys (ET day) for this profile; canceled/
+  // rejected orders don't count. Lives here so auto and manual are capped identically.
+  const dailyCap = profile.caps.maxTradesPerDay ?? 3;
+  const [dayCount] = await db
+    .select({ n: sql<string>`count(*)` })
+    .from(orders)
+    .innerJoin(proposals, eq(orders.proposalId, proposals.id))
+    .where(
+      and(
+        eq(proposals.profileId, profile.id),
+        sql`(${orders.submittedAt} AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`,
+        sql`${orders.status} not in ('canceled', 'rejected')`,
+      ),
+    );
+  if (Number(dayCount.n) >= dailyCap) {
+    throw new ExecuteError(`Daily trade cap reached (${dayCount.n}/${dailyCap} today) — saving the rest for tomorrow.`, "daily_cap");
   }
 
   const direction = proposal.direction as "call" | "put";

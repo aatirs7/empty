@@ -79,6 +79,7 @@ function friendlyBlock(msg: string): string {
   const s = msg.toLowerCase();
   if (s.includes("no affordable") || s.includes("price cap") || s.includes("no contract fits") || s.includes("no_quote")) return "no cheap contract that reaches the target";
   if (s.includes("open-position cap") || s.includes("open_cap")) return "position cap reached";
+  if (s.includes("daily trade cap")) return "daily trade limit reached (3/day)";
   if (s.includes("invalidated") || s.includes("crossed the zone")) return "price moved the wrong way";
   if (s.includes("market closed")) return "market closed";
   return msg.slice(0, 60);

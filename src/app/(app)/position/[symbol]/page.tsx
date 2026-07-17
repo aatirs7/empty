@@ -30,7 +30,11 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
 
   // Timing estimate: how long the move typically takes at this zone (past taps).
   const proposal = occ ? await getProposalForContract(symbol).catch(() => null) : null;
-  const zs = proposal?.zoneSetup as { active_zone?: { bottom: number; top: number }; predictedTarget?: number | null } | null;
+  const zs = proposal?.zoneSetup as {
+    active_zone?: { bottom: number; top: number };
+    predictedTarget?: number | null;
+    expectedHoldMin?: number | null;
+  } | null;
   const zone = zs?.active_zone ?? null;
   // The REAL exit target persisted at entry (DB target / next manual level) — Vega
   // sells when the underlying reaches this, NOT at the strike.
@@ -42,6 +46,11 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
     } catch {
       avgDays = null;
     }
+  }
+  // Prefer the hold persisted at entry (all confirmation profiles since 2026-07-16)
+  // so SBv2/QQQ show an expected time even where the playbook read comes up empty.
+  if (avgDays == null && typeof zs?.expectedHoldMin === "number" && zs.expectedHoldMin > 0) {
+    avgDays = Math.max(1, Math.round(zs.expectedHoldMin / 390)); // 390 trading minutes/day
   }
   const daysLeft = occ ? daysUntil(occ.expiry) : 0;
 
@@ -177,6 +186,18 @@ export default async function PositionPage({ params }: { params: Promise<{ symbo
           </p>
         </div>
       </div>
+
+      {/* Setup analysis — the alert Vega fired at entry (playbook, zone, targets,
+          score). Same treatment for every profile (Farrukh: SBv2 parity with SBv1). */}
+      {proposal?.zoneRead && (
+        <div className="bg-panel border border-border rounded-2xl p-4 space-y-1">
+          <p className="text-xs uppercase tracking-wide text-muted">Vega&apos;s analysis at entry</p>
+          <p className="text-xs text-muted leading-relaxed">{proposal.zoneRead}</p>
+          {proposal.confidence != null && (
+            <p className="text-[11px] text-muted num">Confidence {Math.round(Number(proposal.confidence) * 100)}/100</p>
+          )}
+        </div>
+      )}
 
       <div className="bg-panel border border-border rounded-2xl p-4 text-center">
         <p className="text-xs uppercase tracking-wide text-muted mb-1">Vega&apos;s tip</p>

@@ -47,6 +47,10 @@ export interface ProfileCaps {
   perTradeBudget: number;
   maxContracts: number;
   maxOpenPositions: number; // the real live-path cap (concurrent open positions)
+  // Farrukh 2026-07-17: "Limit all profiles to 3 trades max per day. Be patient for
+  // the top setups." Enforced in executeProposal (protects auto AND manual
+  // identically). Defaults to 3 when unset.
+  maxTradesPerDay?: number;
 }
 
 export interface ExitConfig {
