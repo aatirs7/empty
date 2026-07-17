@@ -38,6 +38,9 @@ interface ClosedData {
   ok: boolean;
   trades: ClosedTrade[];
   realized: number;
+  // SQL-computed over ALL closed rows (ET days) — the headline numbers. The trades
+  // list is display-only and capped, so never sum it for a total.
+  totals?: { today: number; threeDay: number; all: number };
 }
 
 export default function PositionsView() {
@@ -215,7 +218,16 @@ function ClosedView({ closed }: { closed: ClosedData | null }) {
     return period === "today" ? day === todayET : period === "3d" ? last3.has(day) : true;
   };
   const trades = period === "all" ? closed.trades : closed.trades.filter((t) => inPeriod(t.exitAt));
-  const realized = trades.reduce((s, t) => s + (t.realizedPl != null ? Number(t.realizedPl) : 0), 0);
+  // Headline total from the server's SQL sums (accurate over ALL rows); fall back to
+  // summing the visible list only if an old API response lacks totals.
+  const realized =
+    closed.totals != null
+      ? period === "today"
+        ? closed.totals.today
+        : period === "3d"
+          ? closed.totals.threeDay
+          : closed.totals.all
+      : trades.reduce((s, t) => s + (t.realizedPl != null ? Number(t.realizedPl) : 0), 0);
   const periodLabel = period === "today" ? "today" : period === "3d" ? "last 3 days" : "all time";
 
   return (

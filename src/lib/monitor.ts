@@ -251,7 +251,7 @@ export async function runLadder(
     const sym = occ?.underlying ?? p.symbol;
     const money = `${realizedPl >= 0 ? "+" : "-"}$${Math.abs(realizedPl).toFixed(2)}`;
     out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: exitFill, placed: true, detail: `SOLD ${sym} ${money} — ${closeAll}`, profileId });
-    await sendPush(`Sold ${sym} ${money}`, closeAll, "/positions").catch(() => {});
+    await sendPush(`${profile.label}: Sold ${sym} ${money}`, closeAll, "/positions").catch(() => {});
     return out;
   }
 
@@ -276,7 +276,7 @@ export async function runLadder(
     const stopWord = peak >= L.breakevenPct ? "breakeven" : `${Math.round(L.stopAfterTrim1 * 100)}%`;
     const d = `trimmed ${trimQty} of ${st.entryQty} at +${Math.round(ret * 100)}% (stop → ${stopWord})`;
     out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: bid, placed: true, detail: `SOLD ${sym} — ${d}`, profileId });
-    await sendPush(`Trimmed ${sym} +${Math.round(ret * 100)}%`, d, "/positions").catch(() => {});
+    await sendPush(`${profile.label}: Trimmed ${sym} +${Math.round(ret * 100)}%`, d, "/positions").catch(() => {});
   } else if (peak > Number(st.peakPct)) {
     // Persist the new high-water mark so the ratchet survives restarts.
     await db
@@ -421,7 +421,7 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
       const sym = occ?.underlying ?? p.symbol;
       const pct = `${realizedPl >= 0 ? "+" : ""}$${Math.abs(realizedPl).toFixed(2)}`;
       out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: exitFill, placed: true, detail: `SOLD ${sym} ${pct} — ${reason}`, profileId });
-      await sendPush(`Sold ${sym} ${pct}`, reason, "/positions").catch(() => {});
+      await sendPush(`${profile.label}: Sold ${sym} ${pct}`, reason, "/positions").catch(() => {});
     } catch {
       /* retry next tick */
     }
@@ -575,7 +575,7 @@ export async function monitorTick(): Promise<Fire[]> {
   const notifyBlocked = async (pid: string, sym: string, dir: string, why: string) => {
     try {
       if (!(await getProfileSettings(pid)).autoExecute) return;
-      await sendPush(`${sym} not entered`, `${dir.toUpperCase()} blocked — ${why}`, "/positions");
+      await sendPush(`${getProfile(pid).label}: ${sym} not entered`, `${dir.toUpperCase()} blocked — ${why}`, "/positions");
     } catch {
       /* push failures never break the tick */
     }
@@ -637,7 +637,7 @@ export async function monitorTick(): Promise<Fire[]> {
       // SBv2 clone, so alerting for both would double every tap notification; its taps
       // are still logged for measurement.
       if ((await getProfileSettings(c.profileId)).autoExecute) {
-        await sendPush(`${c.symbol} zone tap ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
+        await sendPush(`${profile.label}: ${c.symbol} zone tap ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
       }
       await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `zone tap ${cur} — checking ${direction.toUpperCase()}` }]);
       confirmReason = " First retest of the flipped boundary.";
@@ -651,7 +651,7 @@ export async function monitorTick(): Promise<Fire[]> {
       const atLevel = level > 0 && Math.abs(cur - level) / level <= LEVEL_TOUCH_BAND;
       if (!atLevel) continue;
       if ((await getProfileSettings(c.profileId)).autoExecute) {
-        await sendPush(`${c.symbol} level touch ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
+        await sendPush(`${profile.label}: ${c.symbol} level touch ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
       }
       await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `level touch ${cur} — checking ${direction.toUpperCase()}` }]);
       confirmReason = ` Level ${level} touched.`;

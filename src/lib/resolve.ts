@@ -21,6 +21,7 @@ export interface ResolveInput {
   expiryHint: string;
   maxPrice?: number; // legacy: prefer contracts cheaper than this per share
   contract?: ContractConfig; // profile-driven window/band/expiry/liquidity (preferred)
+  minDays?: number; // minimum days to expiry (SBv2: 2, so a Thu tap buys NEXT Friday, not a 1-DTE)
 }
 
 export interface ResolvedContract {
@@ -51,8 +52,8 @@ function isFriday(dateStr: string): boolean {
 type ExpiryKind = "friday" | "twoToFourWeeks" | "zeroDte" | "oneDay";
 
 /** Map a profile expiryKind (or a hint string) to a concrete expiry from the chain. */
-function pickExpiry(expiries: string[], kind: ExpiryKind): string {
-  const uniqueSorted = [...new Set(expiries)].sort();
+function pickExpiry(expiries: string[], kind: ExpiryKind, minDays = 0): string {
+  const uniqueSorted = [...new Set(expiries)].sort().filter((e) => daysFromToday(e) >= minDays);
   if (kind === "zeroDte") {
     // Same-day if listed, else the nearest expiry available.
     const pool = uniqueSorted.filter((e) => daysFromToday(e) >= 0);
@@ -118,6 +119,7 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
   const expiry = pickExpiry(
     contracts.map((c) => c.expiration_date),
     kind,
+    input.minDays ?? 0,
   );
   const atExpiry = contracts.filter((c) => c.expiration_date === expiry && c.tradable !== false);
   const poolAll = atExpiry.length ? atExpiry : contracts.filter((c) => c.expiration_date === expiry);

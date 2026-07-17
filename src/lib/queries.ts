@@ -1,7 +1,7 @@
 /**
  * Server-side read helpers for the dashboard pages (run in server components).
  */
-import { and, asc, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   researchRuns,
@@ -103,7 +103,7 @@ export async function getProposalForContract(contractSymbol: string): Promise<Pr
 
 /** Closed (sold) trades, newest first — for the Positions "Closed" tab.
  *  Optionally filtered to one profile (via the originating proposal). */
-export async function getClosedTrades(profileId?: string, limit = 60): Promise<OrderRow[]> {
+export async function getClosedTrades(profileId?: string, limit = 200): Promise<OrderRow[]> {
   if (!profileId) {
     return db.select().from(orders).where(isNotNull(orders.exitAt)).orderBy(desc(orders.exitAt)).limit(limit);
   }
@@ -115,6 +115,28 @@ export async function getClosedTrades(profileId?: string, limit = 60): Promise<O
     .orderBy(desc(orders.exitAt))
     .limit(limit);
   return rows.map((r) => r.order);
+}
+
+/** Accurate realized-P&L totals per period, computed in SQL over ALL closed rows —
+ *  never from a length-capped list summed client-side (that undercounts once a
+ *  profile has more closed trades than the list limit). Day boundaries are ET. */
+export async function getClosedTotals(profileId?: string): Promise<{ today: number; threeDay: number; all: number }> {
+  const et = sql`(${orders.exitAt} AT TIME ZONE 'America/New_York')::date`;
+  const todayEt = sql`(now() AT TIME ZONE 'America/New_York')::date`;
+  const sums = {
+    all: sql<string>`coalesce(sum(${orders.realizedPl}), 0)`,
+    today: sql<string>`coalesce(sum(case when ${et} = ${todayEt} then ${orders.realizedPl} else 0 end), 0)`,
+    threeDay: sql<string>`coalesce(sum(case when ${et} >= ${todayEt} - 2 then ${orders.realizedPl} else 0 end), 0)`,
+  };
+  const [row] = profileId
+    ? await db
+        .select(sums)
+        .from(orders)
+        .innerJoin(proposals, eq(orders.proposalId, proposals.id))
+        .where(and(isNotNull(orders.exitAt), eq(proposals.profileId, profileId)))
+    : await db.select(sums).from(orders).where(isNotNull(orders.exitAt));
+  const r2 = (n: string) => Math.round(Number(n) * 100) / 100;
+  return { today: r2(row.today), threeDay: r2(row.threeDay), all: r2(row.all) };
 }
 
 export async function getCandidateById(id: number): Promise<CandidateRow | null> {

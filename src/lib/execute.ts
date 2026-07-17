@@ -122,42 +122,58 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     // executeProposal throws below and the setup is rejected.
     const holdDays = holdToDays(pred.expectedHoldBars, tf);
     expectedHoldMin = Math.max(15, Math.round(holdDays * 390)); // trading-day minutes; floor 15m
-    const minDaysToExpiry = holdDays >= 1 ? Math.ceil(holdDays * 1.25) : 0;
     // Per-timeframe expiry: QQQ 15m/1h → same-day 0DTE, 4h → next-day swing.
     const contractCfg = contractForTimeframe(profile, tf);
-    // Reachability OFF everywhere (Farrukh 2026-07-16 for SBv2: "Strike isn't
-    // important — a fast hard move pumps premium across all contracts"). QQQ nets the
-    // round-trip spread + theta and rejects if nothing clears the cost.
-    const sel = await selectByEV(
-      proposal.symbol,
-      direction,
-      spot,
-      pred,
-      contractCfg,
-      minDaysToExpiry,
-      false,
-      profile.netContractCosts === true,
-    );
-    if (!sel.primary) {
-      throw new ExecuteError(
-        `No contract fits ${proposal.symbol}'s horizon (~${holdDays.toFixed(1)}d to target; needs expiry ≥ ${minDaysToExpiry}d in the price band) — rejected.`,
-        "no_quote",
+    if (profile.entryKind === "flip_retest") {
+      // SBv2 (Farrukh 2026-07-16): "don't focus on strike — just enter a contract
+      // priced $0.50-0.75 when the setup is there." A proper zone bounce = liquidity
+      // = fast move = premium pump across ALL contracts, so the pick is PRICE-FIRST:
+      // the liquid contract whose ask is closest to $0.60 in the band, on the weekly
+      // (≥2 days out so a Thu tap buys NEXT Friday, not a 1-DTE). No EV ranking, no
+      // hold-horizon gate.
+      resolved = await resolveContract({
+        symbol: proposal.symbol,
+        direction,
+        strikeHint: "ATM",
+        expiryHint: "friday",
+        contract: contractCfg,
+        minDays: 2,
+      });
+    } else {
+      // SBv1 + QQQ: EV-ranked selection, horizon-matched expiry; QQQ nets the
+      // round-trip spread + theta and rejects if nothing clears the cost.
+      const minDaysToExpiry = holdDays >= 1 ? Math.ceil(holdDays * 1.25) : 0;
+      const sel = await selectByEV(
+        proposal.symbol,
+        direction,
+        spot,
+        pred,
+        contractCfg,
+        minDaysToExpiry,
+        false,
+        profile.netContractCosts === true,
       );
+      if (!sel.primary) {
+        throw new ExecuteError(
+          `No contract fits ${proposal.symbol}'s horizon (~${holdDays.toFixed(1)}d to target; needs expiry ≥ ${minDaysToExpiry}d in the price band) — rejected.`,
+          "no_quote",
+        );
+      }
+      const q = await getOptionQuotes([sel.primary.occ]);
+      const ask = q[sel.primary.occ]?.ap && q[sel.primary.occ].ap > 0 ? q[sel.primary.occ].ap : sel.primary.ask;
+      const bid = q[sel.primary.occ]?.bp && q[sel.primary.occ].bp > 0 ? q[sel.primary.occ].bp : null;
+      resolved = {
+        symbol: sel.primary.occ,
+        direction,
+        strike: sel.primary.strike,
+        expiry: sel.primary.expiry,
+        underlyingPrice: spot,
+        ask,
+        bid,
+        mid: bid != null ? Math.round(((ask + bid) / 2) * 100) / 100 : null,
+        price: Math.round(ask * 100) / 100,
+      };
     }
-    const q = await getOptionQuotes([sel.primary.occ]);
-    const ask = q[sel.primary.occ]?.ap && q[sel.primary.occ].ap > 0 ? q[sel.primary.occ].ap : sel.primary.ask;
-    const bid = q[sel.primary.occ]?.bp && q[sel.primary.occ].bp > 0 ? q[sel.primary.occ].bp : null;
-    resolved = {
-      symbol: sel.primary.occ,
-      direction,
-      strike: sel.primary.strike,
-      expiry: sel.primary.expiry,
-      underlyingPrice: spot,
-      ask,
-      bid,
-      mid: bid != null ? Math.round(((ask + bid) / 2) * 100) / 100 : null,
-      price: Math.round(ask * 100) / 100,
-    };
   } else {
     resolved = await resolveContract({
       symbol: proposal.symbol,
@@ -265,9 +281,10 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   }
 
   // Notify on every buy — auto (monitor) AND manual (approve) both land here.
+  // The title names the PROFILE so the owner knows which strategy traded.
   const buyPx = filledPrice ?? limitPrice;
   await sendPush(
-    `Bought ${proposal.symbol} ${direction === "call" ? "call" : "put"}`,
+    `${profile.label}: Bought ${proposal.symbol} ${direction === "call" ? "call" : "put"}`,
     `${qty} × $${resolved.strike} exp ${resolved.expiry} @ $${buyPx.toFixed(2)}${filled ? "" : " (working)"}.`,
     "/positions",
   ).catch(() => {});
