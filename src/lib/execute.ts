@@ -283,9 +283,10 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   // Notify on every buy — auto (monitor) AND manual (approve) both land here.
   // The title names the PROFILE so the owner knows which strategy traded.
   const buyPx = filledPrice ?? limitPrice;
+  // Body stays terse (owner: no dates in the notification — clutter).
   await sendPush(
     `${profile.label}: Bought ${proposal.symbol} ${direction === "call" ? "call" : "put"}`,
-    `${qty} × $${resolved.strike} exp ${resolved.expiry} @ $${buyPx.toFixed(2)}${filled ? "" : " (working)"}.`,
+    `${qty} × $${resolved.strike} @ $${buyPx.toFixed(2)}${filled ? "" : " (working)"}.`,
     "/positions",
   ).catch(() => {});
 

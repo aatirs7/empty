@@ -61,12 +61,21 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
       </Link>
 
       {profileId === "qqq_manual" &&
-        (scan?.runDate === new Date().toISOString().slice(0, 10) && cands.length > 0 ? (
-          // Levels are in — stay out of the way: one collapsed row, expandable for the how-it-works.
+        (cands.length > 0 ? (
+          // Levels exist (today's, or the latest list that carries forward at the
+          // open) — stay out of the way: one collapsed row.
           <details className="bg-panel border border-border rounded-2xl px-4 py-3">
             <summary className="flex items-center justify-between cursor-pointer list-none select-none text-sm">
               <span>
-                Today&apos;s levels set <span className="num text-accent">({cands.length})</span>
+                {scan?.runDate === new Date().toISOString().slice(0, 10) ? (
+                  <>
+                    Today&apos;s levels set <span className="num text-accent">({cands.length})</span>
+                  </>
+                ) : (
+                  <>
+                    Reusing your last levels <span className="num text-accent">({cands.length})</span>
+                  </>
+                )}
               </span>
               <span className="text-xs text-muted">details ▾</span>
             </summary>
@@ -82,12 +91,12 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
             </div>
           </details>
         ) : (
-          // No levels yet — this is the day's first job, so make it loud.
+          // No levels AT ALL (nothing to carry forward) — make it loud.
           <div className="bg-panel border border-accent/30 rounded-2xl p-5 text-center space-y-3">
-            <p className="text-sm font-medium">No levels set for today</p>
+            <p className="text-sm font-medium">No levels set</p>
             <p className="text-xs text-muted leading-relaxed">
-              Enter your morning QQQ levels (one list — below price become CALLs, above become PUTs). Vega enters on
-              the touch, works the ladder, and rides the runner to the next level. Nothing trades until levels are in.
+              Enter your QQQ levels (one list — below price become CALLs, above become PUTs). Vega enters on the touch,
+              works the ladder, and rides the runner to the next level. Levels carry forward day to day once set.
             </p>
             <Link
               href="/setups?profile=qqq_manual"

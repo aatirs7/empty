@@ -267,7 +267,7 @@ function ClosedView({ closed }: { closed: ClosedData | null }) {
           const pl = t.realizedPl != null ? Number(t.realizedPl) : null;
           const pct = entry && exit && entry > 0 ? Math.round(((exit - entry) / entry) * 100) : null;
           return (
-            <div key={t.id} className="bg-panel border border-border rounded-2xl p-4">
+            <Link key={t.id} href={`/trade/${t.id}`} className="block bg-panel border border-border rounded-2xl p-4">
               <div className="flex justify-between items-start gap-2">
                 <div className="min-w-0">
                   <p className="font-medium text-sm">
@@ -279,7 +279,7 @@ function ClosedView({ closed }: { closed: ClosedData | null }) {
                     {exit != null ? ` → sold ${usd(exit)}` : ""}
                   </p>
                   {t.exitReason && <p className="text-[11px] text-muted">{t.exitReason}</p>}
-                  {t.exitAt && <p className="text-[11px] text-muted num mt-0.5">Closed {etDateTime(t.exitAt)}</p>}
+                  {t.exitAt && <p className="text-[11px] text-muted num mt-0.5">Closed {etDateTime(t.exitAt)} · details →</p>}
                 </div>
                 <div className="text-right shrink-0">
                   {pl != null ? (
@@ -293,7 +293,7 @@ function ClosedView({ closed }: { closed: ClosedData | null }) {
                   {pct != null && <p className={`text-xs num ${pct >= 0 ? "text-up" : "text-down"}`}>{pct >= 0 ? "+" : ""}{pct}%</p>}
                 </div>
               </div>
-            </div>
+            </Link>
           );
         })}
       </div>

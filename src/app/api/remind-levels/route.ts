@@ -5,6 +5,7 @@ import { candidates } from "@/db/schema";
 import { getProfile } from "@/lib/profiles";
 import { getClock } from "@/lib/alpaca";
 import { sendPush } from "@/lib/push";
+import { latestManualLevels } from "@/lib/manual-levels";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,10 +50,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, skipped: `levels already set (${rows.length})` });
   }
 
+  // Levels carry forward at the open (monitor clones the latest list), so the
+  // reminder distinguishes "yesterday's list will be reused" from "nothing at all".
+  const prev = await latestManualLevels();
+  const hasCarry = prev != null && prev.levels.length > 0;
   await sendPush(
-    "Set today's QQQ levels",
-    "Market opens in 45 minutes — Vega has no levels to trade yet.",
+    hasCarry ? "QQQ levels: yesterday's list will be reused" : "Set today's QQQ levels",
+    hasCarry
+      ? "Market opens in 45 minutes — update your levels now if the chart changed, or Vega trades yesterday's."
+      : "Market opens in 45 minutes — Vega has no levels to trade yet.",
     "/setups?profile=qqq_manual",
   ).catch(() => {});
-  return NextResponse.json({ ok: true, reminded: true });
+  return NextResponse.json({ ok: true, reminded: true, carryAvailable: hasCarry });
 }

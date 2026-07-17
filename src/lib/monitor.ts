@@ -30,6 +30,7 @@ import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
 import { predict } from "./predict";
 import { checkCatalyst } from "./catalyst";
 import { logActivity, fireKind } from "./activity";
+import { carryForwardManualLevels } from "./manual-levels";
 import type { Bar } from "./alpaca";
 
 export interface Fire {
@@ -533,6 +534,25 @@ export async function reconcileClosedPositions(profileId: string): Promise<void>
 export async function monitorTick(): Promise<Fire[]> {
   // Refresh intraday zones first so QQQ trades off fresh same-session levels.
   await refreshIntradayScans();
+
+  // QQQ Manual levels CARRY FORWARD (owner 2026-07-17): if nothing was entered
+  // today, clone the latest day's list into today (fresh ids, directions off the
+  // live spot) — runs once on the first market-open tick of the day. Without this,
+  // a day with no fresh entry meant zero levels and zero trades.
+  {
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      if (!getProfile("qqq_manual").shelved && (await carryForwardManualLevels(today))) {
+        await sendPush(
+          "QQQ Manual: reusing your last levels",
+          "No levels entered today — yesterday's list is live. Update it on Setups if your chart changed.",
+          "/setups?profile=qqq_manual",
+        ).catch(() => {});
+      }
+    } catch {
+      /* carry-forward is best-effort; a fresh save always works */
+    }
+  }
 
   const [latest] = await db
     .select({ d: candidates.runDate })

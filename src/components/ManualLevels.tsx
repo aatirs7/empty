@@ -20,6 +20,7 @@ export default function ManualLevels() {
   const [msg, setMsg] = useState<string | null>(null);
   const [auto, setAuto] = useState<boolean | null>(null);
   const [hasAccount, setHasAccount] = useState(true);
+  const [fresh, setFresh] = useState(true); // false = showing a previous day's list (carries forward)
 
   const load = useCallback(async () => {
     try {
@@ -29,6 +30,7 @@ export default function ManualLevels() {
         setSaved(j.levels);
         setAuto(!!j.auto);
         setHasAccount(!!j.hasOwnAccount);
+        setFresh(j.fresh !== false);
         const lv = (j.levels as SavedLevel[]).map((l) => l.level).filter((n): n is number => n != null);
         if (lv.length) setInput(lv.join(", "));
       }
@@ -87,8 +89,12 @@ export default function ManualLevels() {
         <p className="text-sm font-medium">Today&apos;s QQQ levels (manual)</p>
         <p className="text-[11px] text-muted leading-relaxed mt-0.5">
           One list, comma-separated — used across all charts while monitoring. Levels below the current price become
-          CALL setups (support), above become PUT setups (resistance). Saving replaces today&apos;s levels.
+          CALL setups (support), above become PUT setups (resistance). Levels carry forward day to day; saving replaces
+          today&apos;s list.
         </p>
+        {!fresh && saved && saved.length > 0 && (
+          <p className="text-[11px] text-accent mt-1">Showing your last saved list — it carries forward at the open unless you update it.</p>
+        )}
       </div>
 
       <label className="block">
