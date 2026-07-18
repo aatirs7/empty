@@ -66,6 +66,74 @@ async function ensureMonitorRun(): Promise<number> {
   return r.id;
 }
 
+// ---- Session memory (DB-traffic diet) --------------------------------------------
+// Module-scope caches survive across invocations on a WARM container (the steady
+// 1/min cron keeps one warm) and on the persistent worker; a cold start simply falls
+// back to the DB once — every cache is read-through. NOTHING critical lives only in
+// memory: trades, fills, exits, tap signals, and catalyst verdicts are written to
+// Postgres IMMEDIATELY and individually on the event. Only replaceable state is
+// cached (candidate/settings reads) or batched (skip-decision log rows).
+const CAND_CACHE_MS = 120_000; // candidates re-read cadence (a manual-level save from another instance lands within this)
+const SETTINGS_CACHE_MS = 60_000; // per-profile auto-toggle staleness ceiling
+const MAINTENANCE_MS = 5 * 60_000; // buy-fill sync + closed-position reconcile cadence
+const SKIP_FLUSH_MS = 4 * 60_000; // max age of buffered skip rows before a forced flush
+const mem = {
+  cands: null as null | { at: number; rows: (typeof candidates.$inferSelect)[] },
+  settings: new Map<string, { at: number; autoExecute: boolean; autoManage: boolean }>(),
+  carriedDay: null as string | null, // carry-forward already ensured for this day
+  zoneByContract: new Map<string, { at: number; zone: Awaited<ReturnType<typeof zoneOfPosition>> }>(),
+  posState: new Map<string, typeof positionState.$inferSelect>(), // write-through (this module is the only writer)
+  lastMaintenance: 0,
+  skipBuffer: [] as Parameters<typeof logActivity>[0],
+  skipBufferAt: 0,
+};
+
+/** Per-profile auto toggles with a short TTL — the owner's toggle applies within
+ *  ~1 min instead of instantly; buys/exits themselves are unaffected. */
+async function cachedSettings(profileId: string): Promise<{ autoExecute: boolean; autoManage: boolean }> {
+  const hit = mem.settings.get(profileId);
+  if (hit && hit.at > Date.now() - SETTINGS_CACHE_MS) return hit;
+  const row = await getProfileSettings(profileId);
+  const entry = { at: Date.now(), autoExecute: !!row.autoExecute, autoManage: !!row.autoManage };
+  mem.settings.set(profileId, entry);
+  return entry;
+}
+
+/** zoneOfPosition with a session cache — a proposal's zoneSetup is immutable after
+ *  entry, so a non-null result is safe to reuse. Null results are NOT cached (the
+ *  order row may simply not be visible yet right after a fill). */
+async function cachedZone(occSymbol: string): Promise<Awaited<ReturnType<typeof zoneOfPosition>>> {
+  const hit = mem.zoneByContract.get(occSymbol);
+  if (hit && hit.at > Date.now() - 10 * 60_000) return hit.zone;
+  const zone = await zoneOfPosition(occSymbol);
+  if (zone) mem.zoneByContract.set(occSymbol, { at: Date.now(), zone });
+  return zone;
+}
+
+/** Buffer a batch of SKIP decision rows (non-critical, replaceable) and flush them
+ *  piggybacked on critical writes, on age, or on size. Worst case a container death
+ *  loses <=4 min of skip rows — never a trade/fill/signal, which flush immediately. */
+async function logSkipsBuffered(skips: Parameters<typeof logActivity>[0], force: boolean): Promise<void> {
+  if (skips.length) {
+    if (mem.skipBuffer.length === 0) mem.skipBufferAt = Date.now();
+    mem.skipBuffer.push(...skips);
+  }
+  const stale = mem.skipBuffer.length > 0 && (Date.now() - mem.skipBufferAt >= SKIP_FLUSH_MS || mem.skipBuffer.length >= 100);
+  if ((force && mem.skipBuffer.length > 0) || stale) {
+    const batch = mem.skipBuffer.splice(0);
+    await logActivity(batch);
+  }
+}
+/** Tick-end activity persistence: critical rows immediately + individually, skip
+ *  rows through the buffer (flushed alongside criticals so ordering stays sane). */
+async function flushTickActivity(entries: Parameters<typeof logActivity>[0]): Promise<void> {
+  const critical = entries.filter((e) => e.kind !== "skip");
+  const skips = entries.filter((e) => e.kind === "skip");
+  if (critical.length) await logActivity(critical); // never buffered — crash-safe
+  await logSkipsBuffered(skips, critical.length > 0);
+}
+// -----------------------------------------------------------------------------------
+
 // SBv2 enters when price is within this fraction of the flipped boundary — "taps the
 // level". Wide enough to catch the tap at minute granularity, tight enough to be a real
 // touch. Deduped to once per candidate per day (see tappedSet).
@@ -150,10 +218,16 @@ export async function runLadder(
   const out: Fire[] = [];
 
   // Lazy state, seeded from the BUY order (original qty — the live position shrinks
-  // as we trim; the broker's avg entry is the fallback entry premium).
-  const [ord] = await db.select().from(orders).where(eq(orders.contractSymbol, p.symbol)).orderBy(desc(orders.id)).limit(1);
-  let [st] = await db.select().from(positionState).where(eq(positionState.contractSymbol, p.symbol)).limit(1);
+  // as we trim; the broker's avg entry is the fallback entry premium). The state row
+  // is cached write-through in memory (this module is its only writer), so a steady
+  // tick costs zero DB reads here; a cold start re-reads once. The BUY-order lookup
+  // only happens when seeding state or closing — not every tick.
+  let st = mem.posState.get(p.symbol) ?? null;
   if (!st) {
+    [st = null] = await db.select().from(positionState).where(eq(positionState.contractSymbol, p.symbol)).limit(1);
+  }
+  if (!st) {
+    const [ord] = await db.select().from(orders).where(eq(orders.contractSymbol, p.symbol)).orderBy(desc(orders.id)).limit(1);
     [st] = await db
       .insert(positionState)
       .values({
@@ -164,6 +238,7 @@ export async function runLadder(
       })
       .returning();
   }
+  mem.posState.set(p.symbol, st);
   const entryPrem = st.entryPremium ? Number(st.entryPremium) : liveEntry;
   if (!entryPrem || entryPrem <= 0) return out;
   const ret = (bid - entryPrem) / entryPrem;
@@ -184,8 +259,9 @@ export async function runLadder(
   if (peak >= L.breakevenPct) stop = 0;
 
   // Runner target: the persisted NEXT-LEVEL price; exit when the UNDERLYING is
-  // within $targetProximity of it in the trade's direction.
-  const zone = occ ? await zoneOfPosition(p.symbol) : null;
+  // within $targetProximity of it in the trade's direction. (Session-cached — the
+  // proposal's zoneSetup is immutable after entry.)
+  const zone = occ ? await cachedZone(p.symbol) : null;
   let spot: number | null = null;
   let nearTarget = false;
   if (zone?.predictedTarget != null && occ) {
@@ -242,6 +318,8 @@ export async function runLadder(
     } catch {
       /* fallback stands */
     }
+    // The order row is fetched here (close time) rather than every tick.
+    const [ord] = await db.select().from(orders).where(eq(orders.contractSymbol, p.symbol)).orderBy(desc(orders.id)).limit(1);
     if (ord) {
       await db
         .update(orders)
@@ -250,6 +328,8 @@ export async function runLadder(
       await db.update(proposals).set({ status: "closed" }).where(eq(proposals.id, ord.proposalId));
     }
     await db.delete(positionState).where(eq(positionState.contractSymbol, p.symbol));
+    mem.posState.delete(p.symbol);
+    mem.zoneByContract.delete(p.symbol);
     const sym = occ?.underlying ?? p.symbol;
     const money = `${realizedPl >= 0 ? "+" : "-"}$${Math.abs(realizedPl).toFixed(2)}`;
     out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: exitFill, placed: true, detail: `SOLD ${sym} ${money} — ${closeAll}`, profileId });
@@ -270,21 +350,28 @@ export async function runLadder(
   }
   if (trimQty > 0) {
     await broker.closePosition(p.symbol, trimQty);
-    await db
-      .update(positionState)
-      .set({ trims: [...trims, trimLevel], peakPct: String(peak), stopStage: peak >= L.breakevenPct ? 2 : 1 })
-      .where(eq(positionState.contractSymbol, p.symbol));
+    const trimPatch = { trims: [...trims, trimLevel], peakPct: String(peak), stopStage: peak >= L.breakevenPct ? 2 : 1 };
+    await db.update(positionState).set(trimPatch).where(eq(positionState.contractSymbol, p.symbol)); // critical — immediate
+    mem.posState.set(p.symbol, { ...st, ...trimPatch });
     const sym = occ?.underlying ?? p.symbol;
     const stopWord = peak >= L.breakevenPct ? "breakeven" : `${Math.round(L.stopAfterTrim1 * 100)}%`;
     const d = `trimmed ${trimQty} of ${st.entryQty} at +${Math.round(ret * 100)}% (stop → ${stopWord})`;
     out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: bid, placed: true, detail: `SOLD ${sym} — ${d}`, profileId });
     await sendPush(`${profile.label}: Trimmed ${sym} +${Math.round(ret * 100)}%`, d, "/positions").catch(() => {});
-  } else if (peak > Number(st.peakPct)) {
-    // Persist the new high-water mark so the ratchet survives restarts.
-    await db
-      .update(positionState)
-      .set({ peakPct: String(peak), stopStage: peak >= L.breakevenPct ? 2 : peak >= L.trim1Pct ? 1 : 0 })
-      .where(eq(positionState.contractSymbol, p.symbol));
+  } else {
+    // Persist the high-water mark ONLY when it crosses a ratchet threshold — the
+    // stop stage depends solely on peak-vs-thresholds, so intermediate peaks don't
+    // change behavior and don't need a write. Crossings persist immediately so the
+    // ratchet survives any restart EXACTLY (a mid-band peak lost to a crash can
+    // never loosen the stop — stage-at-crossing is already durable).
+    const stageOf = (pct: number) => (pct >= L.breakevenPct ? 2 : pct >= L.trim1Pct ? 1 : 0);
+    if (stageOf(peak) > stageOf(Number(st.peakPct))) {
+      const peakPatch = { peakPct: String(peak), stopStage: stageOf(peak) };
+      await db.update(positionState).set(peakPatch).where(eq(positionState.contractSymbol, p.symbol));
+      mem.posState.set(p.symbol, { ...st, ...peakPatch });
+    } else if (peak > Number(st.peakPct)) {
+      mem.posState.set(p.symbol, { ...st, peakPct: String(peak) }); // memory only — replaceable
+    }
   }
   return out;
 }
@@ -340,7 +427,7 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
       }
 
       if (!reason) {
-        const zone = occ ? await zoneOfPosition(p.symbol) : null;
+        const zone = occ ? await cachedZone(p.symbol) : null;
         if (zone && occ) {
           let bars: Bar[] = [];
           try {
@@ -440,6 +527,10 @@ const INTRADAY_RESCAN_MS = 5 * 60_000;
 async function refreshIntradayScans(): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   for (const p of activeProfiles()) {
+    // Shelved profiles are PAUSED — re-scanning them every ~5 min (bar fetches +
+    // candidate delete/insert) was pure DB/API waste (qqq_0dte after the pause).
+    // Their nightly /api/scan coverage for shadow measurement is unaffected.
+    if (p.shelved) continue;
     if (!p.zoneTimeframes.some((z) => z.timeframe === "1h" || z.timeframe === "15min")) continue;
     const [newest] = await db
       .select({ at: candidates.createdAt })
@@ -451,6 +542,7 @@ async function refreshIntradayScans(): Promise<void> {
     if (age > INTRADAY_RESCAN_MS) {
       try {
         await scanProfile(p, today);
+        mem.cands = null; // fresh zones — force the next candidate read from the DB
       } catch {
         /* keep the tick alive even if a rescan fails */
       }
@@ -538,31 +630,47 @@ export async function monitorTick(): Promise<Fire[]> {
 
   // QQQ Manual levels CARRY FORWARD (owner 2026-07-17): if nothing was entered
   // today, clone the latest day's list into today (fresh ids, directions off the
-  // live spot) — runs once on the first market-open tick of the day. Without this,
-  // a day with no fresh entry meant zero levels and zero trades.
+  // live spot). Once ensured for a day, the check is remembered in memory so it
+  // costs zero DB reads on subsequent ticks (cold start re-checks once — idempotent).
   {
     const today = new Date().toISOString().slice(0, 10);
-    try {
-      if (!getProfile("qqq_manual").shelved && (await carryForwardManualLevels(today))) {
-        await sendPush(
-          "QQQ Manual: reusing your last levels",
-          "No levels entered today — yesterday's list is live. Update it on Setups if your chart changed.",
-          "/setups?profile=qqq_manual",
-        ).catch(() => {});
+    if (mem.carriedDay !== today) {
+      try {
+        if (!getProfile("qqq_manual").shelved && (await carryForwardManualLevels(today))) {
+          mem.cands = null; // new candidates exist — force a fresh read below
+          await sendPush(
+            "QQQ Manual: reusing your last levels",
+            "No levels entered today — yesterday's list is live. Update it on Setups if your chart changed.",
+            "/setups?profile=qqq_manual",
+          ).catch(() => {});
+        }
+        mem.carriedDay = today;
+      } catch {
+        /* carry-forward is best-effort (retried next tick); a fresh save always works */
       }
-    } catch {
-      /* carry-forward is best-effort; a fresh save always works */
     }
   }
 
-  const [latest] = await db
-    .select({ d: candidates.runDate })
-    .from(candidates)
-    .orderBy(desc(candidates.runDate))
-    .limit(1);
-  if (!latest) return [];
+  // Candidate list: cached in memory for CAND_CACHE_MS. Candidates change rarely
+  // intraday (nightly scan + explicit invalidations above); a manual-level save from
+  // ANOTHER instance goes live within the TTL (~2 min) — acceptable staleness for a
+  // large cut in per-tick reads. Entries/dedup stay exact: fired/tapped checks below
+  // always hit the DB before any order is placed.
+  let allRows: (typeof candidates.$inferSelect)[];
+  if (mem.cands && mem.cands.at > Date.now() - CAND_CACHE_MS) {
+    allRows = mem.cands.rows;
+  } else {
+    const [latest] = await db
+      .select({ d: candidates.runDate })
+      .from(candidates)
+      .orderBy(desc(candidates.runDate))
+      .limit(1);
+    if (!latest) return [];
+    allRows = await db.select().from(candidates).where(eq(candidates.runDate, latest.d));
+    mem.cands = { at: Date.now(), rows: allRows };
+  }
 
-  const cands = (await db.select().from(candidates).where(eq(candidates.runDate, latest.d))).filter((c) => {
+  const cands = allRows.filter((c) => {
     if (!(c.direction === "call" || c.direction === "put") || !c.zone) return false;
     const prof = getProfile(c.profileId);
     if (prof.shelved) return false; // quarantined — no live signals (e.g. zones_legacy)
@@ -573,20 +681,7 @@ export async function monitorTick(): Promise<Fire[]> {
   });
   if (cands.length === 0) return [];
 
-  // Durable crossing state.
-  let [row] = await db.select().from(monitorState).limit(1);
-  if (!row) [row] = await db.insert(monitorState).values({}).returning();
-  const prevPrices = { ...(row.prices as Record<string, number>) };
-
-  // Durable dedup: which candidates already fired a proposal.
-  const firedRows = await db
-    .select({ cid: proposals.candidateId })
-    .from(proposals)
-    .where(inArray(proposals.candidateId, cands.map((c) => c.id)));
-  const firedSet = new Set(firedRows.map((r) => r.cid));
-
-  const prices = await getLatestPrices([...new Set(cands.map((c) => c.symbol))]);
-  const nextPrices = { ...prevPrices };
+  const prices = await getLatestPrices([...new Set(cands.map((c) => c.symbol))]); // Alpaca, not the DB
   const fires: Fire[] = [];
   const today = new Date().toISOString().slice(0, 10);
   // Outcome push for a tapped SBv2 setup that did NOT enter (pairs with the "checking"
@@ -595,34 +690,75 @@ export async function monitorTick(): Promise<Fire[]> {
   // would double every alert; a paused profile shouldn't buzz the phone either).
   const notifyBlocked = async (pid: string, sym: string, dir: string, why: string) => {
     try {
-      if (!(await getProfileSettings(pid)).autoExecute) return;
+      if (!(await cachedSettings(pid)).autoExecute) return;
       await sendPush(`${getProfile(pid).label}: ${sym} not entered`, `${dir.toUpperCase()} blocked — ${why}`, "/positions");
     } catch {
       /* push failures never break the tick */
     }
   };
-  // Durable dedup for the SBv2 tap trigger: candidates that already logged a tap today.
-  // The flip entry fires on a boundary TAP (not a crossing edge), so it needs this to
-  // fire once per candidate per day (a proposal isn't always created — e.g. a skip).
-  const tapRows = cands.length
-    ? await db
-        .select({ cid: activityLog.candidateId })
-        .from(activityLog)
-        .where(and(eq(activityLog.kind, "tap"), eq(activityLog.runDate, today), inArray(activityLog.candidateId, cands.map((c) => c.id))))
-    : [];
-  const tappedSet = new Set(tapRows.map((r) => r.cid));
 
-  // Market context for the SniperBot confidence engine (fetched once per tick).
-  const hasConfirm = cands.some((c) => getProfile(c.profileId).confirmation.enabled);
-  let marketCtx: MarketContext = { spy: 0, qqq: 0 };
-  if (hasConfirm) {
-    try {
-      const [spyB, qqqB] = await Promise.all([getStockBars("SPY", 90), getStockBars("QQQ", 90)]);
-      marketCtx = { spy: indexTrend(spyB), qqq: indexTrend(qqqB) };
-    } catch {
-      /* neutral */
+  // In-memory TRIGGER PRECHECK (DB-traffic diet): mirrors each entry branch's own
+  // price gate EXACTLY, using only the fetched quotes. On a quiet tick — nothing at a
+  // boundary — the entry path does ZERO DB reads (no crossing-state, no dedup
+  // queries, no market-context bars). When any candidate is at its trigger, the full
+  // original evaluation below runs unchanged, dedup queries and all.
+  const usesPrevState = (p: Profile) => p.entryKind !== "flip_retest" && !p.manualLevels && !p.confirmation.enabled;
+  const maybeTriggered = cands.some((c) => {
+    const cur = prices[c.symbol];
+    if (cur == null) return false;
+    const z = c.zone as { bottom: number; top: number };
+    const p = getProfile(c.profileId);
+    if (p.entryKind === "flip_retest") {
+      const b = (c.setup as { flipped_boundary?: number } | null)?.flipped_boundary ?? (c.direction === "call" ? z.top : z.bottom);
+      return b > 0 && Math.abs(cur - b) / b <= FLIP_TAP_BAND;
     }
-  }
+    if (p.manualLevels) {
+      const lvl = (c.setup as { manual?: { level?: number } } | null)?.manual?.level ?? (z.bottom + z.top) / 2;
+      return lvl > 0 && Math.abs(cur - lvl) / lvl <= LEVEL_TOUCH_BAND;
+    }
+    if (p.confirmation.enabled) return cur >= z.bottom * 0.99 && cur <= z.top * 1.01;
+    return true; // tap-crossing profiles need prev-tick state — must run the loop
+  });
+
+  if (maybeTriggered) {
+    // Durable crossing state — only tap-crossing profiles (zones_legacy, shelved)
+    // use it; skip both the read AND the write when no active profile needs it.
+    const usePrev = cands.some((c) => usesPrevState(getProfile(c.profileId)));
+    let stateRow: typeof monitorState.$inferSelect | null = null;
+    if (usePrev) {
+      [stateRow] = await db.select().from(monitorState).limit(1);
+      if (!stateRow) [stateRow] = await db.insert(monitorState).values({}).returning();
+    }
+    const prevPrices = { ...((stateRow?.prices as Record<string, number> | undefined) ?? {}) };
+    const nextPrices = { ...prevPrices };
+
+    // Durable dedup: which candidates already fired a proposal.
+    const firedRows = await db
+      .select({ cid: proposals.candidateId })
+      .from(proposals)
+      .where(inArray(proposals.candidateId, cands.map((c) => c.id)));
+    const firedSet = new Set(firedRows.map((r) => r.cid));
+
+    // Durable dedup for the SBv2 tap trigger: candidates that already logged a tap today.
+    // The flip entry fires on a boundary TAP (not a crossing edge), so it needs this to
+    // fire once per candidate per day (a proposal isn't always created — e.g. a skip).
+    const tapRows = await db
+      .select({ cid: activityLog.candidateId })
+      .from(activityLog)
+      .where(and(eq(activityLog.kind, "tap"), eq(activityLog.runDate, today), inArray(activityLog.candidateId, cands.map((c) => c.id))));
+    const tappedSet = new Set(tapRows.map((r) => r.cid));
+
+    // Market context for the SniperBot confidence engine (fetched once per tick).
+    const hasConfirm = cands.some((c) => getProfile(c.profileId).confirmation.enabled);
+    let marketCtx: MarketContext = { spy: 0, qqq: 0 };
+    if (hasConfirm) {
+      try {
+        const [spyB, qqqB] = await Promise.all([getStockBars("SPY", 90), getStockBars("QQQ", 90)]);
+        marketCtx = { spy: indexTrend(spyB), qqq: indexTrend(qqqB) };
+      } catch {
+        /* neutral */
+      }
+    }
 
   for (const c of cands) {
     const z = c.zone as { bottom: number; top: number };
@@ -657,7 +793,7 @@ export async function monitorTick(): Promise<Fire[]> {
       // Pushes only for profiles that can actually BUY (auto on) — SBv3 is an undiverged
       // SBv2 clone, so alerting for both would double every tap notification; its taps
       // are still logged for measurement.
-      if ((await getProfileSettings(c.profileId)).autoExecute) {
+      if ((await cachedSettings(c.profileId)).autoExecute) {
         await sendPush(`${profile.label}: ${c.symbol} zone tap ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
       }
       await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `zone tap ${cur} — checking ${direction.toUpperCase()}` }]);
@@ -671,7 +807,7 @@ export async function monitorTick(): Promise<Fire[]> {
       const level = (c.setup as { manual?: { level?: number } } | null)?.manual?.level ?? (z.bottom + z.top) / 2;
       const atLevel = level > 0 && Math.abs(cur - level) / level <= LEVEL_TOUCH_BAND;
       if (!atLevel) continue;
-      if ((await getProfileSettings(c.profileId)).autoExecute) {
+      if ((await cachedSettings(c.profileId)).autoExecute) {
         await sendPush(`${profile.label}: ${c.symbol} level touch ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
       }
       await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `level touch ${cur} — checking ${direction.toUpperCase()}` }]);
@@ -859,7 +995,7 @@ export async function monitorTick(): Promise<Fire[]> {
       const noOwnAccount =
         (c.profileId === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) ||
         (c.profileId === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim());
-      const autoOn = !noOwnAccount && (await getProfileSettings(c.profileId)).autoExecute;
+      const autoOn = !noOwnAccount && (await cachedSettings(c.profileId)).autoExecute;
       if (noOwnAccount) {
         const keysHint = c.profileId === "sbv3" ? "ALPACA_*_5" : "ALPACA_*_2";
         await db
@@ -891,6 +1027,12 @@ export async function monitorTick(): Promise<Fire[]> {
     }
   }
 
+    // Persist crossing state only when a tap-crossing profile is actually using it.
+    if (usePrev && stateRow) {
+      await db.update(monitorState).set({ prices: nextPrices, updatedAt: new Date() }).where(eq(monitorState.id, stateRow.id));
+    }
+  } // end maybeTriggered
+
   // Intraday exits — per account (default = SniperBot/zones, account 2 = QQQ 0DTE),
   // gated per-profile so an unconfigured account is skipped. 0DTE flattens near close.
   {
@@ -901,14 +1043,19 @@ export async function monitorTick(): Promise<Fire[]> {
     } catch {
       /* keep false */
     }
-    // Sync DB with broker truth every tick for ALL profiles (heals orphaned
-    // "open" trades), including shelved zones_legacy on the shared account.
-    for (const p of activeProfiles()) {
-      try {
-        await syncPendingBuyFills(p.id); // record late entry fills FIRST...
-        await reconcileClosedPositions(p.id); // ...so reconcile (status='filled' only) sees them
-      } catch {
-        // best-effort
+    // Drift healing (late buy-fills + broker-closed positions) runs on a SLOW
+    // cadence, not every tick — it's reconciliation, not trading. Executes/exits in
+    // this instance write the DB directly, so nothing here is load-bearing minute
+    // to minute; a 5-min sweep keeps DB/broker truth aligned with far fewer reads.
+    if (Date.now() - mem.lastMaintenance >= MAINTENANCE_MS) {
+      mem.lastMaintenance = Date.now();
+      for (const p of activeProfiles()) {
+        try {
+          await syncPendingBuyFills(p.id); // record late entry fills FIRST...
+          await reconcileClosedPositions(p.id); // ...so reconcile (status='filled' only) sees them
+        } catch {
+          // best-effort
+        }
       }
     }
     for (const pid of ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual"]) {
@@ -922,7 +1069,7 @@ export async function monitorTick(): Promise<Fire[]> {
         // reads — never manage exits there (qqq_manual → keys2, sbv3 → keys5).
         if (pid === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) continue;
         if (pid === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim()) continue;
-        if (!(await getProfileSettings(pid)).autoManage) continue;
+        if (!(await cachedSettings(pid)).autoManage) continue;
         fires.push(...(await manageExits(pid, nearClose)));
       } catch {
         // best-effort
@@ -930,11 +1077,12 @@ export async function monitorTick(): Promise<Fire[]> {
     }
   }
 
-  await db.update(monitorState).set({ prices: nextPrices, updatedAt: new Date() }).where(eq(monitorState.id, row.id));
-
-  // Persist every decision this tick (buys, sells, and skips-with-reason) for the
-  // daily report. candidateId 0 (exits) is stored as null.
-  await logActivity(
+  // Persist decisions. CRITICAL rows (buys, sells) are written IMMEDIATELY and
+  // individually — an ungraceful crash can never lose a trade record. SKIP rows
+  // (repetitive "score too low" style decisions, ~hundreds/day) are batched in
+  // memory and flushed piggybacked on any critical write, on age (<=4 min), or on
+  // size. Tap signals + catalyst verdicts were already written inline above.
+  await flushTickActivity(
     fires.map((f) => {
       const cand = f.candidateId ? cands.find((c) => c.id === f.candidateId) : undefined;
       return {

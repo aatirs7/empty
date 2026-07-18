@@ -38,7 +38,11 @@ export async function GET() {
     // leave false
   }
   const heartbeatAt = ms?.updatedAt ? (ms.updatedAt as Date).toISOString() : null;
-  const alive = heartbeatAt ? Date.now() - new Date(heartbeatAt).getTime() < 3 * 60_000 : false;
+  // The heartbeat is SESSION-ONLY (the monitor cron returns before any DB touch
+  // outside market hours so Neon can scale to zero) — so a stale heartbeat while
+  // the market is closed means "idle", not "down". Only demand freshness when open.
+  const fresh = heartbeatAt ? Date.now() - new Date(heartbeatAt).getTime() < 3 * 60_000 : false;
+  const alive = marketOpen ? fresh : true;
 
   return NextResponse.json({
     ok: true,

@@ -206,6 +206,13 @@ Per `farrukh-changes-paste.md` + the owner's ladder message (owner decisions: QQ
 - **Pushes name the profile**: all notification titles prefixed with `profile.label` (SBv1/SBv2/QQQ Manual) — bought/sold/trimmed/checking/blocked.
 - **QQQ Manual home card** collapses to one row when today's levels are set (big card + Add button only when missing); **8:45 ET levels reminder** cron (`/api/remind-levels`, DST twin crons + ET-hour guard, skips holidays/set days, in middleware PUBLIC).
 
+### Neon DB-traffic diet (2026-07-18) — LIVE
+Goal: DB sees ZERO traffic outside market hours (Neon scales to zero); in-session a quiet tick does ~1-3 DB ops (was ~30-40).
+- **Off-hours gate:** `/api/monitor` gates in order: `inEtTradingWindow()` (`src/lib/market-hours.ts`, pure clock math, 9:25-16:05 ET Mon-Fri) → Alpaca clock w/ in-memory closed-until cache (holidays) → only then heartbeat+tick. heartbeat is SESSION-ONLY now; `/api/status` treats a stale heartbeat while closed as "Idle" not "Down". Whitelisted scheduled jobs (scan 00:00 ET, vet 00:30, remind-levels 8:45, shadow 11:00, daily-report 16:10) are NOT gated. GH Actions all inert. scripts/monitor.ts worker was already clock-gated.
+- **In-session diet (`mem` in monitor.ts):** trigger-first precheck (mirrors each entry branch's price gate; quiet tick = zero entry-path DB reads); candidates cached 2 min (invalidated on rescan/carry-forward; cross-instance manual-level saves land ≤2 min); settings cached 1 min (kill-switch latency ≤1 min); crossing-state read/write skipped unless a tap-crossing profile is active (none); fill-sync+reconcile every 5 min; shelved profiles excluded from refreshIntradayScans; zoneOfPosition + position_state cached write-through; ladder peak persisted ONLY on ratchet-threshold crossings (stop can never loosen across a crash — tested).
+- **Write policy:** trades/fills/exits/taps/catalyst verdicts write IMMEDIATELY + individually (never buffered). Only SKIP activity rows batch (flush on critical write / 4 min / 100 rows) — worst case a container death loses ≤4 min of skip rows, nothing else.
+- 12/12 ladder assertions + 5/5 window boundary tests pass post-restructure.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.
