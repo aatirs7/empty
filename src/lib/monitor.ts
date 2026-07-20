@@ -31,6 +31,7 @@ import { predict } from "./predict";
 import { checkCatalyst } from "./catalyst";
 import { logActivity, fireKind } from "./activity";
 import { carryForwardManualLevels } from "./manual-levels";
+import { intelEnabled, evaluateSbv2Intel } from "./intel";
 import type { Bar } from "./alpaca";
 
 export interface Fire {
@@ -915,8 +916,26 @@ export async function monitorTick(): Promise<Fire[]> {
           await notifyBlocked(c.profileId, c.symbol, direction, "no historical target (move too small)");
           continue;
         }
+        // Market-intelligence + portfolio-risk layer (owner 2026-07-18, after the
+        // 7/17 correlated-calls day): market/stock bias, structure, relative
+        // strength, same-direction + sector exposure caps, session loss response.
+        // ONE call site, all logic in src/lib/intel.ts. REVERT: env SBV2_INTEL=off.
+        if (intelEnabled(c.profileId)) {
+          try {
+            const verdict = await evaluateSbv2Intel(c.symbol, direction);
+            if (!verdict.allowed) {
+              fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: verdict.summary });
+              await notifyBlocked(c.profileId, c.symbol, direction, verdict.summary.slice(0, 90));
+              continue;
+            }
+            sniperSummary = ` ${verdict.summary}`;
+          } catch {
+            /* intel is advisory scaffolding — a data hiccup FAILS OPEN to the
+               mechanical entry rather than silently disabling SBv2 */
+          }
+        }
         sniperConfidence = Math.max(0, Math.min(1, pred.probability / 100));
-        sniperSummary = ` ${pred.reason} Target ${pred.targetMain}.${news?.newsFor ? " News supports it." : ""}`;
+        sniperSummary = ` ${pred.reason} Target ${pred.targetMain}.${news?.newsFor ? " News supports it." : ""}` + sniperSummary;
       } else if (profile.manualLevels) {
         // QQQ Manual: MECHANICAL level-touch entry — no candle, no sniper engine (with
         // no confirmation the exec-quality input is 0 and would auto-reject everything).
