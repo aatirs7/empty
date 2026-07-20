@@ -213,6 +213,9 @@ Goal: DB sees ZERO traffic outside market hours (Neon scales to zero); in-sessio
 - **Write policy:** trades/fills/exits/taps/catalyst verdicts write IMMEDIATELY + individually (never buffered). Only SKIP activity rows batch (flush on critical write / 4 min / 100 rows) — worst case a container death loses ≤4 min of skip rows, nothing else.
 - 12/12 ladder assertions + 5/5 window boundary tests pass post-restructure.
 
+### SBv2 intel layer (2026-07-20) — LIVE, REVERTIBLE
+Owner spec (ChatGPT-drafted, owner-approved) after 7/17's −$402 correlated-calls day (13 call losses in one morning — a market-wide selloff tripped every flip level at once; SBv2's mechanical entry had NO market/exposure awareness). `src/lib/intel.ts`, ONE call site in monitor.ts (SBv2 mechanical branch), fails OPEN on data errors. **REVERT: env `SBV2_INTEL=off` + redeploy, or `git revert ea9c35d`.** All code-computed (bars + live positions), zero model calls. Gates in order: session loss response (3 losses/day = stop; 2 straight = need aligned market) → QQQ+SPY 5-level bias filter (strong-against blocks outright; ordinary-against needs RS ≥1% + aligned structure) → stock's own 15-min fractal structure (strict pivots, protected-swing check) → exposure caps (max 2 same-direction unless market strongly aligned; max 2 per sector via static universe map). Plain-English verdicts logged on every accept/veto. NOT implemented from the spec (noted to owner): VWAP-reclaim entry confirmation (entry stays Farrukh's tap), continuation/reversal taxonomy, contract-selection changes (§12 conflicts with Farrukh's price-first), stop-loss rework (§13 — kept −50% + swing invalidation). Owner plans more market-structure logic on top.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.
