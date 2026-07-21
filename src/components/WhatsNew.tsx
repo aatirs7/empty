@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-21-v16";
+const VERSION = "2026-07-21-v17";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "The full backtesting suite",
+    body: "Backtesting now covers every strategy that can honestly be tested. SB 15M gets a dedicated intraday engine: it replays history one completed 15-minute candle at a time through the exact live entry gates, then simulates the two-contract ladder (+50% trim → breakeven stop → +75% runner → end-of-day flatten) against REAL 15-minute historical option prices — reporting profit factor, both target hit rates, stop rate, and results by ticker, time of day, score, and market alignment. SBv1 also gained the Stage 2 options simulation (its EV contract picker is approximated by its price band, and the report says so). All results land on the Backtest page. QQQ Manual remains honestly untestable — your hand-drawn levels have no historical record, and inventing them would be lookahead.",
+  },
   {
     title: "New profile: SB 15M Empty-Space Day Trader",
     body: "Farrukh's new intraday strategy, as its own separate profile (SB 15M tab). It watches 18 high-cap liquid names for 4-hour order-block zones on the 15-minute chart, and only acts when price retests the zone boundary facing it — with clean empty space beyond, a COMPLETED 15-minute rejection candle, supportive 15-minute market structure, and a setup score ≥75 — between 9:45am and 2:45pm ET only. It buys TWO ~$1.00 weekly contracts: stop −20%, sell one at +50% (stop instantly moves to breakeven), the last exits at +75%, breakeven, or a 15-minute close through the zone — and everything is flat before the close, every day. No overnights, ever. Auto is OFF per the spec: it paper-measures first; enable it after adding its account keys (ALPACA_*_4) and reviewing results.",

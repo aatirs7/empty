@@ -93,9 +93,14 @@ actual fill price (broker fill, not mid).
 ## Measurement
 
 - Own account/log/P&L/scorecard/shadow track (SB 15M tab on every page).
-- **Backtesting:** requires the intraday-granularity replay engine (Stage 1 is
-  daily-only today) — the backtest CLI refuses this profile until that's built.
-  Spec §25's backtest requirements are noted there as the follow-up.
+- **Backtesting: SUPPORTED** (`npm run backtest -- --profile SB15M --from ... --to ...`,
+  2026-07-21). Dedicated intraday engine (`src/lib/backtest/intraday.ts`): steps
+  one COMPLETED 15-minute candle at a time, replays every gate above with the
+  live code, then simulates the two-contract ladder against **real 15-minute
+  historical option bars** (spread modeled — visible config). Reports the spec
+  §25 metrics: profit factor, T1/T2 hit rates, breakeven-after-T1 rate, stop
+  rate, by ticker / time-of-day / score / calls-vs-puts / market alignment.
+  Catalyst gate is stubbed fail-open in the replay (labeled).
 
 ## Deliberately NOT implemented (from the spec) — flag before relying on them
 
@@ -108,6 +113,16 @@ actual fill price (broker fill, not mid).
 - §22's full alert template (pushes carry profile/symbol/direction/zone/score;
   not every field).
 
+## First backtest (Apr–Jul 2026, run #4 — read with its printed limitations)
+
+184 signals passed every gate, but **only 14 found a fillable contract** — on a
+$200+ mega-cap an ATM weekly costs $3–5, so the spec's "ATM-ish near $1.00" band
+is structurally unfillable on most of this universe (170/184 skipped). The 14
+trades: net −$81, win 28.6%, profit factor 0.79, 71% stopped at −20%. Directional
+patterns in the tiny sample: market-ALIGNED entries 50% win (+$103) vs opposed
+0-for-7 (−$272); calls outperformed puts. Open question for Farrukh: widen the
+premium band (accept pricier ATM contracts) or accept very few trades.
+
 ## Change log
 
-- 2026-07-21: profile created per Farrukh's SB 15M spec. Auto OFF; universe seeded (18 names); UI tab added; account = keys4 (unset → shadow only).
+- 2026-07-21: profile created per Farrukh's SB 15M spec. Auto OFF; universe seeded (18 names); UI tab added; account = keys4 (unset → shadow only). Intraday backtest engine shipped same day.

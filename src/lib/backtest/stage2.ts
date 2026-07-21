@@ -79,13 +79,13 @@ export function simulateSwingExit(opts: {
   optionBars: OptionBar[]; // entry day .. expiry (real)
   underlyingBars: Bar[]; // covering entry day .. expiry
   spread: SpreadConfig;
-  swingStopLoss: number; // -0.5
+  swingStopLoss: number | null; // -0.5 (SBv2); null = no mid-swing stop (SBv1, deliberate)
   catastropheFloor: number; // 0.10
   catastropheDays: number; // 2
 }): { exitDay: string; exitBid: number; exitReason: string } {
   const obByDay = new Map(opts.optionBars.map((b) => [barDate(b.t), b]));
   const under = opts.underlyingBars.filter((b) => barDate(b.t) >= opts.entryDay && barDate(b.t) <= opts.expiry);
-  const stopPremium = opts.entryAsk * (1 + opts.swingStopLoss);
+  const stopPremium = opts.swingStopLoss != null ? opts.entryAsk * (1 + opts.swingStopLoss) : null;
   let lastKnownBid = bidOf(opts.entryAsk, opts.spread);
   let lastDay = opts.entryDay;
   let prevClose: number | null = null;
@@ -102,9 +102,10 @@ export function simulateSwingExit(opts: {
 
     // 1. Premium stop (live checks each minute on the bid). Intraday proxy: the
     //    option's real day LOW. Entry day is skipped (the low may predate entry).
-    if (!isEntryDay && ob && bidOf(ob.l, opts.spread) <= stopPremium) {
+    //    SBv1 has NO mid-swing stop (deliberate) — stopPremium is null there.
+    if (stopPremium != null && !isEntryDay && ob && bidOf(ob.l, opts.spread) <= stopPremium) {
       // fill near the threshold, minus fast-move slippage
-      return { exitDay: day, exitBid: round2(Math.max(0.01, stopPremium * (1 - opts.spread.stopSlippagePct))), exitReason: "stop_-50%" };
+      return { exitDay: day, exitBid: round2(Math.max(0.01, stopPremium * (1 - opts.spread.stopSlippagePct))), exitReason: `stop_${Math.round((opts.swingStopLoss ?? 0) * 100)}%` };
     }
     // 2. Swing invalidation: live observes YESTERDAY's close through the zone and
     //    sells during today. (prevClose is null on the entry day.)
@@ -150,7 +151,8 @@ async function simulateTrades(
 ): Promise<TradeSimOutput> {
   const profile = getProfile(profileId);
   const exitCfg = {
-    swingStopLoss: profile.exit.swingStopLoss ?? -0.5,
+    // null = no mid-swing stop (SBv1's deliberate behavior); SBv2 sets -0.5 explicitly.
+    swingStopLoss: profile.exit.swingStopLoss ?? null,
     catastropheFloor: profile.exit.catastropheFloor ?? 0.1,
     catastropheDays: profile.exit.catastropheDays ?? 2,
   };
@@ -173,7 +175,9 @@ async function simulateTrades(
           priceFloor: profile.contract.priceFloor,
           priceIdeal: profile.contract.priceIdeal,
           priceCap: profile.contract.priceCap,
-          minDays: 2, // live SBv2 resolve uses minDays 2 (a Thu tap buys NEXT Friday)
+          // Live: SBv2 resolve uses minDays 2 (a Thu tap buys NEXT Friday); SBv1's
+          // weekly picker takes the nearest Friday >= 1 day out.
+          minDays: profile.entryKind === "flip_retest" ? 2 : 1,
           spread,
         });
       } catch {
@@ -290,8 +294,8 @@ function tradeStats(trades: SimTrade[]) {
 }
 
 export async function runStage2(cfg: Stage2Config): Promise<Stage2Result> {
-  if (cfg.profileId !== "sbv2") {
-    throw new Error("Stage 2 currently supports sbv2 only (price-first contract path); SBv1's EV path is a follow-up.");
+  if (cfg.profileId !== "sbv2" && cfg.profileId !== "sniper_swing") {
+    throw new Error("Stage 2 supports sbv2 and sniper_swing (SBv1). sb15m uses the intraday engine.");
   }
   const replay = await replaySignals({ profileId: cfg.profileId, from: cfg.from, to: cfg.to, granularity: "daily", universe: cfg.universe, seed: cfg.seed });
   const { signals, data, profile } = replay;
@@ -390,6 +394,11 @@ export async function runStage2(cfg: Stage2Config): Promise<Stage2Result> {
           entryFill: "buy at day VWAP + half-spread on the tap day (intraday tap moment unpriceable at daily bars)",
           exitFills: "target/invalidation at day VWAP bid; stop at threshold minus slippage; catastrophe/salvage at close bid",
           sameDayOrder: "stop checked before target (conservative); entry-day stop not checked (pre-entry low ambiguity)",
+          contractSelection:
+            cfg.profileId === "sniper_swing"
+              ? "APPROXIMATED: live SBv1 ranks by EV using live greeks (unavailable historically) — replay picks by the profile's price band ($0.40-1.00, ideal $0.75) over the real chain"
+              : "live-mirrored price-first band selection over the real chain",
+          exitRules: cfg.profileId === "sniper_swing" ? "SBv1: NO mid-swing stop (deliberate); invalidation/target/catastrophe/salvage only" : "SBv2: -50% stop + invalidation/target/catastrophe/salvage",
           spread: spreadBase,
         },
       },

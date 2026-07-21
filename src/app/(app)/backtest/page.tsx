@@ -6,7 +6,7 @@ import { Empty, PageTitle } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-const PROFILE_LABELS: Record<string, string> = { sniper_swing: "SBv1", sbv2: "SBv2" };
+const PROFILE_LABELS: Record<string, string> = { sniper_swing: "SBv1", sbv2: "SBv2", sb15m: "SB 15M" };
 
 // Backtest runs viewer. Runs are LAUNCHED from the terminal (a full replay takes
 // minutes — far beyond a serverless request); this page reads their results.

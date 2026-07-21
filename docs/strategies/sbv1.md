@@ -105,9 +105,12 @@ invents a price, probability, or target.
 - Shadow track (`shadow.ts`): every valid setup shadowed (enter ask, mark bid) +
   a daily SPY ATM-call baseline. Scorecard (`/scorecard`) = real-account P&L only,
   never blended with other profiles. Daily report at 16:10 ET.
-- Backtest: Stage 1 supported (`npm run backtest -- --profile SBv1 ...`).
-  Apr–Jul 2026 result: 65 signals, 43.1% hit, calibration weak (80+ bucket
-  realized 40.7%) — see `/backtest`.
+- Backtest: Stage 1 + Stage 2 supported (`npm run backtest -- --profile SBv1 ...`).
+  Apr–Jul 2026: Stage 1 — 65 signals, 43.1% hit, calibration weak (80+ bucket
+  realized 40.7%). Stage 2 (real chains + modeled spread; EV picker approximated
+  by the price band) — 38 fillable trades, **net −$845 all-signals / −$752 under
+  live caps**, win 21%; with NO mid-swing stop, 18/38 trades lost 75–100% before
+  catastrophe/salvage. See `/backtest`.
 
 ## Change log
 

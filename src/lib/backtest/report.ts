@@ -329,6 +329,139 @@ export function renderStage2Report(r: Stage2Report): string {
   return L.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Intraday (SB 15M) report — spec §25's required metrics, read from run.metrics.
+// ---------------------------------------------------------------------------
+
+interface IntradayTradeStats {
+  n: number;
+  netPl: number;
+  winRate: number | null;
+  avgWinUsd: number | null;
+  avgLossUsd: number | null;
+  profitFactor: number | null;
+  t1RatePct: number | null;
+  t2RatePct: number | null;
+  breakevenAfterT1Pct: number | null;
+  stopRatePct: number | null;
+}
+interface GroupStat {
+  key: string;
+  n: number;
+  netPl: number;
+  winRate: number;
+}
+
+export interface IntradayReport {
+  runId: number;
+  header: Record<string, string | number>;
+  allTrades: IntradayTradeStats;
+  portfolio: { taken: number; pl: number; endEquity: number; maxDrawdown: number; worstStreak: number; stats: IntradayTradeStats };
+  skips: Record<string, number>;
+  byTicker: GroupStat[];
+  byHourEt: GroupStat[];
+  byScore: GroupStat[];
+  byDirection: GroupStat[];
+  byAlignment: GroupStat[];
+  byExitReason: GroupStat[];
+  assumptions: Record<string, unknown>;
+  limitations: string[];
+}
+
+export async function buildIntradayReport(runId: number): Promise<IntradayReport> {
+  const [run] = await db.select().from(backtestRuns).where(eq(backtestRuns.id, runId));
+  if (!run) throw new Error(`backtest run ${runId} not found`);
+  const m = (run.metrics ?? {}) as { intraday?: Omit<IntradayReport, "runId" | "header" | "limitations"> };
+  if (!m.intraday) throw new Error(`run ${runId} has no intraday metrics (status: ${run.status})`);
+  const cfg = (run.config ?? {}) as { label?: string | null };
+  const limitations = [
+    `Hindsight/overfitting risk: variants tested against this exact window so far: ${run.windowVariantCount}.`,
+    "One regime: one market environment.",
+    "PRICING: real 15-minute historical option bars, but NBBO history is unavailable — the spread is MODELED (visible config).",
+    "Within-bar ordering is unknowable at 15m granularity: the stop is checked before the targets (conservative tie rule).",
+    "The catalyst gate was stubbed fail-open — live would have skipped some of these entries around earnings/Fed.",
+    "Fill optimism: entries at next-bar open + vwap-based asks; live fills are worse on fast moves.",
+    "Sample size: state N; small-N cells (per-ticker, per-hour) are directional at best.",
+    "Backtest ≠ forward result: this earns paper trading, not funding.",
+  ];
+  const report: IntradayReport = {
+    runId,
+    header: {
+      profile: run.profileId,
+      stage: "2 (intraday)",
+      window: `${run.fromDate} .. ${run.toDate}`,
+      granularity: run.granularity,
+      pricingPath: run.pricingPath,
+      barsFeed: run.barsFeed,
+      universeSource: run.universeSource,
+      signals: run.signalCount ?? 0,
+      configHash: run.configHash,
+      variantOfWindow: `#${run.windowVariantCount}`,
+      label: cfg.label ?? "",
+    },
+    allTrades: m.intraday.allTrades as IntradayTradeStats,
+    portfolio: m.intraday.portfolio as IntradayReport["portfolio"],
+    skips: (m.intraday.skips ?? {}) as Record<string, number>,
+    byTicker: (m.intraday.byTicker ?? []) as GroupStat[],
+    byHourEt: (m.intraday.byHourEt ?? []) as GroupStat[],
+    byScore: (m.intraday.byScore ?? []) as GroupStat[],
+    byDirection: (m.intraday.byDirection ?? []) as GroupStat[],
+    byAlignment: (m.intraday.byAlignment ?? []) as GroupStat[],
+    byExitReason: (m.intraday.byExitReason ?? []) as GroupStat[],
+    assumptions: (m.intraday.assumptions ?? {}) as Record<string, unknown>,
+    limitations,
+  };
+  await db.update(backtestRuns).set({ limitations }).where(eq(backtestRuns.id, runId));
+  return report;
+}
+
+const money = (x: number | null | undefined) => (x == null ? "—" : `${x < 0 ? "-" : "+"}$${Math.abs(Math.round(x * 100) / 100)}`);
+
+function intradayStatsLines(label: string, s: IntradayTradeStats): string[] {
+  return [
+    `${label}: n=${s.n} · net ${money(s.netPl)} · win ${s.winRate ?? "—"}% · profit factor ${s.profitFactor ?? "—"}`,
+    `  avg win ${money(s.avgWinUsd)} vs avg loss ${money(s.avgLossUsd)} · T1 hit ${s.t1RatePct ?? "—"}% · T2 hit ${s.t2RatePct ?? "—"}% · breakeven-after-T1 ${s.breakevenAfterT1Pct ?? "—"}% · stopped ${s.stopRatePct ?? "—"}%`,
+  ];
+}
+
+function groupLines(title: string, rows: GroupStat[]): string[] {
+  return [title, ...rows.map((g) => `  ${g.key.padEnd(14)} n=${String(g.n).padStart(4)}  net ${money(g.netPl)}  win ${g.winRate}%`)];
+}
+
+export function renderIntradayReport(r: IntradayReport): string {
+  const L: string[] = [];
+  L.push("=".repeat(72));
+  L.push(`BACKTEST — SB 15M INTRADAY OPTIONS SIM — run #${r.runId}`);
+  for (const [k, v] of Object.entries(r.header)) if (v !== "") L.push(`  ${k}: ${v}`);
+  L.push("=".repeat(72));
+  L.push("");
+  L.push(...intradayStatsLines("ALL TRADES", r.allTrades));
+  L.push("");
+  L.push(`PORTFOLIO (live caps): ${r.portfolio.taken} taken · net ${money(r.portfolio.pl)} on $1000 → $${r.portfolio.endEquity} · max DD ${money(r.portfolio.maxDrawdown)} · worst streak ${r.portfolio.worstStreak}`);
+  L.push(...intradayStatsLines("  portfolio trades", r.portfolio.stats));
+  L.push("");
+  L.push(`SKIPS: ${JSON.stringify(r.skips)}`);
+  L.push("");
+  L.push(...groupLines("BY EXIT REASON:", r.byExitReason));
+  L.push("");
+  L.push(...groupLines("BY TICKER:", r.byTicker));
+  L.push("");
+  L.push(...groupLines("BY TIME OF DAY (ET entry hour):", r.byHourEt));
+  L.push("");
+  L.push(...groupLines("BY SETUP SCORE:", r.byScore));
+  L.push("");
+  L.push(...groupLines("CALLS vs PUTS:", r.byDirection));
+  L.push("");
+  L.push(...groupLines("BY MARKET ALIGNMENT:", r.byAlignment));
+  L.push("");
+  L.push("ASSUMPTIONS:");
+  for (const [k, v] of Object.entries(r.assumptions)) L.push(`  ${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
+  L.push("");
+  L.push("HONEST LIMITATIONS:");
+  for (const l of r.limitations) L.push(`  - ${l}`);
+  return L.join("\n");
+}
+
 export function renderStage1Report(r: Stage1Report): string {
   const L: string[] = [];
   L.push("=".repeat(72));

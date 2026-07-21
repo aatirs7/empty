@@ -13,7 +13,8 @@ import { db } from "../src/db";
 import { backtestRuns } from "../src/db/schema";
 import { runStage1, type BacktestableProfileId } from "../src/lib/backtest/engine";
 import { runStage2 } from "../src/lib/backtest/stage2";
-import { buildStage1Report, renderStage1Report, buildStage2Report, renderStage2Report } from "../src/lib/backtest/report";
+import { runIntraday } from "../src/lib/backtest/intraday";
+import { buildStage1Report, renderStage1Report, buildStage2Report, renderStage2Report, buildIntradayReport, renderIntradayReport } from "../src/lib/backtest/report";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -24,6 +25,8 @@ const PROFILE_ALIASES: Record<string, string> = {
   sbv1: "sniper_swing",
   sniper_swing: "sniper_swing",
   sbv2: "sbv2",
+  sb15m: "sb15m",
+  "sb 15m": "sb15m",
   qqq_manual: "qqq_manual",
   qqq_0dte: "qqq_0dte",
 };
@@ -31,8 +34,9 @@ const PROFILE_ALIASES: Record<string, string> = {
 async function main() {
   const reportId = arg("report");
   if (reportId) {
-    const [row] = await db.select({ stage: backtestRuns.stage }).from(backtestRuns).where(eq(backtestRuns.id, Number(reportId)));
-    if (row?.stage === 2) console.log(renderStage2Report(await buildStage2Report(Number(reportId))));
+    const [row] = await db.select({ stage: backtestRuns.stage, gran: backtestRuns.granularity }).from(backtestRuns).where(eq(backtestRuns.id, Number(reportId)));
+    if (row?.gran === "intraday") console.log(renderIntradayReport(await buildIntradayReport(Number(reportId))));
+    else if (row?.stage === 2) console.log(renderStage2Report(await buildStage2Report(Number(reportId))));
     else console.log(renderStage1Report(await buildStage1Report(Number(reportId))));
     return;
   }
@@ -47,7 +51,7 @@ async function main() {
   const rawProfile = (arg("profile") ?? "").toLowerCase();
   const profileId = PROFILE_ALIASES[rawProfile];
   if (!profileId) {
-    console.error("usage: npm run backtest -- --profile SBv1|SBv2 --from YYYY-MM-DD --to YYYY-MM-DD --stage 1");
+    console.error("usage: npm run backtest -- --profile SBv1|SBv2|SB15M --from YYYY-MM-DD --to YYYY-MM-DD [--stage 1|2]");
     process.exitCode = 1;
     return;
   }
@@ -57,7 +61,7 @@ async function main() {
     return;
   }
   if (profileId === "qqq_0dte") {
-    console.error("qqq_0dte needs intraday-granularity replay (not built; profile shelved).");
+    console.error("qqq_0dte is shelved; its intraday replay is not wired (sb15m is).");
     process.exitCode = 1;
     return;
   }
@@ -71,16 +75,22 @@ async function main() {
   }
   const universe = arg("universe")?.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
 
-  if (stage === 2) {
-    if (profileId !== "sbv2") {
-      console.error("Stage 2 currently supports SBv2 only (price-first contract path). SBv1's EV-path Stage 2 is a follow-up.");
-      process.exitCode = 1;
-      return;
+  if (profileId === "sb15m") {
+    // SB 15M is intraday-only: one engine runs the signal replay AND the options
+    // sim (real 15-minute option bars) — the --stage flag is not applicable.
+    console.log(`SB 15M intraday replay + options sim: ${from}..${to} (completed 15m candles, real 15m option bars)...`);
+    const r = await runIntraday({ profileId: "sb15m", from, to, universe, seed: arg("seed"), label: arg("label") });
+    console.log(`Replayed ${r.days} sessions → ${r.signalCount} signals, ${r.trades.length} simulated trades (run #${r.runId}, config ${r.configHash}).`);
+    if (r.runId != null) {
+      console.log("");
+      console.log(renderIntradayReport(await buildIntradayReport(r.runId)));
     }
-    console.log("NOTE (spec decision gate): Stage 1 on this window showed weak/no underlying edge for SBv2 —");
-    console.log("Stage 2 quantifies what that costs in option P&L; it cannot rescue the signal.");
+    return;
+  }
+
+  if (stage === 2) {
     console.log(`Stage 2 options sim: ${profileId} ${from}..${to} (real historical chains + modeled spread)...`);
-    const res2 = await runStage2({ profileId: "sbv2", from, to, universe, seed: arg("seed"), label: arg("label") });
+    const res2 = await runStage2({ profileId: profileId as BacktestableProfileId, from, to, universe, seed: arg("seed"), label: arg("label") });
     console.log(`Simulated ${res2.trades.length} trades from ${res2.signalCount} signals (run #${res2.runId}, config ${res2.configHash}).`);
     console.log("");
     console.log(renderStage2Report(await buildStage2Report(res2.runId)));

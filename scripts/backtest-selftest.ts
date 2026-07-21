@@ -194,6 +194,37 @@ async function main() {
     check("stage2: strike grid spans the window", strikeGrid(100, "call", 25, 4).length > 10);
   }
 
+  // ---- 5c. Intraday two-contract ladder sim (SB 15M) — synthetic 15m bars.
+  {
+    const { simulateLadder, etMinutesAt } = await import("../src/lib/backtest/intraday");
+    const { DEFAULT_SPREAD } = await import("../src/lib/backtest/pricing");
+    // 2026-06-01 is a Monday; 13:30Z = 9:30 ET (EDT).
+    const t0 = Date.parse("2026-06-01T14:00:00Z"); // 10:00 ET
+    const ob = (i: number, o: number, h: number, l: number, c: number) => ({ t: new Date(t0 + i * 15 * 60_000).toISOString(), o, h, l, c, v: 500, vw: (o + c) / 2, n: 100 });
+    const ub = (i: number, o: number, h: number, l: number, c: number) => ({ t: new Date(t0 + i * 15 * 60_000).toISOString(), o, h, l, c, v: 1 });
+    const zone = { bottom: 98, top: 100 };
+    const base = { entryAsk: 1.0, qty: 2, direction: "call" as const, zone, entryMs: t0, spread: DEFAULT_SPREAD, stopLoss: -0.2, trim1Pct: 0.5, runnerTakeProfit: 0.75 };
+
+    // T1 then breakeven stop: bar 1 spikes to +50% -> trim 1 + stop->breakeven; bar 2 dips to entry -> runner out at breakeven.
+    const a = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.1, 0.95, 1.05), ob(1, 1.05, 1.8, 1.05, 1.6), ob(2, 1.6, 1.65, 0.9, 1.0)], underlying15: [ub(0, 100.5, 101, 100, 100.8), ub(1, 100.8, 103, 100.8, 102.5), ub(2, 102.5, 102.6, 100.2, 100.4)] });
+    check("ladder: T1 sells 1 at +50%, runner exits at BREAKEVEN stop", a.t1Hit && !a.t2Hit && a.breakevenExit && a.sells.length === 2 && a.exitReason === "breakeven_stop", JSON.stringify(a.sells));
+    // Full win: T1 then T2.
+    const b = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.8, 1, 1.7), ob(1, 1.7, 2.2, 1.6, 2.0)], underlying15: [ub(0, 100.5, 103, 100.4, 102.9), ub(1, 102.9, 104, 102.8, 103.8)] });
+    check("ladder: T1 + runner take-profit at +75%", b.t1Hit && b.t2Hit && b.plUsd > 100, `pl=${b.plUsd}`);
+    // Straight stop: -20% on the option low sells BOTH.
+    const c = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.05, 0.6, 0.7)], underlying15: [ub(0, 100.5, 100.6, 99.2, 99.4)] });
+    check("ladder: -20% stop sells everything (stopOut)", c.stopOut && !c.t1Hit && c.exitReason === "stop_-20%" && c.plUsd < 0);
+    // Structural invalidation: underlying 15m close through the zone.
+    const d = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.1, 0.95, 1.0), ob(1, 1.0, 1.05, 0.9, 0.95)], underlying15: [ub(0, 100.5, 100.8, 99.9, 100.2), ub(1, 100.2, 100.3, 97.4, 97.6)] });
+    check("ladder: 15m close through the zone flattens", d.exitReason === "15m_invalidation" && !d.stopOut);
+    // EOD flatten: quiet bars until 15:35 ET.
+    const bars = Array.from({ length: 24 }, (_, i) => ob(i, 1, 1.1, 0.95, 1.02));
+    const ubs = Array.from({ length: 24 }, (_, i) => ub(i, 100.5, 100.8, 100.2, 100.6));
+    const e = simulateLadder({ ...base, optionBars: bars, underlying15: ubs });
+    check("ladder: end-of-day flatten fires (~15:35 ET)", e.exitReason === "eod_flatten", e.exitReason);
+    check("etMinutesAt: 14:00Z on 2026-06-01 = 10:00 ET", etMinutesAt(t0) === 600, String(etMinutesAt(t0)));
+  }
+
   // ---- 6. Determinism helpers.
   {
     const a = hashConfig({ b: 2, a: [1, { z: 1, y: 2 }] });

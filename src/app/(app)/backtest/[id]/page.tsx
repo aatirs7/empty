@@ -3,12 +3,12 @@ import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { backtestRuns } from "@/db/schema";
-import { buildStage1Report, buildStage2Report, type Stage2TradeStats } from "@/lib/backtest/report";
+import { buildStage1Report, buildStage2Report, buildIntradayReport, type Stage2TradeStats } from "@/lib/backtest/report";
 import { PageTitle } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-const PROFILE_LABELS: Record<string, string> = { sniper_swing: "SBv1", sbv2: "SBv2" };
+const PROFILE_LABELS: Record<string, string> = { sniper_swing: "SBv1", sbv2: "SBv2", sb15m: "SB 15M" };
 const pct = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 1000) / 10}%`);
 const pctRaw = (x: number | null | undefined) => (x == null ? "—" : `${x}%`);
 
@@ -43,6 +43,7 @@ export default async function BacktestRunPage({ params }: { params: Promise<{ id
     );
   }
 
+  if (run.granularity === "intraday") return <IntradayView runId={runId} run={{ profileId: run.profileId, fromDate: run.fromDate, toDate: run.toDate }} />;
   if (run.stage === 2) return <Stage2View runId={runId} run={{ profileId: run.profileId, fromDate: run.fromDate, toDate: run.toDate, windowVariantCount: run.windowVariantCount }} />;
 
   const r = await buildStage1Report(runId);
@@ -181,6 +182,90 @@ export default async function BacktestRunPage({ params }: { params: Promise<{ id
 }
 
 const usd = (x: number | null | undefined) => (x == null ? "—" : `${x < 0 ? "-" : "+"}$${Math.abs(Math.round(x * 100) / 100)}`);
+
+function GroupTable({ rows }: { rows: { key: string; n: number; netPl: number; winRate: number }[] }) {
+  return (
+    <table className="w-full text-xs num">
+      <tbody>
+        {rows.map((g) => (
+          <tr key={g.key}>
+            <td>{g.key}</td>
+            <td className="text-right">n={g.n}</td>
+            <td className={`text-right ${g.netPl >= 0 ? "text-up" : "text-down"}`}>{usd(g.netPl)}</td>
+            <td className="text-right text-muted">{g.winRate}%</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+async function IntradayView({ runId, run }: { runId: number; run: { profileId: string; fromDate: string; toDate: string } }) {
+  const r = await buildIntradayReport(runId);
+  const s = r.allTrades;
+  return (
+    <div className="space-y-5">
+      <PageTitle
+        title={`SB 15M backtest #${runId} — intraday options sim`}
+        subtitle={`${run.fromDate} → ${run.toDate} · ${r.header.signals} signals · real 15-minute option prices`}
+      />
+
+      <Section title="Portfolio — what the live account would have done (caps applied)">
+        <div className="flex items-baseline justify-around text-center">
+          <div>
+            <div className={`text-2xl num ${r.portfolio.pl >= 0 ? "text-up" : "text-down"}`}>{usd(r.portfolio.pl)}</div>
+            <div className="text-xs text-muted">net P&L · $1000 start → ${r.portfolio.endEquity}</div>
+          </div>
+          <div>
+            <div className="text-2xl num">{r.portfolio.taken}</div>
+            <div className="text-xs text-muted">trades taken</div>
+          </div>
+        </div>
+        <p className="text-xs text-muted num">max drawdown {usd(r.portfolio.maxDrawdown)} · longest losing streak {r.portfolio.worstStreak}</p>
+      </Section>
+
+      <Section title="All trades">
+        <div className="text-xs space-y-1 num">
+          <p>
+            n={s.n} · net <span className={s.netPl >= 0 ? "text-up" : "text-down"}>{usd(s.netPl)}</span> · win {s.winRate ?? "—"}% · profit factor {s.profitFactor ?? "—"}
+          </p>
+          <p className="text-muted">avg win {usd(s.avgWinUsd)} vs avg loss {usd(s.avgLossUsd)}</p>
+          <p>
+            Target 1 (+50%) hit {s.t1RatePct ?? "—"}% · Target 2 (+75%) hit {s.t2RatePct ?? "—"}% · breakeven exit after T1 {s.breakevenAfterT1Pct ?? "—"}% · stopped out {s.stopRatePct ?? "—"}%
+          </p>
+          <p className="text-[11px] text-muted">skips: {Object.entries(r.skips).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}</p>
+        </div>
+      </Section>
+
+      <Section title="By exit reason"><GroupTable rows={r.byExitReason} /></Section>
+      <Section title="By ticker"><GroupTable rows={r.byTicker} /></Section>
+      <Section title="By time of day (ET entry hour)"><GroupTable rows={r.byHourEt} /></Section>
+      <Section title="By setup score"><GroupTable rows={r.byScore} /></Section>
+      <Section title="Calls vs puts"><GroupTable rows={r.byDirection} /></Section>
+      <Section title="By market alignment"><GroupTable rows={r.byAlignment} /></Section>
+
+      <Section title="Assumptions (every fill is modeled per these)">
+        <ul className="text-[11px] text-muted space-y-1.5 list-disc pl-4">
+          {Object.entries(r.assumptions).map(([k, v]) => (
+            <li key={k}>
+              <span className="text-foreground/70">{k}:</span> {typeof v === "string" ? v : JSON.stringify(v)}
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      <Section title="Honest limitations">
+        <ul className="text-[11px] text-muted space-y-1.5 list-disc pl-4">
+          {r.limitations.map((l, i) => (
+            <li key={i}>{l}</li>
+          ))}
+        </ul>
+      </Section>
+
+      <Link href="/backtest" className="block text-center text-xs text-accent">All runs &rarr;</Link>
+    </div>
+  );
+}
 
 function StatsBlock({ s }: { s: Stage2TradeStats }) {
   return (
