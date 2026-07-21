@@ -202,6 +202,23 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
       contract: profile.contract,
     });
   }
+  // Owner 2026-07-21 (SBv2): a flip setup is only tradable if the contract is no more
+  // than `contract.otmPct`% out of the money. resolveContract's strike window already
+  // enforces this; this is the belt-and-braces assert so no fallback pick can slip a
+  // further-OTM strike through. Skip the setup rather than buy a deeper strike.
+  if (profile.entryKind === "flip_retest" && profile.contract) {
+    const maxOtm = profile.contract.otmPct;
+    const otmPct =
+      direction === "call"
+        ? ((resolved.strike - resolved.underlyingPrice) / resolved.underlyingPrice) * 100
+        : ((resolved.underlyingPrice - resolved.strike) / resolved.underlyingPrice) * 100;
+    if (otmPct > maxOtm) {
+      throw new ExecuteError(
+        `No contract within ${maxOtm}% OTM for ${proposal.symbol} in the price band (closest is ${otmPct.toFixed(1)}% OTM) — skipped.`,
+        "no_quote",
+      );
+    }
+  }
   if (resolved.price == null || resolved.price <= 0) {
     throw new ExecuteError(
       `No affordable + liquid contract for ${proposal.symbol} within the price cap (or market closed).`,

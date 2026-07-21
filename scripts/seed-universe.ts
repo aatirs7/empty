@@ -25,6 +25,11 @@ const SNIPER = [
 // QQQ 0DTE — single ticker.
 const QQQ = ["QQQ"];
 
+// SB 15M Empty-Space Day Trader — high-cap, highly liquid names with tight-spread
+// weekly options (Farrukh spec 2026-07-21 §2). Being listed is NOT enough to trade:
+// every name must still pass the full setup + liquidity gates.
+const SB15M_LIST = ["NVDA","TSLA","AAPL","AMZN","META","MSFT","GOOGL","AMD","AVGO","NFLX","PLTR","ORCL","CRM","COIN","MSTR","BA","QQQ","SPY"];
+
 // Cheap ($5-65) liquid optionable names — the shelved legacy zone track.
 const ZONES = [
   "INTC","CSCO","HPQ","HPE","WDC","PLTR","PATH","SOUN","BBAI","IONQ","RGTI","U","RBLX","PINS","SNAP","DBX","NU","AFRM","UPST","PYPL","XYZ",
@@ -52,6 +57,7 @@ async function main() {
   add(SNIPER, "sbv3"); // SBv3 = SBv2 clone (Farrukh's next update lands here)
   add(QQQ, "qqq_0dte");
   add(ZONES, "zones_legacy");
+  add(SB15M_LIST, "sb15m");
 
   await db.delete(universe);
   await db.insert(universe).values(rows.map((r) => ({ ...r, active: true })));

@@ -13,6 +13,7 @@ export const UI_PROFILE_TABS = [
   { id: "sbv2", label: "SBv2" },
   { id: "sniper_swing", label: "SBv1" },
   { id: "qqq_manual", label: "QQQ Manual" },
+  { id: "sb15m", label: "SB 15M" },
 ] as const;
 
 export const UI_PROFILE_IDS: string[] = UI_PROFILE_TABS.map((t) => t.id);

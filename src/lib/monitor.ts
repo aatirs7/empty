@@ -15,7 +15,7 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { candidates, monitorState, orders, positionState, proposals, researchRuns, activityLog } from "../db/schema";
-import { getLatestPrices, getStockBars, getOptionQuotes, midPrice, getClock } from "./alpaca";
+import { getLatestPrices, getStockBars, getIntradayBars, getOptionQuotes, midPrice, getClock } from "./alpaca";
 import { getBroker } from "./broker";
 import { executeProposal } from "./execute";
 import { classifyAndScore } from "./playbook";
@@ -25,13 +25,13 @@ import { getProfile, activeProfiles, type Profile } from "./profiles";
 import { scanProfile } from "./scanner";
 import { zoneOfPosition } from "./manage";
 import { getProfileSettings } from "./profile-settings";
-import { confirmEntry } from "./confirm";
+import { confirmEntry, evaluateConfirmation } from "./confirm";
 import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
 import { predict } from "./predict";
 import { checkCatalyst } from "./catalyst";
 import { logActivity, fireKind } from "./activity";
 import { carryForwardManualLevels } from "./manual-levels";
-import { intelEnabled, evaluateSbv2Intel } from "./intel";
+import { intelEnabled, evaluateSbv2Intel, classifyStructure } from "./intel";
 import type { Bar } from "./alpaca";
 
 export interface Fire {
@@ -142,6 +142,22 @@ const FLIP_TAP_BAND = 0.004; // 0.4%
 // QQQ Manual level-touch band: tighter than the flip band (QQQ levels sit a few
 // points apart; 0.4% of ~$720 would be ±$2.9 — too sloppy). 0.15% ≈ ±$1.
 const LEVEL_TOUCH_BAND = 0.0015;
+
+/** Minutes since midnight in ET (SB15M's 9:45am-2:45pm day-trade entry window). */
+function etMinutesNow(): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "numeric", hour12: false }).formatToParts(new Date());
+  const h = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const m = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  return h * 60 + m;
+}
+
+/** A profile's day-trade entry window (undefined = always open). */
+function inEntryWindow(profile: Profile): boolean {
+  const w = profile.entryWindowEt;
+  if (!w) return true;
+  const now = etMinutesNow();
+  return now >= w.startMin && now <= w.endMin;
+}
 
 /** Turn a raw execute error into a short, plain "why it didn't buy" for the push. */
 function friendlyBlock(msg: string): string {
@@ -261,11 +277,12 @@ export async function runLadder(
 
   // Runner target: the persisted NEXT-LEVEL price; exit when the UNDERLYING is
   // within $targetProximity of it in the trade's direction. (Session-cached — the
-  // proposal's zoneSetup is immutable after entry.)
+  // proposal's zoneSetup is immutable after entry.) targetProximity <= 0 disables
+  // this exit (SB15M — its runner exits on premium targets, not underlying levels).
   const zone = occ ? await cachedZone(p.symbol) : null;
   let spot: number | null = null;
   let nearTarget = false;
-  if (zone?.predictedTarget != null && occ) {
+  if (zone?.predictedTarget != null && occ && L.targetProximity > 0) {
     try {
       spot = (await getLatestPrices([occ.underlying]))[occ.underlying] ?? null;
     } catch {
@@ -280,19 +297,41 @@ export async function runLadder(
   const ageMin = (Date.now() - new Date(st.openedAt).getTime()) / 60_000;
   const timedOut = zone?.expectedHoldMin != null && trims.length === 0 && ageMin > 2 * zone.expectedHoldMin;
 
+  // Structural early exit (SB15M spec §12): a COMPLETED 15-minute candle closing
+  // through the zone against the position kills the thesis before the % stop.
+  let invalidated15m = "";
+  if (profile.exit.invalidateOn15mClose && zone && occ) {
+    try {
+      const b15 = await getIntradayBars(occ.underlying, "15Min", 90);
+      const done = b15.filter((b) => Date.parse(b.t) + 15 * 60_000 <= Date.now());
+      const last = done[done.length - 1];
+      if (last && ((zone.direction === "call" && last.c < zone.bottom) || (zone.direction === "put" && last.c > zone.top))) {
+        invalidated15m = `15m close ${last.c} through the zone — setup invalidated`;
+      }
+    } catch {
+      /* bars unavailable — the % stop still protects */
+    }
+  }
+
   // Full-close reasons (sell ALL remaining), in priority order.
   let closeAll = "";
-  if (ret <= stop) {
+  if (invalidated15m) {
+    closeAll = invalidated15m;
+  } else if (ret <= stop) {
     closeAll =
       stop === 0
         ? `breakeven stop after +${Math.round(peak * 100)}% peak`
         : `hit ${Math.round(stop * 100)}% stop (${Math.round(ret * 100)}%)`;
+  } else if (L.runnerTakeProfit != null && ret >= L.runnerTakeProfit) {
+    // SB15M: the LAST contract's premium target (+75%) — the ladder always leaves
+    // a runner, so this is how "sell contract 2 at +75%" executes.
+    closeAll = `runner take-profit +${Math.round(ret * 100)}% (target +${Math.round(L.runnerTakeProfit * 100)}%)`;
   } else if (nearTarget && zone?.predictedTarget != null) {
     closeAll = `within $${L.targetProximity.toFixed(2)} of next level ${zone.predictedTarget} (QQQ ${spot})`;
   } else if (timedOut) {
     closeAll = `no bounce within 2x expected hold (~${Math.round(zone!.expectedHoldMin!)}min)`;
-  } else if (profile.exit.sameDayExit && occ?.expiry === today && nearClose) {
-    closeAll = `0DTE end-of-day flatten (${ret >= 0 ? "+" : ""}${Math.round(ret * 100)}%)`;
+  } else if (profile.exit.sameDayExit && nearClose && (occ?.expiry === today || profile.exit.forceEodFlatten)) {
+    closeAll = `end-of-day flatten (${ret >= 0 ? "+" : ""}${Math.round(ret * 100)}%)`;
   }
 
   if (closeAll) {
@@ -532,7 +571,13 @@ async function refreshIntradayScans(): Promise<void> {
     // candidate delete/insert) was pure DB/API waste (qqq_0dte after the pause).
     // Their nightly /api/scan coverage for shadow measurement is unaffected.
     if (p.shelved) continue;
-    if (!p.zoneTimeframes.some((z) => z.timeframe === "1h" || z.timeframe === "15min")) continue;
+    // 15min/1h zones refresh every ~5 min; 4h-zone profiles (SB15M) refresh HOURLY —
+    // a 4-hour zone can only change when a 4H bar completes mid-session, so a 5-min
+    // cadence would be pure API waste across an 18-name universe.
+    const fast = p.zoneTimeframes.some((z) => z.timeframe === "1h" || z.timeframe === "15min");
+    const slow = !fast && p.zoneTimeframes.some((z) => z.timeframe === "4h");
+    if (!fast && !slow) continue;
+    const cadence = fast ? INTRADAY_RESCAN_MS : 60 * 60_000;
     const [newest] = await db
       .select({ at: candidates.createdAt })
       .from(candidates)
@@ -540,7 +585,7 @@ async function refreshIntradayScans(): Promise<void> {
       .orderBy(desc(candidates.createdAt))
       .limit(1);
     const age = newest?.at ? Date.now() - new Date(newest.at).getTime() : Infinity;
-    if (age > INTRADAY_RESCAN_MS) {
+    if (age > cadence) {
       try {
         await scanProfile(p, today);
         mem.cands = null; // fresh zones — force the next candidate read from the DB
@@ -814,15 +859,41 @@ export async function monitorTick(): Promise<Fire[]> {
       await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `level touch ${cur} — checking ${direction.toUpperCase()}` }]);
       confirmReason = ` Level ${level} touched.`;
     } else if (profile.confirmation.enabled) {
-      // Confirmation profiles (SBv1, QQQ 0DTE): fire only when price is AT the
-      // zone AND an intraday confirmation candle prints (rejection/engulf/strong
+      // Confirmation profiles (SBv1, QQQ 0DTE, SB15M): fire only when price is AT
+      // the zone AND an intraday confirmation candle prints (rejection/engulf/strong
       // close + relative volume) — never on a bare tap.
       const atZone = cur >= z.bottom * 0.99 && cur <= z.top * 1.01;
       if (!atZone) continue;
-      const conf = await confirmEntry(c.symbol, direction, z, profile.confirmation.minRelVolume);
-      if (!conf.confirmed) continue;
-      confirmReason = ` Confirmed: ${conf.reason}.`;
-      execScore = conf.executionScore;
+      if (profile.id === "sb15m") {
+        // SB 15M day trader (spec 2026-07-21): decisions on COMPLETED 15-minute
+        // candles only, inside the 9:45am-2:45pm ET window, with the 15-min market
+        // structure as a confirmation filter (structure never triggers on its own;
+        // an OPPOSED structure blocks unless the rejection candle is strong —
+        // spec §8's "unless the zone reaction produces a confirmed reversal").
+        if (!inEntryWindow(profile)) continue;
+        let bars15: Bar[] = [];
+        try {
+          bars15 = await getIntradayBars(c.symbol, "15Min", 3 * 390);
+        } catch {
+          continue;
+        }
+        const completed = bars15.filter((b) => Date.parse(b.t) + 15 * 60_000 <= Date.now());
+        const conf = evaluateConfirmation(completed, direction, z, profile.confirmation.minRelVolume);
+        if (!conf.confirmed) continue;
+        const structure = classifyStructure(completed);
+        const opposed = (direction === "call" && structure === "bearish") || (direction === "put" && structure === "bullish");
+        if (opposed && conf.executionScore < 60) {
+          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — 15m structure ${structure} opposes the ${direction} and the rejection isn't strong (exec ${conf.executionScore})` });
+          continue;
+        }
+        confirmReason = ` Confirmed on a completed 15m candle: ${conf.reason}. 15m structure ${structure}.`;
+        execScore = conf.executionScore;
+      } else {
+        const conf = await confirmEntry(c.symbol, direction, z, profile.confirmation.minRelVolume);
+        if (!conf.confirmed) continue;
+        confirmReason = ` Confirmed: ${conf.reason}.`;
+        execScore = conf.executionScore;
+      }
     } else {
       // Tap-only profiles (zones_legacy): a boundary crossing between two ticks.
       if (prev === undefined) continue; // first sighting: establish baseline
@@ -1010,13 +1081,14 @@ export async function monitorTick(): Promise<Fire[]> {
 
       // Profiles whose broker falls back to SBv1's DEFAULT account when their own
       // keys are missing must never auto-buy in that state: qqq_manual needs the QQQ
-      // account keys (ALPACA_*_2), sbv3 (the SBv2 clone) needs ALPACA_*_5.
+      // account keys (ALPACA_*_2), sbv3 needs ALPACA_*_5, sb15m needs ALPACA_*_4.
       const noOwnAccount =
         (c.profileId === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) ||
-        (c.profileId === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim());
+        (c.profileId === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim()) ||
+        (c.profileId === "sb15m" && !process.env.ALPACA_API_KEY_ID4?.trim());
       const autoOn = !noOwnAccount && (await cachedSettings(c.profileId)).autoExecute;
       if (noOwnAccount) {
-        const keysHint = c.profileId === "sbv3" ? "ALPACA_*_5" : "ALPACA_*_2";
+        const keysHint = c.profileId === "sbv3" ? "ALPACA_*_5" : c.profileId === "sb15m" ? "ALPACA_*_4" : "ALPACA_*_2";
         await db
           .update(proposals)
           .set({ status: "expired", zoneRead: `${alert} Auto-skip: ${c.profileId} has no account keys (set ${keysHint})` })
@@ -1077,7 +1149,7 @@ export async function monitorTick(): Promise<Fire[]> {
         }
       }
     }
-    for (const pid of ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual"]) {
+    for (const pid of ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "sb15m"]) {
       try {
         // A shelved profile is PAUSED: no orders, and no exit management — its account
         // may have been handed to another profile (qqq_0dte → qqq_manual, 2026-07-15),
@@ -1088,6 +1160,7 @@ export async function monitorTick(): Promise<Fire[]> {
         // reads — never manage exits there (qqq_manual → keys2, sbv3 → keys5).
         if (pid === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) continue;
         if (pid === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim()) continue;
+        if (pid === "sb15m" && !process.env.ALPACA_API_KEY_ID4?.trim()) continue;
         if (!(await cachedSettings(pid)).autoManage) continue;
         fires.push(...(await manageExits(pid, nearClose)));
       } catch {

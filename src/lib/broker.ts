@@ -63,6 +63,13 @@ function accountKeysFor(profileId?: string): AccountKeys | null {
     const secret = process.env.ALPACA_API_SECRET_KEY5?.trim();
     if (id && secret) return { id, secret };
   }
+  if (profileId === "sb15m") {
+    // SB 15M day trader — own account when keys4 exist; monitor.ts hard-gates its
+    // auto-buy/manage on keys4 (default-keys fallback is read-only).
+    const id = process.env.ALPACA_API_KEY_ID4?.trim();
+    const secret = process.env.ALPACA_API_SECRET_KEY4?.trim();
+    if (id && secret) return { id, secret };
+  }
   return null; // default keys
 }
 

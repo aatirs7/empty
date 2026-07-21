@@ -4,9 +4,17 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-20-v14";
+const VERSION = "2026-07-21-v16";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "New profile: SB 15M Empty-Space Day Trader",
+    body: "Farrukh's new intraday strategy, as its own separate profile (SB 15M tab). It watches 18 high-cap liquid names for 4-hour order-block zones on the 15-minute chart, and only acts when price retests the zone boundary facing it — with clean empty space beyond, a COMPLETED 15-minute rejection candle, supportive 15-minute market structure, and a setup score ≥75 — between 9:45am and 2:45pm ET only. It buys TWO ~$1.00 weekly contracts: stop −20%, sell one at +50% (stop instantly moves to breakeven), the last exits at +75%, breakeven, or a 15-minute close through the zone — and everything is flat before the close, every day. No overnights, ever. Auto is OFF per the spec: it paper-measures first; enable it after adding its account keys (ALPACA_*_4) and reviewing results.",
+  },
+  {
+    title: "SBv2: no contract more than 8% out of the money",
+    body: "SBv2 will now only take a setup if it can buy a contract within 8% of the stock's price (it used to reach as far as 25% OTM in exchange for a cheap premium). Strikes that far away need an unrealistic move to be worth anything, which is part of why so many trades died at the stop. If no $0.45-0.80 contract sits within 8% OTM, the setup is SKIPPED rather than traded on a deeper strike — expect fewer SBv2 entries, especially on expensive names.",
+  },
   {
     title: "Backtesting: replay a strategy against history",
     body: "Vega can now replay SBv1 or SBv2 against months of real historical bars and show what WOULD have happened — hit rate, whether the stated probabilities were honest (an 85% setup should win more than a 55% one), how far trades went against you before working, and whether the signals beat random entries on the same stocks. Zero lookahead: at every simulated moment the strategy only sees data that existed then, and every report prints its own limitations so a good-looking number can't oversell itself. Results live on the new Backtest page (P&L → Backtest results, or Settings). Runs are started from the terminal; a strategy change can now be sanity-checked in an afternoon instead of waiting weeks of live paper trading.",

@@ -10,7 +10,7 @@
 import { type StrategyOptions, DEFAULT_STRATEGY_OPTIONS } from "./strategy";
 import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
-export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy";
+export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy" | "sb15m";
 
 /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day;
  *  oneDay = next trading day (the QQQ 1-day-swing leg). */
@@ -85,8 +85,17 @@ export interface ExitConfig {
     trim2Qty: number; // contracts to sell at trim2
     // runner (whatever remains) exits at the ratcheted stop, the next-level
     // target proximity (targetProximity $), or the 0DTE flatten.
-    targetProximity: number; // $ distance from the underlying target that closes the runner
+    targetProximity: number; // $ distance from the underlying target that closes the runner.
+    // <= 0 disables the underlying-target runner exit (SB15M — premium targets only).
+    // Runner premium take-profit: sell the LAST contract at this gain (SB15M +75%).
+    runnerTakeProfit?: number;
   };
+  // Day-trade profiles (SB15M) flatten near the close EVERY day, even on weekly
+  // contracts whose expiry isn't today (the 0DTE flatten only fires on expiry day).
+  forceEodFlatten?: boolean;
+  // Structural early exit (SB15M spec §12): close when a COMPLETED 15-minute candle
+  // closes through the zone against the position — before the % stop if needed.
+  invalidateOn15mClose?: boolean;
 }
 
 export interface ConfirmationConfig {
@@ -134,6 +143,9 @@ export interface Profile {
   // The scanner + intraday re-scan skip these profiles entirely; candidates come only
   // from the manual input (which would otherwise be wiped by a re-scan).
   manualLevels?: boolean;
+  // Day-trade entry window in ET minutes-since-midnight (SB15M: 9:45am-2:45pm).
+  // Outside the window the monitor takes NO new entries for this profile.
+  entryWindowEt?: { startMin: number; endMin: number };
 }
 
 // SniperBot Master — large/mega-cap institutional order-block swings, weekly options,
@@ -192,7 +204,11 @@ const SBV2: Profile = {
     // across all contracts." One mid-priced contract; reachability gate dropped in
     // execute.ts (requireTargetReachable=false) so expensive names trade again.
     expiryKind: "friday", // nearest weekly ≥ the predicted 1-3 day hold (selectByEV horizon-matches)
-    otmPct: 25, // wide strike window — strike choice is deliberately unimportant
+    // Owner 2026-07-21: "only take the setup if the contract is no more than 8% OTM."
+    // The strike window is the gate — if no liquid $0.45-0.80 contract sits within 8%
+    // OTM, resolveContract finds nothing, execute rejects, and the setup is SKIPPED
+    // (we do not fall back to a further-OTM strike). Was 25 (strike-agnostic).
+    otmPct: 8,
     itmPct: 4,
     priceFloor: 0.45,
     priceIdeal: 0.6,
@@ -313,6 +329,58 @@ const QQQ_MANUAL: Profile = {
   baselineSymbol: "QQQ",
 };
 
+// SB 15M Empty-Space Day Trader (Farrukh spec 2026-07-21). Intraday-only: 4-hour
+// order-block zones (ATR-50, displacement 1.3x) evaluated on the 15-MINUTE chart.
+// Entry = a COMPLETED 15-min confirmation candle rejecting the zone boundary that
+// faces price (top boundary = call support when price is above; bottom = put
+// resistance when below — exactly buildZoneSetups' stateless rule), inside clean
+// empty space (clear_runway hard gate), during 9:45am-2:45pm ET only. Two ~$1.00
+// weekly contracts; -20% stop; sell 1 at +50% (stop -> breakeven immediately);
+// sell the last at +75% / breakeven / a completed 15-min close through the zone;
+// ALWAYS flat before the close (no overnight, no swing conversion). Own paper
+// account via ALPACA_*_4 (auto-buy + exits HARD-GATED on those keys). Auto OFF —
+// spec: paper-trade and review before enabling.
+const SB15M: Profile = {
+  id: "sb15m",
+  label: "SB 15M",
+  description: "Intraday 4H-zone boundary retests on the 15-min chart, empty space required. Day trades only.",
+  active: true,
+  strategy: DEFAULT_STRATEGY_OPTIONS,
+  zoneTimeframes: [FOURH_TF], // 4-hour ONLY (ATR 50, displacement 1.3 — spec-fixed)
+  confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.3 }, // monitor's sb15m branch confirms on COMPLETED 15-min candles
+  requireClearRunway: true, // "empty space" is the point of the profile
+  watchPerTimeframe: 2,
+  minScore: 75, // spec §20: only enter at >= 75
+  netContractCosts: true, // spread too wide / EV under round-trip cost => no trade (spec §11/§21)
+  contract: {
+    expiryKind: "friday", // liquid weekly for an intraday hold
+    otmPct: 2, // ATM / one strike OTM at most (spec §11)
+    itmPct: 4, // slightly ITM preferred
+    priceFloor: 0.7,
+    priceIdeal: 1.0, // "target contract price near $1.00"
+    priceCap: 1.35,
+    liquiditySpread: 0.75, // tight two-sided market required
+  },
+  caps: { perTradeBudget: 220, maxContracts: 2, maxOpenPositions: 2 }, // 2 x ~$1.00 ~= $200 exposure
+  // Two-contract ladder: -20% base stop; at +50% sell 1 and the stop goes STRAIGHT
+  // to breakeven (stopAfterTrim1 0 = spec §14); the last contract exits at +75%
+  // (runnerTakeProfit), breakeven, a completed 15-min close through the zone, or
+  // the end-of-day flatten. trim2 is unreachable by design (the ladder always
+  // leaves 1 runner) — runnerTakeProfit is the second contract's +75% exit.
+  exit: {
+    style: "intraday",
+    takeProfit: 0.75,
+    stopLoss: -0.2,
+    sameDayExit: true,
+    forceEodFlatten: true, // day trades on WEEKLY contracts — flatten every session
+    invalidateOn15mClose: true, // spec §12: structural exit before the % stop
+    ladder: { trim1Pct: 0.5, trim1Qty: 1, stopAfterTrim1: 0, breakevenPct: 0.5, trim2Pct: 0.75, trim2Qty: 1, targetProximity: 0, runnerTakeProfit: 0.75 },
+  },
+  autoDefault: false, // spec §25: paper-trade + review before enabling
+  baselineSymbol: "SPY",
+  entryWindowEt: { startMin: 9 * 60 + 45, endMin: 14 * 60 + 45 }, // 9:45am-2:45pm ET
+};
+
 // Zones legacy — the previous cheap-universe tap-only strategy. SHELVED: no new
 // auto-trades. Kept for its shadow history + ongoing comparison only.
 const ZONES_LEGACY: Profile = {
@@ -347,9 +415,10 @@ export const PROFILES: Record<ProfileId, Profile> = {
   qqq_0dte: QQQ_0DTE,
   qqq_manual: QQQ_MANUAL,
   zones_legacy: ZONES_LEGACY,
+  sb15m: SB15M,
 };
 
-export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy"];
+export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy", "sb15m"];
 
 export function getProfile(id: string | null | undefined): Profile {
   return PROFILES[(id ?? "sniper_swing") as ProfileId] ?? SNIPER_SWING;

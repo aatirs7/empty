@@ -81,7 +81,12 @@ is mechanical and the contract is picked by price, not strike.
 `resolveContract` (`resolve.ts`), NOT the EV picker:
 - Expiry: nearest weekly **Friday ≥ 2 days out** (`minDays: 2` — a Thursday tap
   buys NEXT Friday, never a 1-DTE).
-- Strike window: up to **25% OTM** / 4% ITM (wide — strike deliberately unimportant).
+- Strike window: up to **8% OTM** / 4% ITM. Owner 2026-07-21: *"only take the setup
+  if the contract is no more than 8% OTM."* This is a HARD gate, not a preference —
+  if no liquid $0.45–0.80 contract sits within 8% OTM, the setup is **skipped**
+  (no deeper-OTM fallback). Enforced twice: the `resolveContract` strike window, and
+  an explicit assert in `execute.ts` on the `flip_retest` path. (Was 25% — strike
+  treated as unimportant; expensive names will now skip more often.)
 - Pick the contract whose **ask is closest to $0.60** within **$0.45–$0.80**,
   requiring a real two-sided market (bid > 0, bid ≥ 0.5 × ask, ask > $0.05).
 - **No reachability requirement** (dropped 2026-07-16) and no horizon-match gate —
@@ -120,6 +125,7 @@ is mechanical and the contract is picked by price, not strike.
 
 ## Change log
 
+- 2026-07-21: contract must be **≤ 8% OTM** (owner) — strike window 25% → 8%, plus an execute-side assert; setups with no in-band contract that close are skipped.
 - 2026-07-20: intel layer added (session-loss response, market bias, structure, exposure caps). Revert: `SBV2_INTEL=off`.
 - 2026-07-17: 3 trades/day cap; price-first contract pick ($0.45–0.80 closest to $0.60, weekly ≥ 2d via `minDays`); pushes name the profile.
 - 2026-07-16: re-size to ONE $0.45–0.80 contract; `requireTargetReachable` dropped; −50% swing stop added.
