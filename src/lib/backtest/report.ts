@@ -213,6 +213,122 @@ export async function buildStage1Report(runId: number): Promise<Stage1Report> {
   return report;
 }
 
+// ---------------------------------------------------------------------------
+// Stage 2 report — reads the metrics the Stage 2 run persisted (options P&L).
+// ---------------------------------------------------------------------------
+
+export interface Stage2TradeStats {
+  n: number;
+  netPl: number;
+  winRate: number | null;
+  avgWinUsd: number | null;
+  avgLossUsd: number | null;
+  avgWinPct: number | null;
+  avgLossPct: number | null;
+  returnDistribution: Record<string, number>;
+  byExitReason: Record<string, { n: number; pl: number }>;
+}
+
+export interface Stage2Report {
+  runId: number;
+  header: Record<string, string | number>;
+  allSignals: Stage2TradeStats;
+  portfolio: { taken: number; pl: number; endEquity: number; maxDrawdown: number; worstStreak: number; stats: Stage2TradeStats };
+  skips: Record<string, number>;
+  sensitivity: Record<string, Stage2TradeStats>;
+  spy: { spyReturnPct: number | null; windowCharacter: string };
+  assumptions: Record<string, unknown>;
+  limitations: string[];
+}
+
+export async function buildStage2Report(runId: number): Promise<Stage2Report> {
+  const [run] = await db.select().from(backtestRuns).where(eq(backtestRuns.id, runId));
+  if (!run) throw new Error(`backtest run ${runId} not found`);
+  if (run.stage !== 2) throw new Error(`run ${runId} is stage ${run.stage}, not 2`);
+  const m = (run.metrics ?? {}) as { stage2?: Omit<Stage2Report, "runId" | "header" | "limitations"> };
+  if (!m.stage2) throw new Error(`run ${runId} has no stage2 metrics (status: ${run.status})`);
+  const cfg = (run.config ?? {}) as { label?: string | null };
+  const limitations = [
+    `Hindsight/overfitting risk: variants tested against this exact window so far: ${run.windowVariantCount}.`,
+    "One regime: one market environment — see window character.",
+    "PRICING: real historical option bars (Alpaca), but NBBO history is unavailable, so the bid/ask spread is MODELED (visible config) — never presented as real fills.",
+    "Fill optimism: entries assume a fill near the tap day's VWAP + half-spread; live fills are worse, especially on fast taps. Sensitivity reruns (1.5x/2x spread) bound this.",
+    "Exit timing is approximated at daily granularity (labeled per rule in assumptions).",
+    "Claude gates (news veto) were fail-open in the replay — live would have filtered some of these trades.",
+    "Sample size: state N; treat small-N results as directional at best.",
+    "Backtest ≠ forward result: this earns paper trading, not funding.",
+  ];
+  const report: Stage2Report = {
+    runId,
+    header: {
+      profile: run.profileId,
+      stage: 2,
+      window: `${run.fromDate} .. ${run.toDate}`,
+      granularity: run.granularity,
+      pricingPath: run.pricingPath,
+      barsFeed: run.barsFeed,
+      universeSource: run.universeSource,
+      signals: run.signalCount ?? 0,
+      configHash: run.configHash,
+      variantOfWindow: `#${run.windowVariantCount}`,
+      label: cfg.label ?? "",
+    },
+    allSignals: m.stage2.allSignals as Stage2TradeStats,
+    portfolio: m.stage2.portfolio as Stage2Report["portfolio"],
+    skips: (m.stage2.skips ?? {}) as Record<string, number>,
+    sensitivity: (m.stage2.sensitivity ?? {}) as Record<string, Stage2TradeStats>,
+    spy: m.stage2.spy as Stage2Report["spy"],
+    assumptions: (m.stage2.assumptions ?? {}) as Record<string, unknown>,
+    limitations,
+  };
+  await db.update(backtestRuns).set({ limitations }).where(eq(backtestRuns.id, runId));
+  return report;
+}
+
+const usd0 = (x: number | null | undefined) => (x == null ? "—" : `${x < 0 ? "-" : "+"}$${Math.abs(Math.round(x * 100) / 100)}`);
+
+function statsLines(label: string, s: Stage2TradeStats): string[] {
+  return [
+    `${label}: n=${s.n} · net P&L ${usd0(s.netPl)} · win rate ${s.winRate ?? "—"}%`,
+    `  avg win ${usd0(s.avgWinUsd)} (${s.avgWinPct != null ? Math.round(s.avgWinPct) : "—"}%) vs avg loss ${usd0(s.avgLossUsd)} (${s.avgLossPct != null ? Math.round(s.avgLossPct) : "—"}%)`,
+  ];
+}
+
+export function renderStage2Report(r: Stage2Report): string {
+  const L: string[] = [];
+  L.push("=".repeat(72));
+  L.push(`BACKTEST STAGE 2 — OPTIONS P&L — run #${r.runId}`);
+  for (const [k, v] of Object.entries(r.header)) if (v !== "") L.push(`  ${k}: ${v}`);
+  L.push("=".repeat(72));
+  L.push("");
+  L.push(...statsLines("ALL SIGNALS (every signal that found a fillable contract)", r.allSignals));
+  L.push("");
+  L.push(`PORTFOLIO SIM (live caps: 3/day, max open) — trades taken: ${r.portfolio.taken}`);
+  L.push(`  net P&L ${usd0(r.portfolio.pl)} on a $1000 account → end equity $${r.portfolio.endEquity}`);
+  L.push(`  max drawdown ${usd0(r.portfolio.maxDrawdown)} · longest losing streak ${r.portfolio.worstStreak}`);
+  L.push(...statsLines("  portfolio trades", r.portfolio.stats));
+  L.push("");
+  L.push("RETURN DISTRIBUTION (all signals, % on premium):");
+  for (const [b, n] of Object.entries(r.allSignals.returnDistribution)) L.push(`  ${b.padEnd(10)} ${n}`);
+  L.push("");
+  L.push("EXIT REASONS (all signals):");
+  for (const [reason, x] of Object.entries(r.allSignals.byExitReason)) L.push(`  ${reason.padEnd(20)} n=${x.n}  P&L ${usd0(x.pl)}`);
+  L.push("");
+  L.push(`SKIPS (unfillable — no contract in band with a real market): ${JSON.stringify(r.skips)}`);
+  L.push("");
+  L.push("SENSITIVITY — same trades, worse fills (does the edge survive?):");
+  for (const [k, s] of Object.entries(r.sensitivity)) L.push(`  ${k}: net ${usd0(s.netPl)} · win ${s.winRate ?? "—"}%`);
+  L.push("");
+  L.push(`SPY buy-and-hold over the window: ${r.spy.spyReturnPct != null ? r.spy.spyReturnPct + "%" : "—"} · ${r.spy.windowCharacter}`);
+  L.push("");
+  L.push("ASSUMPTIONS (visible config — every fill is modeled per these):");
+  for (const [k, v] of Object.entries(r.assumptions)) L.push(`  ${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
+  L.push("");
+  L.push("HONEST LIMITATIONS:");
+  for (const l of r.limitations) L.push(`  - ${l}`);
+  return L.join("\n");
+}
+
 export function renderStage1Report(r: Stage1Report): string {
   const L: string[] = [];
   L.push("=".repeat(72));

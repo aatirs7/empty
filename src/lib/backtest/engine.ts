@@ -342,7 +342,7 @@ function randomBaseline(
   };
 }
 
-function spyBaseline(data: PointInTimeData, from: string, to: string): Pick<Stage1Baselines, "spyReturnPct" | "spyAnnualizedVolPct" | "windowCharacter"> {
+export function spyBaseline(data: PointInTimeData, from: string, to: string): Pick<Stage1Baselines, "spyReturnPct" | "spyAnnualizedVolPct" | "windowCharacter"> {
   const spy = data.allBars("SPY").filter((b) => barDate(b.t) >= from && barDate(b.t) <= to);
   if (spy.length < 2) return { spyReturnPct: null, spyAnnualizedVolPct: null, windowCharacter: "unknown" };
   const ret = (spy[spy.length - 1].c - spy[0].c) / spy[0].c;
@@ -357,7 +357,19 @@ function spyBaseline(data: PointInTimeData, from: string, to: string): Pick<Stag
   };
 }
 
-export async function runStage1(cfg: Stage1RunConfig): Promise<Stage1Result> {
+/** Shared replay output — Stage 1 persists/report on it; Stage 2 layers the
+ *  options simulation on the SAME signals (identical code path, no divergence). */
+export interface ReplayResult {
+  profile: Profile;
+  universe: string[];
+  canonical: Record<string, unknown>;
+  configHash: string;
+  data: PointInTimeData;
+  days: string[];
+  signals: Stage1SignalRecord[];
+}
+
+export async function replaySignals(cfg: Stage1RunConfig): Promise<ReplayResult> {
   if (cfg.granularity !== "daily") throw new Error("only granularity=daily is implemented (Stage 2+)");
   const profile = getProfile(cfg.profileId);
   if (profile.id !== "sniper_swing" && profile.id !== "sbv2") {
@@ -441,6 +453,13 @@ export async function runStage1(cfg: Stage1RunConfig): Promise<Stage1Result> {
     }
   }
 
+  return { profile, universe, canonical, configHash, data, days, signals };
+}
+
+export async function runStage1(cfg: Stage1RunConfig): Promise<Stage1Result> {
+  const { universe, canonical, configHash, data, days, signals } = await replaySignals(cfg);
+  const profile = getProfile(cfg.profileId);
+
   const baselines: Stage1Baselines = {
     ...randomBaseline(signals, data, days, `${configHash}:${cfg.seed ?? ""}`),
     ...spyBaseline(data, cfg.from, cfg.to),
@@ -476,8 +495,33 @@ export async function runStage1(cfg: Stage1RunConfig): Promise<Stage1Result> {
     .returning();
 
   try {
-    const rows = signals.map((s) => ({
-      runId: run.id,
+    const rows = signalInsertRows(run.id, signals);
+    for (let i = 0; i < rows.length; i += 500) await db.insert(backtestSignals).values(rows.slice(i, i + 500));
+
+    await db
+      .update(backtestRuns)
+      .set({
+        status: "complete",
+        signalCount: signals.length,
+        metrics: { baselines },
+        completedAt: new Date(),
+      })
+      .where(eq(backtestRuns.id, run.id));
+  } catch (e) {
+    await db
+      .update(backtestRuns)
+      .set({ status: "failed", error: e instanceof Error ? e.message : String(e) })
+      .where(eq(backtestRuns.id, run.id));
+    throw e;
+  }
+
+  return { runId: run.id, configHash, windowVariantCount, days: days.length, symbols: universe.length, signalCount: signals.length, signals, baselines };
+}
+
+/** DB rows for a run's signals (shared by Stage 1 and Stage 2 persistence). */
+export function signalInsertRows(runId: number, signals: Stage1SignalRecord[]): (typeof backtestSignals.$inferInsert)[] {
+  return signals.map((s) => ({
+      runId,
       symbol: s.symbol,
       firedAt: s.firedAt,
       direction: s.direction,
@@ -514,25 +558,5 @@ export async function runStage1(cfg: Stage1RunConfig): Promise<Stage1Result> {
       ret10d: s.outcome.ret10d != null ? String(s.outcome.ret10d) : null,
       forwardBars: s.outcome.forwardBars,
       outcomeStatus: s.outcome.outcomeStatus,
-    }));
-    for (let i = 0; i < rows.length; i += 500) await db.insert(backtestSignals).values(rows.slice(i, i + 500));
-
-    await db
-      .update(backtestRuns)
-      .set({
-        status: "complete",
-        signalCount: signals.length,
-        metrics: { baselines },
-        completedAt: new Date(),
-      })
-      .where(eq(backtestRuns.id, run.id));
-  } catch (e) {
-    await db
-      .update(backtestRuns)
-      .set({ status: "failed", error: e instanceof Error ? e.message : String(e) })
-      .where(eq(backtestRuns.id, run.id));
-    throw e;
-  }
-
-  return { runId: run.id, configHash, windowVariantCount, days: days.length, symbols: universe.length, signalCount: signals.length, signals, baselines };
+  }));
 }

@@ -427,6 +427,47 @@ export async function getOptionQuotes(occSymbols: string[]): Promise<Record<stri
   return resp.quotes ?? {};
 }
 
+/** Option bar: OHLCV plus the day's VWAP and trade count (fill realism inputs). */
+export interface OptionBar extends Bar {
+  vw: number; // volume-weighted average traded price
+  n: number; // number of trades
+}
+
+/** HISTORICAL daily option bars for one or more OCC symbols (works for expired
+ *  contracts — verified on this plan 2026-07-20). Backtest Stage 2 pricing source;
+ *  no live path uses this. Returns symbol -> bars (most recent last). */
+export async function getOptionBars(
+  occSymbols: string[],
+  start: string, // YYYY-MM-DD
+  end: string,
+  timeframe = "1Day",
+): Promise<Record<string, OptionBar[]>> {
+  if (occSymbols.length === 0) return {};
+  type RawOptionBar = RawBar & { vw?: number; n?: number };
+  const out: Record<string, OptionBar[]> = {};
+  for (let i = 0; i < occSymbols.length; i += 100) {
+    let pageToken: string | undefined;
+    do {
+      const q = new URLSearchParams({
+        symbols: occSymbols.slice(i, i + 100).join(","),
+        timeframe,
+        start,
+        end,
+        limit: "10000",
+      });
+      if (pageToken) q.set("page_token", pageToken);
+      const resp = await data<{ bars?: Record<string, RawOptionBar[]>; next_page_token?: string | null }>(
+        `/v1beta1/options/bars?${q.toString()}`,
+      );
+      for (const [sym, arr] of Object.entries(resp.bars ?? {})) {
+        (out[sym] ??= []).push(...arr.map((b) => ({ ...toBar(b), vw: b.vw ?? b.c, n: b.n ?? 0 })));
+      }
+      pageToken = resp.next_page_token ?? undefined;
+    } while (pageToken);
+  }
+  return out;
+}
+
 export interface OptionSnapshot {
   delta: number | null;
   gamma: number | null;

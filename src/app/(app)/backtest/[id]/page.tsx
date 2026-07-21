@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { backtestRuns } from "@/db/schema";
-import { buildStage1Report } from "@/lib/backtest/report";
+import { buildStage1Report, buildStage2Report, type Stage2TradeStats } from "@/lib/backtest/report";
 import { PageTitle } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -42,6 +42,8 @@ export default async function BacktestRunPage({ params }: { params: Promise<{ id
       </div>
     );
   }
+
+  if (run.stage === 2) return <Stage2View runId={runId} run={{ profileId: run.profileId, fromDate: run.fromDate, toDate: run.toDate, windowVariantCount: run.windowVariantCount }} />;
 
   const r = await buildStage1Report(runId);
   const b = r.baselines;
@@ -171,6 +173,115 @@ export default async function BacktestRunPage({ params }: { params: Promise<{ id
         <p className="text-[11px] text-foreground/80">
           Decision gate: if there is no edge on the underlying here, stop — no options structure or exit tuning rescues a signal that can&apos;t predict the stock.
         </p>
+      </Section>
+
+      <Link href="/backtest" className="block text-center text-xs text-accent">All runs &rarr;</Link>
+    </div>
+  );
+}
+
+const usd = (x: number | null | undefined) => (x == null ? "—" : `${x < 0 ? "-" : "+"}$${Math.abs(Math.round(x * 100) / 100)}`);
+
+function StatsBlock({ s }: { s: Stage2TradeStats }) {
+  return (
+    <div className="text-xs space-y-1 num">
+      <p>
+        n={s.n} · net <span className={s.netPl >= 0 ? "text-up" : "text-down"}>{usd(s.netPl)}</span> · win rate {s.winRate ?? "—"}%
+      </p>
+      <p className="text-muted">
+        avg win {usd(s.avgWinUsd)} ({s.avgWinPct != null ? Math.round(s.avgWinPct) : "—"}%) vs avg loss {usd(s.avgLossUsd)} ({s.avgLossPct != null ? Math.round(s.avgLossPct) : "—"}%)
+      </p>
+    </div>
+  );
+}
+
+async function Stage2View({ runId, run }: { runId: number; run: { profileId: string; fromDate: string; toDate: string; windowVariantCount: number } }) {
+  const r = await buildStage2Report(runId);
+  return (
+    <div className="space-y-5">
+      <PageTitle
+        title={`${PROFILE_LABELS[run.profileId] ?? run.profileId} backtest #${runId} — Stage 2 (options P&L)`}
+        subtitle={`${run.fromDate} → ${run.toDate} · ${r.header.signals} signals · real historical chains + modeled spread`}
+      />
+
+      <Section title="Portfolio — what the live account would have done (caps applied)">
+        <div className="flex items-baseline justify-around text-center">
+          <div>
+            <div className={`text-2xl num ${r.portfolio.pl >= 0 ? "text-up" : "text-down"}`}>{usd(r.portfolio.pl)}</div>
+            <div className="text-xs text-muted">net P&L · $1000 start → ${r.portfolio.endEquity}</div>
+          </div>
+          <div>
+            <div className="text-2xl num">{r.portfolio.taken}</div>
+            <div className="text-xs text-muted">trades taken</div>
+          </div>
+        </div>
+        <p className="text-xs text-muted num">max drawdown {usd(r.portfolio.maxDrawdown)} · longest losing streak {r.portfolio.worstStreak}</p>
+        <StatsBlock s={r.portfolio.stats} />
+      </Section>
+
+      <Section title="All signals (every one that found a fillable contract)">
+        <StatsBlock s={r.allSignals} />
+        <p className="text-[11px] text-muted num">skipped as unfillable: {Object.entries(r.skips).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}</p>
+      </Section>
+
+      <Section title="Return distribution (% on premium)">
+        <table className="w-full text-xs num">
+          <tbody>
+            {Object.entries(r.allSignals.returnDistribution).map(([b, n]) => (
+              <tr key={b}>
+                <td>{b}%</td>
+                <td className="text-right">{n}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
+
+      <Section title="Exit reasons">
+        <table className="w-full text-xs num">
+          <tbody>
+            {Object.entries(r.allSignals.byExitReason).map(([reason, x]) => (
+              <tr key={reason}>
+                <td>{reason}</td>
+                <td className="text-right">n={x.n}</td>
+                <td className={`text-right ${x.pl >= 0 ? "text-up" : "text-down"}`}>{usd(x.pl)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
+
+      <Section title="Sensitivity — same trades, worse fills">
+        <div className="text-xs space-y-1 num">
+          {Object.entries(r.sensitivity).map(([k, s]) => (
+            <p key={k}>
+              {k}: net <span className={s.netPl >= 0 ? "text-up" : "text-down"}>{usd(s.netPl)}</span> · win {s.winRate ?? "—"}%
+            </p>
+          ))}
+          <p className="text-muted">If profitability disappears under realistic fills, it was never there.</p>
+        </div>
+      </Section>
+
+      <Section title="Benchmark">
+        <p className="text-xs num">SPY buy-and-hold over the window: {r.spy.spyReturnPct != null ? `${r.spy.spyReturnPct}%` : "—"} · {r.spy.windowCharacter}</p>
+      </Section>
+
+      <Section title="Assumptions (every fill is modeled per these)">
+        <ul className="text-[11px] text-muted space-y-1.5 list-disc pl-4">
+          {Object.entries(r.assumptions).map(([k, v]) => (
+            <li key={k}>
+              <span className="text-foreground/70">{k}:</span> {typeof v === "string" ? v : JSON.stringify(v)}
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      <Section title="Honest limitations">
+        <ul className="text-[11px] text-muted space-y-1.5 list-disc pl-4">
+          {r.limitations.map((l, i) => (
+            <li key={i}>{l}</li>
+          ))}
+        </ul>
       </Section>
 
       <Link href="/backtest" className="block text-center text-xs text-accent">All runs &rarr;</Link>

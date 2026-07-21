@@ -156,6 +156,44 @@ async function main() {
     check("walkForward: put target via low", putHit.targetHit && putHit.barsToTarget === 1);
   }
 
+  // ---- 5b. Stage 2 exit sim (synthetic option + underlying bars).
+  {
+    const { simulateSwingExit } = await import("../src/lib/backtest/stage2");
+    const { DEFAULT_SPREAD, occSymbol, pickFridayExpiry, strikeGrid } = await import("../src/lib/backtest/pricing");
+    const day = (i: number) => new Date(Date.UTC(2026, 5, 1) + i * 86_400_000).toISOString(); // Jun 1 2026 = Monday
+    const ub = (i: number, o: number, h: number, l: number, c: number): Bar => ({ t: day(i), o, h, l, c, v: 1 });
+    const ob = (i: number, o: number, h: number, l: number, c: number, vw: number) => ({ ...ub(i, o, h, l, c), vw, n: 100, v: 500 });
+    const base = {
+      entryAsk: 0.6,
+      direction: "call" as const,
+      target: 110,
+      zone: { bottom: 95, top: 100 },
+      strike: 105,
+      expiry: "2026-06-05",
+      entryDay: "2026-06-01",
+      spread: DEFAULT_SPREAD,
+      swingStopLoss: -0.5,
+      catastropheFloor: 0.1,
+      catastropheDays: 2,
+    };
+    // stop: day-2 option low collapses through -50% of the 0.60 entry
+    const stop = simulateSwingExit({ ...base, optionBars: [ob(0, 0.6, 0.7, 0.5, 0.6, 0.6), ob(1, 0.55, 0.6, 0.1, 0.2, 0.3)], underlyingBars: [ub(0, 101, 102, 100, 101), ub(1, 101, 101.5, 96, 97)] });
+    check("stage2: -50% stop fires on the option's intraday low (not entry day)", stop.exitReason === "stop_-50%" && stop.exitDay === "2026-06-02", `${stop.exitReason}@${stop.exitDay} bid=${stop.exitBid}`);
+    // invalidation: day-1 underlying CLOSES below zone.bottom → sold on day 2
+    const inv = simulateSwingExit({ ...base, optionBars: [ob(0, 0.6, 0.7, 0.5, 0.6, 0.6), ob(1, 0.5, 0.6, 0.4, 0.45, 0.5), ob(2, 0.4, 0.5, 0.35, 0.4, 0.42)], underlyingBars: [ub(0, 101, 102, 100, 101), ub(1, 100, 100.5, 94, 94.5), ub(2, 94, 96, 93, 95)] });
+    check("stage2: swing invalidation sells the day AFTER the close-through", inv.exitReason === "swing_invalidation" && inv.exitDay === "2026-06-03");
+    // target: underlying touches 110 on day 1 → sold at that day's option vwap bid
+    const tgt = simulateSwingExit({ ...base, optionBars: [ob(0, 0.6, 0.7, 0.5, 0.6, 0.6), ob(1, 0.9, 2.5, 0.8, 2.0, 1.6)], underlyingBars: [ub(0, 101, 102, 100, 101), ub(1, 102, 110.5, 101, 108)] });
+    check("stage2: target-touch exits at the day's real vwap (bid side)", tgt.exitReason === "target" && tgt.exitDay === "2026-06-02" && tgt.exitBid > 1.2, `bid=${tgt.exitBid}`);
+    // salvage: nothing hits → sold with <=1 day to expiry
+    const sal = simulateSwingExit({ ...base, target: 200, optionBars: [0, 1, 2, 3].map((i) => ob(i, 0.6, 0.65, 0.55, 0.6, 0.6)), underlyingBars: [0, 1, 2, 3].map((i) => ub(i, 101, 102, 100, 101)) });
+    check("stage2: expiry salvage fires at <=1 day to expiry", sal.exitReason === "expiry_salvage" && sal.exitDay === "2026-06-04");
+    // pricing helpers
+    check("stage2: OCC symbol format", occSymbol("AMD", "2026-04-24", "call", 92.5) === "AMD260424C00092500", occSymbol("AMD", "2026-04-24", "call", 92.5));
+    check("stage2: friday expiry >= entry+2d", pickFridayExpiry("2026-06-04", 2) === "2026-06-12"); // Thu tap -> NEXT Friday
+    check("stage2: strike grid spans the window", strikeGrid(100, "call", 25, 4).length > 10);
+  }
+
   // ---- 6. Determinism helpers.
   {
     const a = hashConfig({ b: 2, a: [1, { z: 1, y: 2 }] });
