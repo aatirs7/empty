@@ -206,7 +206,7 @@ async function IntradayView({ runId, run }: { runId: number; run: { profileId: s
   return (
     <div className="space-y-5">
       <PageTitle
-        title={`SB 15M backtest #${runId} — intraday options sim`}
+        title={`${PROFILE_LABELS[run.profileId] ?? run.profileId} backtest #${runId} — intraday options sim`}
         subtitle={`${run.fromDate} → ${run.toDate} · ${r.header.signals} signals · real 15-minute option prices`}
       />
 

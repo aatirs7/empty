@@ -14,6 +14,7 @@ import { backtestRuns } from "../src/db/schema";
 import { runStage1, type BacktestableProfileId } from "../src/lib/backtest/engine";
 import { runStage2 } from "../src/lib/backtest/stage2";
 import { runIntraday } from "../src/lib/backtest/intraday";
+import { runSbv2Breakout } from "../src/lib/backtest/sbv2-breakout";
 import { buildStage1Report, renderStage1Report, buildStage2Report, renderStage2Report, buildIntradayReport, renderIntradayReport } from "../src/lib/backtest/report";
 
 function arg(name: string): string | undefined {
@@ -65,14 +66,8 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  if (profileId === "sbv2") {
-    console.error(
-      "SBv2's logic was REPLACED on 2026-07-21 (4H empty-space breakout & retest). The engine still replays the RETIRED daily-flip logic, so a new 'SBv2' run would measure a strategy that no longer exists.\n" +
-        "Existing runs #1/#3/#6 remain valid measurements of the retired flip logic. A 4h-granularity breakout replay is the follow-up — ask for it when you want the new logic backtested.",
-    );
-    process.exitCode = 1;
-    return;
-  }
+  // SBv2 routes to the dedicated 4H-breakout replay below (the Stage-1/2 engines
+  // implement the RETIRED flip logic and refuse sbv2; runs #1/#3/#6 measured that).
 
   const from = arg("from");
   const to = arg("to");
@@ -82,6 +77,19 @@ async function main() {
     return;
   }
   const universe = arg("universe")?.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+
+  if (profileId === "sbv2") {
+    // The NEW SBv2 (4H empty-space breakout & retest, 2026-07-21): dedicated
+    // 15m-granularity replay + real-15m-option-bar exit sim in one run.
+    console.log(`SBv2 4H breakout replay + options sim: ${from}..${to} (completed 4h qualification, first-touch entry, real 15m option bars)...`);
+    const rb = await runSbv2Breakout({ from, to, universe, seed: arg("seed"), label: arg("label") });
+    console.log(`Replayed ${rb.days} sessions → ${rb.signalCount} first-retest signals, ${rb.trades.length} simulated trades (run #${rb.runId}, config ${rb.configHash}).`);
+    if (rb.runId != null) {
+      console.log("");
+      console.log(renderIntradayReport(await buildIntradayReport(rb.runId)));
+    }
+    return;
+  }
 
   if (profileId === "sb15m") {
     // SB 15M is intraday-only: one engine runs the signal replay AND the options

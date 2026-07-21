@@ -432,7 +432,7 @@ function groupLines(title: string, rows: GroupStat[]): string[] {
 export function renderIntradayReport(r: IntradayReport): string {
   const L: string[] = [];
   L.push("=".repeat(72));
-  L.push(`BACKTEST — SB 15M INTRADAY OPTIONS SIM — run #${r.runId}`);
+  L.push(`BACKTEST — INTRADAY OPTIONS SIM (${String(r.header.profile).toUpperCase()}) — run #${r.runId}`);
   for (const [k, v] of Object.entries(r.header)) if (v !== "") L.push(`  ${k}: ${v}`);
   L.push("=".repeat(72));
   L.push("");

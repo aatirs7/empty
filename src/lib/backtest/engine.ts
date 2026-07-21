@@ -57,7 +57,7 @@ export interface Stage1SignalRecord {
   firedAt: Date;
   day: string;
   direction: "call" | "put";
-  setupKind: "tap" | "flip";
+  setupKind: "tap" | "flip" | "breakout";
   playbookType: string | null;
   score: number | null;
   zoneBottom: number;

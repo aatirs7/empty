@@ -118,10 +118,20 @@ skip is an activity row with the exact reason (+push when auto is on).
 ## Measurement
 
 - Own account / log / P&L / scorecard / shadow track; daily report vs SBv1 + SPY.
-- **Backtesting:** runs #1/#3/#6 on `/backtest` measure the RETIRED flip logic
-  (valid history, wrong strategy) — the CLI refuses new "SBv2" runs so the old
-  engine can't masquerade as the new logic. A 4h-granularity breakout replay is
-  the follow-up if wanted.
+- **Backtesting: SUPPORTED** (`npm run backtest -- --profile SBv2 --from … --to …`,
+  2026-07-21): dedicated replay (`src/lib/backtest/sbv2-breakout.ts`) — daily zones
+  point-in-time, breakouts re-qualified per completed 4h candle, first-touch entry
+  on regular-hours 15m bars, real 15-minute option prices, live premium exits,
+  and the risk-only portfolio caps applied in entry order. Runs #1/#3/#6 measure
+  the RETIRED flip logic; run #7 is superseded (it traded extended-hours touches).
+- **First result (run #8, Apr–Jul 2026, RTH-only — read with its limitations):**
+  438 first-retest signals; **only 38 found a $1.00–1.50 contract** (400 skipped —
+  the band fits ~9% of signals: cheap names' ATM weeklies sit under $1, mega-caps
+  over $1.50). The 38 trades: **net −$602 on $1,000** (win 13.2%, profit factor
+  0.48); **30 of 38 (79%) died at the −25% stop** (−$1,056) vs 4 target hits
+  (+$540). The −25% stop is tighter than the retired flip's −50% and stops out
+  even more often — same structural issue as every variant measured so far: the
+  rare 2× winners can't pay for the frequent stops.
 
 ## Change log
 
