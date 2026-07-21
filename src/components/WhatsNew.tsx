@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-21-v17";
+const VERSION = "2026-07-21-v18";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "QQQ Manual is now purely mechanical",
+    body: "QQQ Manual follows your levels and nothing else. From the 9:30 open it watches your list, and the FIRST level QQQ actually touches takes the day's single trade — one trade per session, then it ignores the rest. CALL or PUT is decided at the touch, not when you save the levels: if price is coming DOWN into the level it buys calls, coming UP into it, puts (read off the last completed 15-minute bar). A touch now means price really reaches or crosses the level, not \"close enough\". Every filter it used to run — the 60% history floor, the target requirement, the news check, the expected-value math, the score — is gone. It buys exactly 5 same-day contracts priced $0.30–0.35 with enough size to fill all 5; if no such contract exists it skips the trade and logs exactly why. New exit ladder: stop −25%, sell 2 at +50% (stop moves to breakeven), sell 1 at +75% (stop moves to +25%, so a fade back there sells the rest), sell the final 2 at +100%, and everything flattens before the close. Every step — the level, the 15-minute bar it was judged against, the direction, each trim and the current stop — is written to the log. No other strategy changed.",
+  },
   {
     title: "The full backtesting suite",
     body: "Backtesting now covers every strategy that can honestly be tested. SB 15M gets a dedicated intraday engine: it replays history one completed 15-minute candle at a time through the exact live entry gates, then simulates the two-contract ladder (+50% trim → breakeven stop → +75% runner → end-of-day flatten) against REAL 15-minute historical option prices — reporting profit factor, both target hit rates, stop rate, and results by ticker, time of day, score, and market alignment. SBv1 also gained the Stage 2 options simulation (its EV contract picker is approximated by its price band, and the report says so). All results land on the Backtest page. QQQ Manual remains honestly untestable — your hand-drawn levels have no historical record, and inventing them would be lookahead.",

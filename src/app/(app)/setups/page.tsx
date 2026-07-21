@@ -33,17 +33,11 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
 
   const byScore = (a: { score: number | null }, b: { score: number | null }) => (b.score ?? -1) - (a.score ?? -1);
   const valid = scan.candidates.filter((c) => c.setupValid).sort(byScore);
-  // QQQ Manual: each setup rides to the NEXT level in its direction (Farrukh's
-  // level-to-level plan) — show that target on the card.
-  const manualLevels = scan.candidates
-    .map((c) => (c.setup as { manual?: { level?: number } } | null)?.manual?.level)
-    .filter((n): n is number => n != null);
-  const nextLevelFor = (c: { direction: string | null; setup: unknown }): number | null => {
-    const lvl = (c.setup as { manual?: { level?: number } } | null)?.manual?.level;
-    if (lvl == null) return null;
-    const beyond = c.direction === "call" ? manualLevels.filter((l) => l > lvl) : manualLevels.filter((l) => l < lvl);
-    return beyond.length ? (c.direction === "call" ? Math.min(...beyond) : Math.max(...beyond)) : null;
-  };
+  // QQQ Manual: the direction is NOT known until the level is touched (it comes from
+  // the prior completed 15-min bar at touch time), so the card shows the level, not a
+  // call/put guess. The next-level target was removed with the rest of its gates.
+  const levelOf = (c: { setup: unknown }): number | null =>
+    (c.setup as { manual?: { level?: number } } | null)?.manual?.level ?? null;
   const watching = scan.candidates.filter((c) => !c.setupValid).sort(byScore);
   // Tapped today = the profile's live monitor trades (same funnel value Today shows).
   const tappedToday = (await getTodayMonitorTrades(profileId)).filter((p) => p.strategy !== "no_trade").length;
@@ -90,19 +84,36 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
                     {c.symbol} <span className="text-sm text-muted font-normal">{companyName(c.symbol)}</span>
                   </div>
                 </div>
-                <div className={`text-sm font-medium ${isCall ? "text-up" : "text-down"}`}>
-                  {isCall ? `Bet ${c.symbol} bounces up` : `Bet ${c.symbol} gets pushed down`}
-                </div>
-                <div className="flex items-center justify-center gap-2 text-[11px]">
-                  <span
-                    className={`px-2 py-0.5 rounded-full font-semibold ${isCall ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}
-                  >
-                    {isCall ? "CALL" : "PUT"}
-                  </span>
-                  <span className="text-muted num">
-                    {taps[c.id] ? `Tapped ${etDateTime(taps[c.id])}` : "Awaiting retest"}
-                  </span>
-                </div>
+                {profileId === "qqq_manual" ? (
+                  <>
+                    <div className="text-sm font-medium num">Your level {levelOf(c) ?? "—"}</div>
+                    <div className="flex items-center justify-center gap-2 text-[11px]">
+                      <span className="px-2 py-0.5 rounded-full font-semibold bg-accent/15 text-accent">CALL or PUT</span>
+                      <span className="text-muted num">
+                        {taps[c.id] ? `Touched ${etDateTime(taps[c.id])}` : "Awaiting touch"}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted">
+                      decided at the touch: coming down into it → CALL, coming up into it → PUT
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className={`text-sm font-medium ${isCall ? "text-up" : "text-down"}`}>
+                      {isCall ? `Bet ${c.symbol} bounces up` : `Bet ${c.symbol} gets pushed down`}
+                    </div>
+                    <div className="flex items-center justify-center gap-2 text-[11px]">
+                      <span
+                        className={`px-2 py-0.5 rounded-full font-semibold ${isCall ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}
+                      >
+                        {isCall ? "CALL" : "PUT"}
+                      </span>
+                      <span className="text-muted num">
+                        {taps[c.id] ? `Tapped ${etDateTime(taps[c.id])}` : "Awaiting retest"}
+                      </span>
+                    </div>
+                  </>
+                )}
                 {c.score != null && (
                   <div className="text-xs num">
                     <span className={strong ? "text-accent font-medium" : "text-muted"}>
@@ -111,10 +122,7 @@ export default async function SetupsPage({ searchParams }: { searchParams: Promi
                     {c.playbook ? <span className="text-muted"> · {c.playbook}</span> : null}
                   </div>
                 )}
-                {profileId === "qqq_manual" && nextLevelFor(c) != null && (
-                  <div className="text-xs num text-accent/90">rides to the next level: {nextLevelFor(c)}</div>
-                )}
-                {z && (
+                {z && profileId !== "qqq_manual" && (
                   <div className="text-xs text-muted num">
                     zone {z.bottom}–{z.top} · {Number(c.distanceToEdgePct).toFixed(2)}% from the edge · details →
                   </div>

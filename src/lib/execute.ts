@@ -113,27 +113,9 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     const pred = await predict(proposal.symbol, spot, tf, direction, cand?.approach ?? "", 0);
     predictedTarget = pred.targetMain;
     predictedTargetSafe = pred.targetSafe;
-    // QQQ Manual (Farrukh 2026-07-16): the target is the NEXT LEVEL in the trade's
-    // direction from today's hand-entered list — "enter at one level and ride it to
-    // the next" — not the expected-move projection. Falls back to pred.targetMain
-    // when there is no further level. Also stash the expected hold (minutes) so the
-    // intraday ladder can time-out a bounce that never comes.
-    if (profile.manualLevels && cand) {
-      const entryLevel = (cand.setup as { manual?: { level?: number } } | null)?.manual?.level;
-      if (entryLevel != null) {
-        const dayRows = await db
-          .select()
-          .from(candidates)
-          .where(and(eq(candidates.runDate, cand.runDate), eq(candidates.profileId, profile.id)));
-        const levels = dayRows
-          .map((r) => (r.setup as { manual?: { level?: number } } | null)?.manual?.level)
-          .filter((n): n is number => n != null);
-        const beyond = direction === "call" ? levels.filter((l) => l > entryLevel) : levels.filter((l) => l < entryLevel);
-        if (beyond.length) {
-          predictedTarget = direction === "call" ? Math.min(...beyond) : Math.max(...beyond);
-        }
-      }
-    }
+    // (QQQ Manual's next-level target override lived here; REMOVED 2026-07-21 with the
+    // rest of its non-mechanical gates. It no longer reaches this branch at all —
+    // confirmation.enabled is false, so it resolves off the plain price band below.)
     // HORIZON MATCH: the option must survive the expected time-to-target. Size the
     // minimum expiry to the predicted hold (+25% margin) so we never buy a 1-DTE
     // contract for a multi-day move. Sub-day holds (intraday 0DTE) keep a 0 floor —
@@ -230,7 +212,11 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   // buying, confirm the LIVE price hasn't crossed to the wrong side of the zone
   // (e.g. a "call" whose stock has since broken down through the zone). If the
   // premise is broken, skip rather than buy a stale wrong-way setup.
-  const zs = proposal.zoneSetup as { active_zone?: { bottom: number; top: number } } | null;
+  // NOT applied to manual levels: there the entry is BY DEFINITION price reaching or
+  // crossing the owner's level (a fast tick can print through it), and the direction
+  // was just derived from the live 15-minute approach — a "wrong side of the zone"
+  // reading would reject exactly the touch we intend to trade.
+  const zs = profile.manualLevels ? null : (proposal.zoneSetup as { active_zone?: { bottom: number; top: number } } | null);
   if (zs?.active_zone) {
     const spot = resolved.underlyingPrice;
     const brokeDown = direction === "call" && spot < zs.active_zone.bottom;
@@ -244,8 +230,20 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
   }
 
   const limitPrice = resolved.price;
-  // Buy as many cheap contracts as the per-trade budget allows (>=1, capped).
-  const qty = Math.max(1, Math.min(maxContracts, Math.floor(perTradeBudget / (limitPrice * 100))));
+  // Buy as many cheap contracts as the per-trade budget allows (>=1, capped)...
+  let qty = Math.max(1, Math.min(maxContracts, Math.floor(perTradeBudget / (limitPrice * 100))));
+  // ...unless the profile demands an EXACT lot (QQQ Manual: "buy exactly 5 contracts …
+  // do not enter fewer than 5"). Then it's the full lot or no trade at all.
+  const exact = profile.caps.exactContracts;
+  if (exact != null) {
+    if (exact > maxContracts || exact * limitPrice * 100 > perTradeBudget) {
+      throw new ExecuteError(
+        `Cannot buy the full ${exact}-contract lot for ${proposal.symbol} at $${limitPrice.toFixed(2)} (budget $${perTradeBudget}, cap ${maxContracts}) — skipped rather than entering a partial lot.`,
+        "lot_size",
+      );
+    }
+    qty = exact;
+  }
   const placedRisk = computeRisk({
     direction,
     strike: resolved.strike,

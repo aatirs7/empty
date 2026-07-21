@@ -41,6 +41,10 @@ export interface ContractConfig {
   priceIdeal: number; // target ask (picks the contract closest to this)
   priceCap: number; // max acceptable ask
   liquiditySpread: number; // require bid >= liquiditySpread * ask
+  // Require the quoted ASK SIZE to cover this many contracts (QQQ Manual buys a fixed
+  // 5-lot and must not take a 1-lot quote). Only enforced when the feed reports a
+  // size — an absent size is not treated as zero (it would block every trade).
+  minAskSize?: number;
 }
 
 export interface ProfileCaps {
@@ -51,6 +55,10 @@ export interface ProfileCaps {
   // the top setups." Enforced in executeProposal (protects auto AND manual
   // identically). Defaults to 3 when unset.
   maxTradesPerDay?: number;
+  // Buy EXACTLY this many contracts or nothing (QQQ Manual, owner 2026-07-21: "buy
+  // exactly 5 contracts … do not enter fewer than 5"). When set, execute rejects the
+  // trade if the budget/cap can't fund the full lot instead of buying a smaller one.
+  exactContracts?: number;
 }
 
 export interface ExitConfig {
@@ -77,6 +85,12 @@ export interface ExitConfig {
   // milestones with a ratcheting stop, leave a runner for the next-level target.
   // Driven by the position_state table; only active when `ladder` is set.
   ladder?: {
+    // GENERALIZED rungs (QQQ Manual, owner 2026-07-21). When set, these drive both the
+    // trims and the stop ratchet, and the legacy trim1/trim2/breakeven fields below are
+    // ignored. Ascending by atPct; stopTo omitted = leave the stop where it is.
+    rungs?: { atPct: number; sellQty: number; stopTo?: number }[];
+    plannedQty?: number; // full intended lot (rungs mode) — tranches scale off this
+    holdTimeout?: boolean; // false disables the "no bounce within 2x expected hold" exit
     trim1Pct: number; // +0.5 => at +50% sell trim1Qty and ratchet stop to stopAfterTrim1
     trim1Qty: number; // contracts to sell at trim1 (of the ORIGINAL qty)
     stopAfterTrim1: number; // -0.1 => stop moves to -10% once trim1 fires
@@ -282,51 +296,77 @@ const QQQ_0DTE: Profile = {
   baselineSymbol: "QQQ",
 };
 
-// QQQ Manual (EXPERIMENTAL) — QQQ-only 0DTE off levels the owner hand-enters each
-// morning (ONE list, used across all charts — Farrukh 2026-07-16), NOT SniperBot
-// zones. Entry = LEVEL TOUCH (owner's newest instruction supersedes the earlier
-// confirmation-candle rule) gated by the coin-flip protections: 60% reaction-DB
-// probability floor AND EV-net-of-spread+theta. Farrukh's LADDER drives the exit:
-// 10 × ~$0.30-0.35 contracts, -30% base stop; at +50% trim 3 + stop→-10%; past
-// +75% stop→breakeven; at +100% sell 6; 1 runner rides to the NEXT LEVEL (sell
-// within ~$0.25 of it) or the ratcheted stop; 0DTE flatten before the close.
-// Trades the QQQ paper account (ALPACA_*_2, PA3BS187DK8F) — qqq_0dte is shelved
-// so the two can never trade the same account at once.
+// QQQ Manual (EXPERIMENTAL) — QQQ-only 0DTE off levels the owner hand-enters, run
+// PURELY MECHANICALLY (owner 2026-07-21 simplification: "follow the owner-entered
+// levels mechanically"). The level list and the approach direction ARE the decision:
+//   ENTRY: from the 9:30 open, the FIRST eligible level actually touched (price
+//     reaches/crosses it — no wide proximity band) triggers ONE trade for the session.
+//     Direction comes from the prior COMPLETED 15-minute bar at touch time: price
+//     coming DOWN from above into the level => CALLS; coming UP from below => PUTS.
+//     NO confirmation candle, NO sniper engine, NO probability floor, NO reaction-DB
+//     target requirement, NO catalyst veto, NO EV filter (all removed 2026-07-21).
+//   CONTRACT: exactly 5 same-day contracts with an ask of $0.30-$0.35, two-sided
+//     market, ask size >= 5. No substitution outside the band, never fewer than 5.
+//   EXIT LADDER: -25% base stop; +50% sell 2 + stop -> breakeven; +75% sell 1 + stop
+//     -> +25%; +100% sell the final 2; plus the end-of-day flatten.
+// Trades the QQQ paper account (ALPACA_*_2) — qqq_0dte is shelved so the two can
+// never trade the same account at once.
 const QQQ_MANUAL: Profile = {
   id: "qqq_manual",
   label: "QQQ Manual",
-  description: "QQQ 0DTE off owner-entered levels: level-touch entry, laddered exits to the next level. Experimental.",
+  description: "QQQ 0DTE off owner-entered levels: first level touched, direction from the 15-min approach, 5-contract ladder.",
   active: true,
   manualLevels: true, // candidates come ONLY from /api/manual-levels — never scanned
   strategy: DEFAULT_STRATEGY_OPTIONS,
   zoneTimeframes: [], // nothing to scan; also keeps refreshIntradayScans away
-  // Entry is a LEVEL TOUCH (monitor branches on manualLevels); confirmation config is
-  // kept only for the predict/EV plumbing shared with confirmation profiles.
-  confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.5 },
+  // MECHANICAL: no confirmation candle. This also routes execute.ts down the plain
+  // price-band resolve path (no predict / no selectByEV) — the EV-after-cost filter
+  // and the reaction-DB target are deliberately out of this profile now.
+  confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1.5 },
   requireClearRunway: false, // manual levels sit wherever the owner draws them
-  minScore: 55, // same 0DTE playbook gate as qqq_0dte
-  minProbability: 60, // HARD floor — keep the coin-flip fix on this variant too
-  netContractCosts: true, // EV must clear round-trip spread + theta — keep it here too
+  minScore: 0, // no score gate — the owner's level is the setup
   contract: {
     expiryKind: "zeroDte", // 0DTE ONLY
-    otmPct: 1.5,
+    otmPct: 3, // strike window only — the $0.30-0.35 ask band is the real selector
     itmPct: 1,
-    priceFloor: 0.28, // "$0.30-0.35 priced contracts" with a little slack
+    priceFloor: 0.3, // HARD band: "ask must be between $0.30 and $0.35"
     priceIdeal: 0.32,
-    priceCap: 0.38,
-    liquiditySpread: 0.7,
+    priceCap: 0.35,
+    liquiditySpread: 0.7, // real two-sided market
+    minAskSize: 5, // enough size quoted to fill the whole 5-lot
   },
-  caps: { perTradeBudget: 350, maxContracts: 10, maxOpenPositions: 2 }, // 10 × ~$0.32 ≈ $320
-  // Ladder exit per Farrukh; stopLoss -0.30 is the base stop (sell ALL remaining).
+  // Exactly 5 contracts (5 × $0.35 = $175 worst case); ONE trade per session.
+  caps: { perTradeBudget: 200, maxContracts: 5, exactContracts: 5, maxOpenPositions: 1, maxTradesPerDay: 1 },
   exit: {
     style: "intraday",
-    takeProfit: 0.6, // fallback TP only when no ladder/target was persisted
-    stopLoss: -0.3,
-    sameDayExit: true,
-    ladder: { trim1Pct: 0.5, trim1Qty: 3, stopAfterTrim1: -0.1, breakevenPct: 0.75, trim2Pct: 1.0, trim2Qty: 6, targetProximity: 0.25 },
+    takeProfit: 1.0, // fallback TP only if the ladder state is somehow unavailable
+    stopLoss: -0.25, // base stop, from the ACTUAL average fill premium
+    sameDayExit: true, // end-of-day safety flatten stays
+    ladder: {
+      // +50%: sell 2, stop -> breakeven. +75%: sell 1, stop -> +25% (so a fade back
+      // to +25% after that trim sells everything left). +100%: sell the final 2.
+      rungs: [
+        { atPct: 0.5, sellQty: 2, stopTo: 0 },
+        { atPct: 0.75, sellQty: 1, stopTo: 0.25 },
+      ],
+      plannedQty: 5,
+      holdTimeout: false, // no-bounce time-out REMOVED (owner 2026-07-21)
+      targetProximity: 0, // next-level target exit REMOVED — 0 disables it
+      runnerTakeProfit: 1.0, // +100%: sell everything still open (the final 2)
+      // Legacy fields unused in rungs mode; kept to satisfy the shared shape.
+      trim1Pct: 0.5,
+      trim1Qty: 2,
+      stopAfterTrim1: 0,
+      breakevenPct: 0.5,
+      trim2Pct: 0.75,
+      trim2Qty: 1,
+    },
   },
   autoDefault: false, // experimental — owner enables via the level-editor toggle
   baselineSymbol: "QQQ",
+  // Monitoring starts at the 9:30 open. The upper bound keeps a fresh entry from
+  // landing inside the end-of-day flatten window (which fires ~25 min before close).
+  entryWindowEt: { startMin: 9 * 60 + 30, endMin: 15 * 60 + 25 },
 };
 
 // SB 15M Empty-Space Day Trader (Farrukh spec 2026-07-21). Intraday-only: 4-hour

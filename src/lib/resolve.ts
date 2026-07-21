@@ -152,9 +152,14 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
     candidates = candidates.slice(0, 80);
     if (candidates.length > 0) {
       const quotes = await getOptionQuotes(candidates.map((c) => c.symbol));
+      // Ask-size floor (QQQ Manual buys a fixed 5-lot): only enforced when the feed
+      // actually reports a size — an absent size is unknown, not zero, and failing
+      // closed on it would block every trade.
+      const minAskSize = input.contract?.minAskSize ?? 0;
       const priced = candidates
         .map((c) => ({ c, q: quotes[c.symbol], ask: quotes[c.symbol]?.ap ?? 0, bid: quotes[c.symbol]?.bp ?? 0 }))
-        .filter((x) => x.ask > 0.05 && x.bid > 0 && x.bid >= spread * x.ask);
+        .filter((x) => x.ask > 0.05 && x.bid > 0 && x.bid >= spread * x.ask)
+        .filter((x) => minAskSize <= 0 || x.q?.as == null || x.q.as >= minAskSize);
       const inBand = priced.filter((x) => x.ask >= band.floor && x.ask <= band.cap);
       if (inBand.length > 0) {
         const chosen = inBand.reduce((best, x) =>

@@ -12,7 +12,7 @@
  * `monitor_state` DB row, so this works identically from a persistent worker loop
  * OR a stateless serverless cron tick. Dedup is durable (proposals.candidateId).
  */
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { candidates, monitorState, orders, positionState, proposals, researchRuns, activityLog } from "../db/schema";
 import { getLatestPrices, getStockBars, getIntradayBars, getOptionQuotes, midPrice, getClock } from "./alpaca";
@@ -21,7 +21,7 @@ import { executeProposal } from "./execute";
 import { classifyAndScore } from "./playbook";
 import { parseOcc } from "./format";
 import { sendPush } from "./push";
-import { getProfile, activeProfiles, type Profile } from "./profiles";
+import { getProfile, activeProfiles, type Profile, type ExitConfig } from "./profiles";
 import { scanProfile } from "./scanner";
 import { zoneOfPosition } from "./manage";
 import { getProfileSettings } from "./profile-settings";
@@ -87,6 +87,10 @@ const mem = {
   lastMaintenance: 0,
   skipBuffer: [] as Parameters<typeof logActivity>[0],
   skipBufferAt: 0,
+  // Previous tick's price per symbol — lets the manual-level PRECHECK notice a level
+  // that price jumped clean through between two ticks (a proximity band alone would
+  // miss it). Replaceable: a cold start just falls back to the proximity test.
+  lastPrice: new Map<string, number>(),
 };
 
 /** Per-profile auto toggles with a short TTL — the owner's toggle applies within
@@ -139,9 +143,55 @@ async function flushTickActivity(entries: Parameters<typeof logActivity>[0]): Pr
 // level". Wide enough to catch the tap at minute granularity, tight enough to be a real
 // touch. Deduped to once per candidate per day (see tappedSet).
 const FLIP_TAP_BAND = 0.004; // 0.4%
-// QQQ Manual level-touch band: tighter than the flip band (QQQ levels sit a few
-// points apart; 0.4% of ~$720 would be ±$2.9 — too sloppy). 0.15% ≈ ±$1.
-const LEVEL_TOUCH_BAND = 0.0015;
+// QQQ Manual PRECHECK band only (owner 2026-07-21: "do not enter early merely
+// because price is within a wide percentage band"). A real touch is decided by
+// manualApproach() below — price actually reaching/crossing the level relative to
+// the prior completed 15-minute bar. This band, plus a last-tick crossing test, is
+// only the cheap superset that decides whether the full evaluation runs at all.
+const LEVEL_PRECHECK_BAND = 0.005;
+
+/** QQQ Manual, owner 2026-07-21. The prior COMPLETED 15-minute bar decides BOTH
+ *  whether the level was really touched and which way we trade it:
+ *    bar above the level + price now at/through it  => approached from above => CALL
+ *    bar below the level + price now at/through it  => approached from below => PUT
+ *  Direction is therefore decided at TOUCH time, never when the levels were saved. */
+type ManualTouch =
+  | { touched: false; reason: string }
+  | { touched: true; direction: "call" | "put"; approach: "from_above" | "from_below"; barClose: number; barTime: string };
+async function manualApproach(symbol: string, level: number, cur: number): Promise<ManualTouch> {
+  let bars: Bar[] = [];
+  try {
+    // Wall-clock lookback, wide enough that a completed bar always exists — including
+    // right after the 9:30 open (where the prior completed bar is the previous
+    // session's last one) and after a weekend/holiday.
+    bars = await getIntradayBars(symbol, "15Min", 5 * 24 * 60);
+  } catch {
+    return { touched: false, reason: "15-min bars unavailable" };
+  }
+  const prev = bars.filter((b) => Date.parse(b.t) + 15 * 60_000 <= Date.now()).pop();
+  if (!prev) return { touched: false, reason: "no completed 15-min bar yet" };
+  if (prev.c > level && cur <= level) return { touched: true, direction: "call", approach: "from_above", barClose: prev.c, barTime: prev.t };
+  if (prev.c < level && cur >= level) return { touched: true, direction: "put", approach: "from_below", barClose: prev.c, barTime: prev.t };
+  return { touched: false, reason: `level ${level} not reached (15m close ${prev.c}, now ${cur})` };
+}
+
+/** Has this profile actually PLACED a buy today? QQQ Manual takes ONE trade per
+ *  session — "once the first level triggers an entry, ignore all other levels". A
+ *  level that fails to enter (no contract in band, etc.) does NOT consume the day. */
+async function enteredToday(profileId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ n: sql<string>`count(*)` })
+    .from(orders)
+    .innerJoin(proposals, eq(orders.proposalId, proposals.id))
+    .where(
+      and(
+        eq(proposals.profileId, profileId),
+        sql`(${orders.submittedAt} AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`,
+        sql`${orders.status} not in ('canceled', 'rejected')`,
+      ),
+    );
+  return Number(row?.n ?? 0) > 0;
+}
 
 /** Minutes since midnight in ET (SB15M's 9:45am-2:45pm day-trade entry window). */
 function etMinutesNow(): number {
@@ -164,7 +214,8 @@ function friendlyBlock(msg: string): string {
   const s = msg.toLowerCase();
   if (s.includes("no affordable") || s.includes("price cap") || s.includes("no contract fits") || s.includes("no_quote")) return "no cheap contract that reaches the target";
   if (s.includes("open-position cap") || s.includes("open_cap")) return "position cap reached";
-  if (s.includes("daily trade cap")) return "daily trade limit reached (3/day)";
+  if (s.includes("full") && s.includes("contract lot")) return "no contract in the $0.30-0.35 band with size for the full 5-lot";
+  if (s.includes("daily trade cap")) return "daily trade limit reached";
   if (s.includes("invalidated") || s.includes("crossed the zone")) return "price moved the wrong way";
   if (s.includes("market closed")) return "market closed";
   return msg.slice(0, 60);
@@ -214,12 +265,83 @@ function tapCrossing(direction: "call" | "put", prev: number, cur: number, botto
   return prev > top && cur <= top; // call: pulled into support from above
 }
 
-/** One ladder pass for a single position (QQQ Manual). Farrukh 2026-07-16:
- *  10 contracts in; -30% base stop; at +50% trim 3 and move the stop to -10%;
- *  past +75% stop to breakeven; at +100% sell 6; the runner exits at the
- *  ratcheted stop, within $0.25 of the NEXT-LEVEL target, on a no-bounce
- *  time-out (2x expected hold), or the 0DTE end-of-day flatten. Tranches scale
- *  proportionally when fewer than the planned contracts filled. */
+/** PURE ladder decision: given the exit config and the position's current state,
+ *  return the enforced stop plus AT MOST ONE action (a full close or a single trim).
+ *  Priority: structural invalidation → stop → full-lot take-profit → underlying
+ *  target → no-bounce time-out → end-of-day flatten → the next untaken trim rung.
+ *  No I/O, so scripts/ladder-selftest.ts can assert every rung of the spec. */
+export interface LadderPlanInput {
+  exit: ExitConfig;
+  ret: number; // current premium return vs the average FILL
+  peak: number; // high-water return (the ratchet never loosens)
+  trims: number[]; // rung levels already taken
+  entryQty: number; // contracts originally filled
+  heldQty: number; // contracts still open
+  invalidatedReason?: string; // SB15M 15-min structural close-through
+  nearTargetLevel?: number | null; // underlying target reached (null = not / disabled)
+  spot?: number | null;
+  timedOutMin?: number | null; // expected-hold minutes when the no-bounce timeout fired
+  eodFlatten?: boolean;
+}
+export interface LadderPlanResult {
+  stop: number; // the stop currently enforced (fraction of premium)
+  close: string; // non-empty => sell EVERYTHING still open, with this reason
+  trim: { qty: number; atPct: number; newStop: number } | null;
+}
+export function ladderPlan(i: LadderPlanInput): LadderPlanResult {
+  const L = i.exit.ladder!;
+  // Rungs: the profile's explicit list (QQQ Manual — +50% sell 2 → stop breakeven,
+  // +75% sell 1 → stop +25%) or the legacy trim1/trim2 pair (SB15M).
+  const rungs = L.rungs ?? [
+    { atPct: L.trim1Pct, sellQty: L.trim1Qty, stopTo: L.stopAfterTrim1 as number | undefined },
+    { atPct: L.trim2Pct, sellQty: L.trim2Qty, stopTo: undefined as number | undefined },
+  ];
+  // Stop ratchets off the PEAK (never loosens): the highest rung whose level has
+  // printed sets the stop. Legacy configs keep their separate breakeven ratchet.
+  const stopAt = (high: number, extraTaken?: number) => {
+    let s = i.exit.stopLoss;
+    rungs.forEach((r) => {
+      if (r.stopTo != null && (high >= r.atPct || r.atPct === extraTaken || i.trims.includes(r.atPct))) s = r.stopTo;
+    });
+    if (L.rungs == null && high >= L.breakevenPct) s = 0;
+    return s;
+  };
+  const stop = stopAt(i.peak);
+  const pct = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x * 100)}%`;
+
+  let close = "";
+  if (i.invalidatedReason) {
+    close = i.invalidatedReason;
+  } else if (i.ret <= stop) {
+    close = stop === 0 ? `breakeven stop after ${pct(i.peak)} peak` : `hit ${pct(stop)} stop (${pct(i.ret)})`;
+  } else if (L.runnerTakeProfit != null && i.ret >= L.runnerTakeProfit) {
+    close = `take-profit ${pct(i.ret)} (target ${pct(L.runnerTakeProfit)})`;
+  } else if (i.nearTargetLevel != null && L.targetProximity > 0) {
+    close = `within $${L.targetProximity.toFixed(2)} of next level ${i.nearTargetLevel}${i.spot != null ? ` (${i.spot})` : ""}`;
+  } else if (i.timedOutMin != null && L.holdTimeout !== false) {
+    close = `no bounce within 2x expected hold (~${Math.round(i.timedOutMin)}min)`;
+  } else if (i.eodFlatten) {
+    close = `end-of-day flatten (${pct(i.ret)})`;
+  }
+  if (close) return { stop, close, trim: null };
+
+  // Trims — the FIRST untaken rung whose level has printed, in order. Always leave at
+  // least one contract open (a full exit is a `close`, never a trim).
+  const planned = L.plannedQty ?? L.trim1Qty + L.trim2Qty + 1;
+  const scale = i.entryQty / planned;
+  const idx = rungs.findIndex((r, n) => !i.trims.includes(r.atPct) && i.ret >= r.atPct && (n === 0 || i.trims.includes(rungs[n - 1].atPct)));
+  if (idx < 0 || i.heldQty <= 1) return { stop, close: "", trim: null };
+  const qty = Math.min(Math.max(1, Math.round(rungs[idx].sellQty * scale)), i.heldQty - 1);
+  return { stop, close: "", trim: { qty, atPct: rungs[idx].atPct, newStop: stopAt(i.peak, rungs[idx].atPct) } };
+}
+
+/** One ladder pass for a single position. At most ONE action per call (per quote
+ *  update); the next call re-evaluates the new state.
+ *  QQQ Manual (owner 2026-07-21): 5 contracts in; -25% base stop; +50% sell 2 and
+ *  the stop moves to breakeven; +75% sell 1 and the stop moves to +25% (so a fade
+ *  back to +25% sells the rest); +100% sell the final 2; end-of-day flatten.
+ *  SB15M keeps its legacy trim1/trim2 config. Tranches scale proportionally when
+ *  fewer than the planned contracts filled. */
 export async function runLadder(
   profile: Profile,
   broker: ReturnType<typeof getBroker>,
@@ -263,18 +385,6 @@ export async function runLadder(
   const trims = st.trims ?? [];
   const heldQty = Math.abs(Number(p.qty)) || 1;
 
-  // Tranche sizes scale to what actually filled (plan: 3 + 6 + 1 runner of 10).
-  const planned = L.trim1Qty + L.trim2Qty + 1;
-  const scale = st.entryQty / planned;
-  const t1Qty = Math.max(1, Math.round(L.trim1Qty * scale));
-  const t2Qty = Math.max(1, Math.round(L.trim2Qty * scale));
-
-  // Ratcheting stop off the PEAK (never loosens): -30% -> -10% once +50% printed ->
-  // breakeven once +75% printed.
-  let stop = profile.exit.stopLoss;
-  if (peak >= L.trim1Pct || trims.includes(L.trim1Pct)) stop = L.stopAfterTrim1;
-  if (peak >= L.breakevenPct) stop = 0;
-
   // Runner target: the persisted NEXT-LEVEL price; exit when the UNDERLYING is
   // within $targetProximity of it in the trade's direction. (Session-cached — the
   // proposal's zoneSetup is immutable after entry.) targetProximity <= 0 disables
@@ -294,8 +404,9 @@ export async function runLadder(
     }
   }
   // No-bounce time-out: nothing trimmed and 2x the expected hold has passed.
+  // Disabled per-profile (QQQ Manual dropped it, owner 2026-07-21).
   const ageMin = (Date.now() - new Date(st.openedAt).getTime()) / 60_000;
-  const timedOut = zone?.expectedHoldMin != null && trims.length === 0 && ageMin > 2 * zone.expectedHoldMin;
+  const timedOut = L.holdTimeout !== false && zone?.expectedHoldMin != null && trims.length === 0 && ageMin > 2 * zone.expectedHoldMin;
 
   // Structural early exit (SB15M spec §12): a COMPLETED 15-minute candle closing
   // through the zone against the position kills the thesis before the % stop.
@@ -313,26 +424,22 @@ export async function runLadder(
     }
   }
 
-  // Full-close reasons (sell ALL remaining), in priority order.
-  let closeAll = "";
-  if (invalidated15m) {
-    closeAll = invalidated15m;
-  } else if (ret <= stop) {
-    closeAll =
-      stop === 0
-        ? `breakeven stop after +${Math.round(peak * 100)}% peak`
-        : `hit ${Math.round(stop * 100)}% stop (${Math.round(ret * 100)}%)`;
-  } else if (L.runnerTakeProfit != null && ret >= L.runnerTakeProfit) {
-    // SB15M: the LAST contract's premium target (+75%) — the ladder always leaves
-    // a runner, so this is how "sell contract 2 at +75%" executes.
-    closeAll = `runner take-profit +${Math.round(ret * 100)}% (target +${Math.round(L.runnerTakeProfit * 100)}%)`;
-  } else if (nearTarget && zone?.predictedTarget != null) {
-    closeAll = `within $${L.targetProximity.toFixed(2)} of next level ${zone.predictedTarget} (QQQ ${spot})`;
-  } else if (timedOut) {
-    closeAll = `no bounce within 2x expected hold (~${Math.round(zone!.expectedHoldMin!)}min)`;
-  } else if (profile.exit.sameDayExit && nearClose && (occ?.expiry === today || profile.exit.forceEodFlatten)) {
-    closeAll = `end-of-day flatten (${ret >= 0 ? "+" : ""}${Math.round(ret * 100)}%)`;
-  }
+  // ALL the ladder's decision-making lives in the pure planner below (self-tested in
+  // scripts/ladder-selftest.ts); everything above just gathers live inputs.
+  const plan = ladderPlan({
+    exit: profile.exit,
+    ret,
+    peak,
+    trims,
+    entryQty: st.entryQty,
+    heldQty,
+    invalidatedReason: invalidated15m,
+    nearTargetLevel: nearTarget && zone?.predictedTarget != null ? zone.predictedTarget : null,
+    spot,
+    timedOutMin: timedOut ? (zone!.expectedHoldMin as number) : null,
+    eodFlatten: !!profile.exit.sameDayExit && nearClose && (occ?.expiry === today || !!profile.exit.forceEodFlatten),
+  });
+  const closeAll = plan.close;
 
   if (closeAll) {
     const closeOrder = await broker.closePosition(p.symbol);
@@ -379,22 +486,14 @@ export async function runLadder(
 
   // Trims (partial sells) — one rung per tick; the next tick catches the next rung.
   // Always leave at least 1 contract (the runner).
-  let trimQty = 0;
-  let trimLevel = 0;
-  if (!trims.includes(L.trim1Pct) && ret >= L.trim1Pct && heldQty > 1) {
-    trimQty = Math.min(t1Qty, heldQty - 1);
-    trimLevel = L.trim1Pct;
-  } else if (trims.includes(L.trim1Pct) && !trims.includes(L.trim2Pct) && ret >= L.trim2Pct && heldQty > 1) {
-    trimQty = Math.min(t2Qty, heldQty - 1);
-    trimLevel = L.trim2Pct;
-  }
-  if (trimQty > 0) {
+  if (plan.trim) {
+    const { qty: trimQty, atPct: trimLevel, newStop } = plan.trim;
     await broker.closePosition(p.symbol, trimQty);
-    const trimPatch = { trims: [...trims, trimLevel], peakPct: String(peak), stopStage: peak >= L.breakevenPct ? 2 : 1 };
+    const trimPatch = { trims: [...trims, trimLevel], peakPct: String(peak), stopStage: newStop >= 0 ? 2 : 1 };
     await db.update(positionState).set(trimPatch).where(eq(positionState.contractSymbol, p.symbol)); // critical — immediate
     mem.posState.set(p.symbol, { ...st, ...trimPatch });
     const sym = occ?.underlying ?? p.symbol;
-    const stopWord = peak >= L.breakevenPct ? "breakeven" : `${Math.round(L.stopAfterTrim1 * 100)}%`;
+    const stopWord = newStop === 0 ? "breakeven" : `${newStop > 0 ? "+" : ""}${Math.round(newStop * 100)}%`;
     const d = `trimmed ${trimQty} of ${st.entryQty} at +${Math.round(ret * 100)}% (stop → ${stopWord})`;
     out.push({ symbol: sym, direction: occ?.type ?? "call", candidateId: 0, price: bid, placed: true, detail: `SOLD ${sym} — ${d}`, profileId });
     await sendPush(`${profile.label}: Trimmed ${sym} +${Math.round(ret * 100)}%`, d, "/positions").catch(() => {});
@@ -404,7 +503,8 @@ export async function runLadder(
     // change behavior and don't need a write. Crossings persist immediately so the
     // ratchet survives any restart EXACTLY (a mid-band peak lost to a crash can
     // never loosen the stop — stage-at-crossing is already durable).
-    const stageOf = (pct: number) => (pct >= L.breakevenPct ? 2 : pct >= L.trim1Pct ? 1 : 0);
+    const stageOf = (pct: number) =>
+      L.rungs ? L.rungs.filter((r) => pct >= r.atPct).length : pct >= L.breakevenPct ? 2 : pct >= L.trim1Pct ? 1 : 0;
     if (stageOf(peak) > stageOf(Number(st.peakPct))) {
       const peakPatch = { peakPct: String(peak), stopStage: stageOf(peak) };
       await db.update(positionState).set(peakPatch).where(eq(positionState.contractSymbol, p.symbol));
@@ -436,10 +536,9 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
     const occ = parseOcc(p.symbol);
     const daysToExpiry = occ?.expiry ? Math.ceil((Date.parse(`${occ.expiry}T00:00:00Z`) - Date.now()) / 86_400_000) : Infinity;
 
-    // LADDER (QQQ Manual, Farrukh 2026-07-16): trim tranches at premium milestones
-    // with a stop that ratchets on the PEAK gain (never loosens), leave a runner for
-    // the next-level target. State (original qty, peak, fired trims) lives in the
-    // position_state table so it survives serverless ticks.
+    // LADDER (QQQ Manual, SB15M): trim tranches at premium milestones with a stop that
+    // ratchets on the PEAK gain (never loosens). State (original qty, peak, fired
+    // trims) lives in the position_state table so it survives serverless ticks.
     if (profile.exit.style === "intraday" && profile.exit.ladder) {
       try {
         const fired = await runLadder(profile, broker, p, bid, entry, occ, today, nearClose, profileId);
@@ -759,12 +858,21 @@ export async function monitorTick(): Promise<Fire[]> {
       return b > 0 && Math.abs(cur - b) / b <= FLIP_TAP_BAND;
     }
     if (p.manualLevels) {
+      // SUPERSET of the real touch test (manualApproach): near the level, or price
+      // crossed it since the last tick. Never narrower than the real rule.
+      if (!inEntryWindow(p)) return false;
       const lvl = (c.setup as { manual?: { level?: number } } | null)?.manual?.level ?? (z.bottom + z.top) / 2;
-      return lvl > 0 && Math.abs(cur - lvl) / lvl <= LEVEL_TOUCH_BAND;
+      if (lvl <= 0) return false;
+      const last = mem.lastPrice.get(c.symbol);
+      const crossed = last != null && (last - lvl) * (cur - lvl) <= 0;
+      return crossed || Math.abs(cur - lvl) / lvl <= LEVEL_PRECHECK_BAND;
     }
     if (p.confirmation.enabled) return cur >= z.bottom * 0.99 && cur <= z.top * 1.01;
     return true; // tap-crossing profiles need prev-tick state — must run the loop
   });
+  // Remember this tick's prices for the NEXT tick's manual-level crossing precheck
+  // (read above, written here — order matters).
+  for (const [sym, px] of Object.entries(prices)) if (px != null) mem.lastPrice.set(sym, px);
 
   if (maybeTriggered) {
     // Durable crossing state — only tap-crossing profiles (zones_legacy, shelved)
@@ -794,6 +902,10 @@ export async function monitorTick(): Promise<Fire[]> {
       .where(and(eq(activityLog.kind, "tap"), eq(activityLog.runDate, today), inArray(activityLog.candidateId, cands.map((c) => c.id))));
     const tappedSet = new Set(tapRows.map((r) => r.cid));
 
+    // QQQ Manual takes ONE trade per session; resolved lazily on the first real touch
+    // (null = not looked up yet on this tick).
+    let manualDone: boolean | null = null;
+
     // Market context for the SniperBot confidence engine (fetched once per tick).
     const hasConfirm = cands.some((c) => getProfile(c.profileId).confirmation.enabled);
     let marketCtx: MarketContext = { spy: 0, qqq: 0 };
@@ -816,12 +928,15 @@ export async function monitorTick(): Promise<Fire[]> {
     nextPrices[key] = cur;
     if (firedSet.has(c.id)) continue;
 
-    const direction = c.direction as "call" | "put";
+    // Manual-level profiles OVERRIDE this at touch time (the saved direction is only a
+    // provisional label; the live 15-minute approach decides the real one).
+    let direction = c.direction as "call" | "put";
     const profile = getProfile(c.profileId);
 
     // Decide whether this candidate triggers NOW.
     let confirmReason = "";
     let execScore = 0;
+    let manualEntry: { level: number; approach: string; barClose: number; barTime: string } | null = null;
     if (profile.entryKind === "flip_retest") {
       // SBv2: enter on the FIRST TAP of the flipped boundary — price reaching the level
       // (within a small band), NOT a strict two-tick crossing (which can miss a fast tap
@@ -845,19 +960,42 @@ export async function monitorTick(): Promise<Fire[]> {
       await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `zone tap ${cur} — checking ${direction.toUpperCase()}` }]);
       confirmReason = " First retest of the flipped boundary.";
     } else if (profile.manualLevels) {
-      // QQQ Manual: enter on the LEVEL TOUCH (Farrukh's ladder message supersedes the
-      // earlier confirmation-candle rule). Same machinery as SBv2's tap: a proximity
-      // band + once-per-level-per-day dedup via the tap activity row. The real filters
-      // are downstream: 60% DB probability floor + EV net of costs + cached catalyst.
-      if (tappedSet.has(c.id)) continue; // already touched today
+      // QQQ Manual — PURELY MECHANICAL (owner 2026-07-21). Monitoring runs from the
+      // 9:30 open; the FIRST level actually touched takes the session's only trade.
+      // A touch = price reaching or CROSSING the owner's level (no wide band), and the
+      // direction comes from the prior completed 15-minute bar: approaching from above
+      // => CALL, from below => PUT. No confirmation candle, no score, no probability
+      // floor, no DB target, no catalyst, no EV filter — those were all removed here.
+      if (tappedSet.has(c.id)) continue; // this level already fired today
+      if (!inEntryWindow(profile)) continue; // 9:30 open → before the EOD flatten window
       const level = (c.setup as { manual?: { level?: number } } | null)?.manual?.level ?? (z.bottom + z.top) / 2;
-      const atLevel = level > 0 && Math.abs(cur - level) / level <= LEVEL_TOUCH_BAND;
-      if (!atLevel) continue;
-      if ((await cachedSettings(c.profileId)).autoExecute) {
-        await sendPush(`${profile.label}: ${c.symbol} level touch ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
+      if (level <= 0) continue;
+      const touch = await manualApproach(c.symbol, level, cur);
+      if (!touch.touched) continue;
+      // One trade per session: only a PLACED order consumes the day (a level that
+      // couldn't find a contract leaves the rest of the list eligible).
+      if (manualDone ?? (manualDone = await enteredToday(c.profileId))) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `level ${level} touched — ignored, this session's trade is already taken` });
+        continue;
       }
-      await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `level touch ${cur} — checking ${direction.toUpperCase()}` }]);
-      confirmReason = ` Level ${level} touched.`;
+      direction = touch.direction; // decided at TOUCH time, not when the levels were saved
+      manualEntry = { level, ...touch };
+      if ((await cachedSettings(c.profileId)).autoExecute) {
+        await sendPush(`${profile.label}: ${c.symbol} level ${level} touched at ${cur}`, `${touch.approach.replace("_", " ")} → ${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
+      }
+      await logActivity([
+        {
+          profileId: c.profileId,
+          symbol: c.symbol,
+          kind: "tap",
+          direction,
+          price: cur,
+          candidateId: c.id,
+          detail: `level ${level} touched at ${cur} — prior 15m bar ${touch.barTime} closed ${touch.barClose} (${touch.approach.replace("_", " ")}) → ${direction.toUpperCase()}`,
+          meta: { level, barClose: touch.barClose, barTime: touch.barTime, approach: touch.approach, direction, price: cur },
+        },
+      ]);
+      confirmReason = ` Level ${level} touched at ${cur}; prior completed 15m bar (${touch.barTime}) closed ${touch.barClose}, i.e. approaching ${touch.approach.replace("_", " ")} → ${direction.toUpperCase()}.`;
     } else if (profile.confirmation.enabled) {
       // Confirmation profiles (SBv1, QQQ 0DTE, SB15M): fire only when price is AT
       // the zone AND an intraday confirmation candle prints (rejection/engulf/strong
@@ -900,14 +1038,18 @@ export async function monitorTick(): Promise<Fire[]> {
       if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
     }
 
-    // Score the setup; only fire if it clears the profile's quality threshold.
+    // Score the setup; only fire if it clears the profile's quality threshold. QQQ
+    // Manual skips this entirely — its entry is the owner's level, and a scoring
+    // failure must never block a trade it has already decided to take.
     let pb: ReturnType<typeof classifyAndScore> | null = null;
     let bars: Bar[] = [];
-    try {
-      bars = await getStockBars(c.symbol, 400);
-      pb = classifyAndScore(bars, z, direction, cur);
-    } catch {
-      pb = null;
+    if (!profile.manualLevels) {
+      try {
+        bars = await getStockBars(c.symbol, 400);
+        pb = classifyAndScore(bars, z, direction, cur);
+      } catch {
+        pb = null;
+      }
     }
 
     // SBv2 flip validity is fixed at the scan (off the settled daily close) — it can't
@@ -929,15 +1071,15 @@ export async function monitorTick(): Promise<Fire[]> {
     // keeps only the spec's light gates: a valid DB target (reward/move large enough) +
     // the news-against veto. SBv1/QQQ keep the score gate + sniper engine unchanged.
     const mechanical = profile.entryKind === "flip_retest";
-    if (!pb) {
+    if (!pb && !profile.manualLevels) {
       fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "could not score; skipped" });
-      if (mechanical || profile.manualLevels) await notifyBlocked(c.profileId, c.symbol, direction, "could not read the chart");
+      if (mechanical) await notifyBlocked(c.profileId, c.symbol, direction, "could not read the chart");
       continue;
     }
     // Playbook score gate — skipped for mechanical entries (SBv2 flips per spec) AND
-    // manual levels (a ±0.15% synthetic zone isn't a scanned order block; the owner's
-    // level + the probability floor + EV are the QQQ Manual filters).
-    if (!mechanical && !profile.manualLevels && pb.score < profile.minScore) {
+    // manual levels (QQQ Manual has no score at all: the owner's level and the 15-min
+    // approach direction ARE the decision).
+    if (pb && !mechanical && !profile.manualLevels && pb.score < profile.minScore) {
       fires.push({
         symbol: c.symbol,
         direction,
@@ -951,7 +1093,9 @@ export async function monitorTick(): Promise<Fire[]> {
 
     // Confidence engine (SBv1/QQQ) or mechanical flip vet (SBv2). Both use the reaction
     // DB for numbers; neither lets the model produce a probability/target.
-    let sniperConfidence = pb.score / 100;
+    // QQQ Manual has no score and no probability model — it's a mechanical rule, so
+    // there's nothing honest to put here beyond "the rule fired".
+    let sniperConfidence = pb ? pb.score / 100 : 0.5;
     let sniperSummary = "";
     if (profile.confirmation.enabled) {
       const marketAlign = ((marketCtx.spy + marketCtx.qqq) / 2) * (direction === "call" ? 1 : -1);
@@ -1007,27 +1151,9 @@ export async function monitorTick(): Promise<Fire[]> {
         }
         sniperConfidence = Math.max(0, Math.min(1, pred.probability / 100));
         sniperSummary = ` ${pred.reason} Target ${pred.targetMain}.${news?.newsFor ? " News supports it." : ""}` + sniperSummary;
-      } else if (profile.manualLevels) {
-        // QQQ Manual: MECHANICAL level-touch entry — no candle, no sniper engine (with
-        // no confirmation the exec-quality input is 0 and would auto-reject everything).
-        // Gates: the 60% probability floor (above), a reaction-DB target (move big
-        // enough — execute overrides it with the NEXT LEVEL), the cached catalyst check.
-        if (pred.targetMain == null) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — no DB target (move too small / thin history)" });
-          await notifyBlocked(c.profileId, c.symbol, direction, "no historical target (move too small)");
-          continue;
-        }
-        const cat = await cachedCatalyst(c.symbol, c.profileId, direction, today, c.id);
-        if (cat.catalyst) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
-          await notifyBlocked(c.profileId, c.symbol, direction, `earnings/Fed: ${cat.event || "scheduled event"}`);
-          continue;
-        }
-        sniperConfidence = Math.max(0, Math.min(1, pred.probability / 100));
-        sniperSummary = ` ${pred.reason} Riding to the next level.`;
       } else {
         const isIntraday = profile.exit.style === "intraday"; // QQQ 0DTE — judge as a same-day scalp
-        const ev = evaluateSniper(pb, bars, direction, execScore, c.clearRunway, marketCtx, pred, isIntraday);
+        const ev = evaluateSniper(pb!, bars, direction, execScore, c.clearRunway, marketCtx, pred, isIntraday);
         if (!ev.passed) {
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
           continue;
@@ -1045,7 +1171,13 @@ export async function monitorTick(): Promise<Fire[]> {
     const zoneWord = direction === "call" ? "support" : "resistance";
     const tapBoundary = direction === "call" ? "top" : "bottom"; // call taps top (from above), put taps bottom (from below)
     const tapPrice = direction === "call" ? z.top : z.bottom;
-    const alert = `${direction.toUpperCase()}S: ${c.symbol} — ${pb.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb.safeTarget ?? "?"}, extended ${pb.extendedTarget ?? "?"}. Score ${pb.displayScore}/100.${confirmReason}${sniperSummary}`;
+    // QQQ Manual's alert records the auditable facts of the mechanical decision:
+    // the level, the prior completed 15-min bar it was judged against, the approach
+    // direction, and the resulting call/put. No score, no target — it has neither.
+    const alert =
+      profile.manualLevels && manualEntry
+        ? `${direction.toUpperCase()}S: ${c.symbol} — manual level ${manualEntry.level}.${confirmReason} Mechanical entry: 5 same-day contracts at $0.30-0.35, ladder exit (-25% stop; +50% sell 2, stop breakeven; +75% sell 1, stop +25%; +100% sell the rest).`
+        : `${direction.toUpperCase()}S: ${c.symbol} — ${pb!.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb!.safeTarget ?? "?"}, extended ${pb!.extendedTarget ?? "?"}. Score ${pb!.displayScore}/100.${confirmReason}${sniperSummary}`;
     try {
       const runId = await ensureMonitorRun();
       const [prop] = await db
@@ -1056,16 +1188,18 @@ export async function monitorTick(): Promise<Fire[]> {
           direction,
           strategy: direction === "call" ? "long_call" : "long_put",
           strikeHint: "ATM",
-          expiryHint: "friday",
+          expiryHint: profile.contract.expiryKind === "zeroDte" ? "same_day" : "friday",
           // SniperBot's blended confidence (0-1) for confirmation profiles, else the
           // playbook quality score. Code-computed, NOT a probability of profit.
           confidence: String(sniperConfidence),
           pricedInAssessment: "unclear",
-          rationale: `${alert} ${pb.reason}`,
+          rationale: `${alert} ${pb?.reason ?? ""}`.trim(),
           plainExplanation: `${
-            profile.entryKind === "flip_retest"
-              ? `${c.symbol} just retested a flipped daily order block live (${pb.playbook})`
-              : `${c.symbol} just tapped its zone live (${pb.playbook})`
+            profile.manualLevels && manualEntry
+              ? `QQQ came ${manualEntry.approach.replace("_", " ")} into your ${manualEntry.level} level and touched it`
+              : profile.entryKind === "flip_retest"
+                ? `${c.symbol} just retested a flipped daily order block live (${pb!.playbook})`
+                : `${c.symbol} just tapped its zone live (${pb!.playbook})`
           }, betting on a ${direction === "call" ? "bounce up off support" : "rejection down off resistance"} ${
             profile.exit.style === "intraday" ? "intraday" : profile.id === "sbv2" ? "over the next 1-2 days" : "over the next 1-2 weeks"
           }.`,
@@ -1098,6 +1232,7 @@ export async function monitorTick(): Promise<Fire[]> {
         try {
           const r = await executeProposal(prop.id, "auto");
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: true, detail: `order #${r.orderId} ${r.orderStatus}` });
+          if (profile.manualLevels) manualDone = true; // this session's single trade is taken (same-tick guard)
           // Buy notification now fires inside executeProposal (covers auto + manual).
         } catch (e) {
           // Full-auto: a skipped buy (e.g. no cheap contract) must NOT sit pending

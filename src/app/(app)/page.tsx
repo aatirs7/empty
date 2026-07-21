@@ -81,9 +81,10 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
             </summary>
             <div className="mt-2 space-y-2">
               <p className="text-[11px] text-muted leading-relaxed">
-                Vega enters 10 same-day contracts (~$0.30) when a level is touched — if its historical hit rate clears
-                60% and the payoff beats spread + decay — then trims 3 at +50%, 6 at +100%, ratchets the stop (−30% →
-                −10% → breakeven), and rides 1 runner to the next level. Flattens before the close.
+                From the 9:30 open, the FIRST level QQQ actually touches takes the day&apos;s one trade. Coming down
+                into the level buys CALLs, coming up into it buys PUTs (decided at the touch, from the last completed
+                15-minute bar). Exactly 5 same-day contracts at $0.30–0.35. Stop −25%; sell 2 at +50% (stop →
+                breakeven), 1 at +75% (stop → +25%), the last 2 at +100%. Flattens before the close.
               </p>
               <Link href="/setups?profile=qqq_manual" className="block text-xs text-accent">
                 Update today&apos;s levels →
@@ -95,8 +96,9 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
           <div className="bg-panel border border-accent/30 rounded-2xl p-5 text-center space-y-3">
             <p className="text-sm font-medium">No levels set</p>
             <p className="text-xs text-muted leading-relaxed">
-              Enter your QQQ levels (one list — below price become CALLs, above become PUTs). Vega enters on the touch,
-              works the ladder, and rides the runner to the next level. Levels carry forward day to day once set.
+              Enter your QQQ levels (one list). From the open, the first level QQQ touches takes the day&apos;s single
+              trade — direction decided at the touch by the way price approached it. Levels carry forward day to day
+              once set.
             </p>
             <Link
               href="/setups?profile=qqq_manual"

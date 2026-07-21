@@ -11,8 +11,9 @@ interface SavedLevel {
 
 /** Owner input for the experimental QQQ Manual profile: ONE list of the morning's
  *  QQQ levels, used across all charts while monitoring (Farrukh 2026-07-16). Saving
- *  replaces today's levels. Entry = level touch, gated by the 60% probability floor
- *  and positive EV after spread+theta; exits run Farrukh's ladder to the next level. */
+ *  replaces today's levels. Entry (owner 2026-07-21) = the FIRST level touched from
+ *  the 9:30 open, direction from the prior completed 15-min bar, 5 contracts, ladder
+ *  exit — no probability/EV/catalyst gates. See docs/strategies/qqq-manual.md. */
 export default function ManualLevels() {
   const [input, setInput] = useState("");
   const [saved, setSaved] = useState<SavedLevel[] | null>(null);
@@ -88,9 +89,9 @@ export default function ManualLevels() {
       <div>
         <p className="text-sm font-medium">Today&apos;s QQQ levels (manual)</p>
         <p className="text-[11px] text-muted leading-relaxed mt-0.5">
-          One list, comma-separated — used across all charts while monitoring. Levels below the current price become
-          CALL setups (support), above become PUT setups (resistance). Levels carry forward day to day; saving replaces
-          today&apos;s list.
+          One list, comma-separated — watched from the 9:30 open. The FIRST level QQQ actually touches takes the day&apos;s
+          single trade; CALL or PUT is decided at that moment by how price approached it, not now. Levels carry forward
+          day to day; saving replaces today&apos;s list.
         </p>
         {!fresh && saved && saved.length > 0 && (
           <p className="text-[11px] text-accent mt-1">Showing your last saved list — it carries forward at the open unless you update it.</p>
@@ -150,10 +151,7 @@ export default function ManualLevels() {
           {saved.map((l) => (
             <div key={l.id} className="flex items-center justify-between text-xs num">
               <span>
-                {l.level}{" "}
-                <span className={l.direction === "call" ? "text-up" : "text-down"}>
-                  ({l.direction === "call" ? "CALL" : "PUT"})
-                </span>
+                {l.level} <span className="text-muted">(CALL or PUT — decided at the touch)</span>
               </span>
               {l.distancePct != null && <span className="text-muted">{l.distancePct.toFixed(2)}% away</span>}
             </div>
@@ -162,10 +160,10 @@ export default function ManualLevels() {
       )}
 
       <p className="text-[11px] text-muted leading-relaxed">
-        Vega enters 10 same-day contracts (~$0.30) the moment a level is touched — if the level&apos;s historical hit
-        rate clears 60% and the contract&apos;s expected value beats the spread and time decay. It trims 3 at +50%, 6
-        at +100%, ratchets the stop up as the trade works (−30% → −10% → breakeven), and rides 1 runner toward the next
-        level. Everything flattens before the close.
+        Mechanical: the first level touched from the open takes ONE trade for the session. Price coming DOWN into the
+        level buys CALLs, coming UP into it buys PUTs (from the last completed 15-minute bar). Exactly 5 same-day
+        contracts priced $0.30–0.35 — if none is available, the trade is skipped and the reason logged. Stop −25%; sell
+        2 at +50% (stop → breakeven), 1 at +75% (stop → +25%), the last 2 at +100%. Flat before the close.
       </p>
     </div>
   );
