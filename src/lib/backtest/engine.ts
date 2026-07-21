@@ -408,6 +408,10 @@ export async function replaySignals(cfg: Stage1RunConfig): Promise<ReplayResult>
       requireClearRunway: profile.requireClearRunway !== false,
       setupKind: profile.setupKind ?? "tap",
       entryKind: profile.entryKind ?? "tap",
+      // Contract + exit config change Stage 2 results (e.g. the 8%-OTM cap) — they
+      // must move the config hash so two runs with different rules never collide.
+      contract: profile.contract,
+      exit: profile.exit,
     },
     barsFeed: "iex",
   };
