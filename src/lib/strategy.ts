@@ -43,6 +43,13 @@ export interface ZoneSetup {
   sessions_since_flip?: number;
   empty_space_pct?: number | null;
   space_consumed_pct?: number | null;
+  // SB 15M (owner 2026-07-21): the live tap needs the WHOLE zone picture, not just
+  // this setup's zone — "empty space" means the candle sits outside EVERY active
+  // zone, and the entry level must be the FIRST boundary in the direction of travel.
+  // htf_atr is the same ATR the zones were built from (HTF ATR length 50), used for
+  // the touch tolerance (0.05-0.10 ATR).
+  active_zones?: { bottom: number; top: number }[];
+  htf_atr?: number;
 }
 
 export interface StrategyOptions {
@@ -63,7 +70,7 @@ const overlaps = (bar: Bar, bottom: number, top: number): boolean => bar.h >= bo
  *  then nearest within proximity). Single-ticker profiles (QQQ) watch several
  *  levels per timeframe instead of just the closest one. */
 export function buildZoneSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS, limit = 1): ZoneSetup[] {
-  const { zones, lastBar } = computeZones(bars, opts.zone);
+  const { zones, active, atr, lastBar } = computeZones(bars, opts.zone);
   const price = lastBar.c;
   const empty: ZoneSetup = {
     active_zone: null,
@@ -151,6 +158,16 @@ export function buildZoneSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STR
       distance_to_edge_pct: Math.round(target.distPct * 100) / 100,
       setup_valid: target.tapped && clearRunway,
       price,
+      // Carried for SB 15M's live empty-space + first-boundary checks (harmless
+      // extra jsonb for the other profiles). "Active" = untapped zones, i.e. what
+      // the indicator still draws, plus this setup's own zone.
+      active_zones: [
+        { bottom: target.zone.bottom, top: target.zone.top },
+        ...active
+          .filter((z) => z !== target.zone)
+          .map((z) => ({ bottom: z.bottom, top: z.top })),
+      ],
+      htf_atr: Math.round(atr * 10000) / 10000,
     };
   };
 

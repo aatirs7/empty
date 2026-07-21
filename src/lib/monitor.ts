@@ -151,51 +151,72 @@ const FLIP_TAP_BAND = 0.004; // 0.4%
 const LEVEL_PRECHECK_BAND = 0.005;
 
 // SB 15M (empty-space zone tap) — precheck band around the FACING boundary; the real
-// entry test is `emptySpaceTap` below (touch + penetration + acceptance + feed age).
+// entry test is `emptySpaceTap` below (empty space + first boundary + ATR tolerance).
 const TAP_PRECHECK_BAND = 0.004;
-// How far price may reach past the boundary and still count as "touches or slightly
-// penetrates" rather than "already deep inside the zone" / "gapped through": a
-// quarter of the zone's own height, with a floor so a razor-thin zone is still
-// tradable and a ceiling so a huge zone doesn't allow a deep entry.
-const MAX_PENETRATION_ZONE_FRAC = 0.25;
-const MIN_PENETRATION_PCT = 0.0006; // 0.06% of price
-const MAX_PENETRATION_PCT = 0.004; // 0.4% of price
-// A touch must be a real reach of the level, not "close enough" — this is only the
-// tolerance for minute-granularity quotes.
-const TOUCH_TOLERANCE_PCT = 0.0004; // 0.04% of price
+// Touch tolerance, owner 2026-07-21: "enter only if the touch occurs within
+// 0.05-0.10 ATR of the boundary". The ATR is the one the zones were built from (HTF
+// ATR length 50 on 4H), carried on the setup. Symmetric: price must be at the level,
+// not merely heading toward it, and not already driven deep past it.
+const TOUCH_ATR_TOLERANCE = 0.1;
+// Fallback when a candidate predates the stored ATR (old scan row): 0.1% of price.
+const TOUCH_FALLBACK_PCT = 0.001;
 // The 15-minute feed must be current: the newest bar (forming included) can't be
 // older than this or we're trading a delayed quote.
 const MAX_FEED_AGE_MS = 20 * 60_000;
 
-/** SB 15M entry test (Farrukh spec, "message (5).txt"): price approaching through
- *  EMPTY SPACE touches the boundary FACING it — call = the TOP of a zone below,
- *  put = the BOTTOM of a zone above. Rejects the spec's do-not-enter cases: gapping
- *  clean through the level, already deep inside the zone, price having ACCEPTED
- *  through the zone, and a delayed data feed. */
-type TapVerdict = { ok: true; boundary: number; penetration: number; barTime: string } | { ok: false; reason: string | null };
+/** SB 15M entry test (Farrukh spec `message (5).txt` + the owner's 2026-07-21
+ *  refinement). All of these must hold:
+ *   1. EMPTY SPACE — the last COMPLETED 15-minute candle is ENTIRELY outside every
+ *      active 4H zone (high and low both clear). The forming candle is the one doing
+ *      the touching, so the candle before it is what proves price was travelling in
+ *      empty space. This also excludes delayed entries: if the previous candle had
+ *      already reached the zone, the reaction has happened and we are chasing.
+ *   2. FIRST boundary in the direction of travel — no other active zone sits between
+ *      price and this boundary, so this is the only valid entry level.
+ *   3. TOUCH within 0.1 ATR of the boundary (either side), i.e. price is AT the
+ *      level: not still approaching, not gapped clean through, not deep inside.
+ *   4. A live feed (newest 15-minute bar < 20 minutes old). */
+type TapVerdict =
+  | { ok: true; boundary: number; penetration: number; tolerance: number; barTime: string }
+  | { ok: false; reason: string | null };
 async function emptySpaceTap(
   symbol: string,
   direction: "call" | "put",
   zone: { bottom: number; top: number },
   cur: number,
+  setup: { active_zones?: { bottom: number; top: number }[]; htf_atr?: number } | null,
 ): Promise<TapVerdict> {
   const boundary = direction === "call" ? zone.top : zone.bottom;
   if (!(boundary > 0)) return { ok: false, reason: null };
-  const tol = cur * TOUCH_TOLERANCE_PCT;
+
+  // 3. Touch tolerance (checked first — it is the cheapest and rejects most ticks).
+  const atr = setup?.htf_atr;
+  const tol = atr && atr > 0 ? atr * TOUCH_ATR_TOLERANCE : cur * TOUCH_FALLBACK_PCT;
   // Signed distance INTO the zone (negative = price hasn't reached the level yet).
   const penetration = direction === "call" ? boundary - cur : cur - boundary;
-  if (penetration < -tol) return { ok: false, reason: null }; // not touched yet — stay on the watchlist
-  const height = Math.max(0, zone.top - zone.bottom);
-  const maxPen = Math.min(
-    Math.max(height * MAX_PENETRATION_ZONE_FRAC, cur * MIN_PENETRATION_PCT),
-    cur * MAX_PENETRATION_PCT,
-  );
-  if (penetration > maxPen) {
-    return { ok: false, reason: `price ${cur} is ${penetration.toFixed(2)} past the ${boundary} boundary (max ${maxPen.toFixed(2)}) — gapped through or already deep inside the zone` };
+  if (penetration < -tol) return { ok: false, reason: null }; // still approaching — keep watching
+  if (penetration > tol) {
+    return {
+      ok: false,
+      reason: `price ${cur} is ${penetration.toFixed(2)} past the ${boundary} boundary (tolerance ${tol.toFixed(2)} = 0.1 ATR) — gapped through, deep inside, or a late chase`,
+    };
   }
-  // Feed age + acceptance-through check, both off the 15-minute chart the profile
-  // trades. A completed bar that CLOSED beyond the far side of the zone means price
-  // accepted through it — the level is no longer a rejection level.
+
+  // 2. This boundary must be the FIRST one price reaches in its direction of travel.
+  const zones = setup?.active_zones?.length ? setup.active_zones : [zone];
+  const isOwn = (z: { bottom: number; top: number }) => z.bottom === zone.bottom && z.top === zone.top;
+  const nearer = zones.find((z) =>
+    isOwn(z)
+      ? false
+      : direction === "call"
+        ? z.top < cur + tol && z.top > boundary // a zone between price (above) and this top
+        : z.bottom > cur - tol && z.bottom < boundary, // a zone between price (below) and this bottom
+  );
+  if (nearer) {
+    return { ok: false, reason: `not the first boundary in the direction of travel — zone ${nearer.bottom}-${nearer.top} comes first` };
+  }
+
+  // 1 + 4. Empty-space validity and feed age, off the 15-minute chart it trades.
   let bars: Bar[] = [];
   try {
     bars = await getIntradayBars(symbol, "15Min", 3 * 24 * 60);
@@ -208,10 +229,15 @@ async function emptySpaceTap(
   }
   const completed = bars.filter((b) => Date.parse(b.t) + 15 * 60_000 <= Date.now());
   const last = completed[completed.length - 1];
-  if (last && ((direction === "call" && last.c < zone.bottom) || (direction === "put" && last.c > zone.top))) {
-    return { ok: false, reason: `last completed 15m bar closed ${last.c}, through the zone ${zone.bottom}-${zone.top} — price has accepted through` };
+  if (!last) return { ok: false, reason: "no completed 15-minute candle yet" };
+  const inside = zones.find((z) => last.h >= z.bottom && last.l <= z.top); // any overlap at all
+  if (inside) {
+    return {
+      ok: false,
+      reason: `empty space invalid — the last completed 15m candle (${last.l}-${last.h}) overlaps zone ${inside.bottom}-${inside.top}`,
+    };
   }
-  return { ok: true, boundary, penetration, barTime: newest.t };
+  return { ok: true, boundary, penetration, tolerance: tol, barTime: newest.t };
 }
 
 /** QQQ Manual, owner 2026-07-21. The prior COMPLETED 15-minute bar decides BOTH
@@ -1069,7 +1095,7 @@ export async function monitorTick(): Promise<Fire[]> {
       // do-not-enter cases (gap-through / deep inside / accepted through / stale feed).
       if (tappedSet.has(c.id)) continue; // already fired today (no re-entry without a new setup)
       if (!inEntryWindow(profile)) continue; // 9:45am-2:45pm ET
-      const tap = await emptySpaceTap(c.symbol, direction, z, cur);
+      const tap = await emptySpaceTap(c.symbol, direction, z, cur, c.setup as { active_zones?: { bottom: number; top: number }[]; htf_atr?: number } | null);
       if (!tap.ok) {
         // reason null = simply not at the level yet (not worth a log row).
         if (tap.reason) fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — ${tap.reason}` });
@@ -1086,8 +1112,8 @@ export async function monitorTick(): Promise<Fire[]> {
           direction,
           price: cur,
           candidateId: c.id,
-          detail: `tapped the ${direction === "call" ? "top" : "bottom"} boundary ${tap.boundary} from ${c.approach?.replace("_", " ") ?? (direction === "call" ? "above" : "below")} at ${cur}`,
-          meta: { boundary: tap.boundary, penetration: Math.round(tap.penetration * 100) / 100, approach: c.approach, direction, price: cur, zone: z },
+          detail: `tapped the ${direction === "call" ? "top" : "bottom"} boundary ${tap.boundary} from ${direction === "call" ? "above" : "below"} at ${cur} (within ${tap.tolerance.toFixed(2)} = 0.1 ATR; prior 15m candle fully in empty space)`,
+          meta: { boundary: tap.boundary, penetration: Math.round(tap.penetration * 100) / 100, tolerance: Math.round(tap.tolerance * 100) / 100, approach: c.approach, direction, price: cur, zone: z },
         },
       ]);
       emptySpaceEntry = { boundary: tap.boundary, penetration: tap.penetration };

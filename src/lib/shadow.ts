@@ -17,6 +17,9 @@ import { activeProfiles, type Profile } from "./profiles";
 
 /** Shadow exit rule per track (measurement; distinct from the live exit). */
 function shadowExit(profileId: string): { tp: number; sl: number } {
+  // SB 15M's live plan is +100% / -20% (2026-07-21 spec) — mirror it so the shadow
+  // track measures the strategy that actually runs.
+  if (profileId === "sb15m") return { tp: 1.0, sl: -0.2 };
   return profileId === "qqq_0dte" || profileId === "qqq_manual" ? { tp: 0.6, sl: -0.4 } : { tp: 0.5, sl: -0.4 };
 }
 

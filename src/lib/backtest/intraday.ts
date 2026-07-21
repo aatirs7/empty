@@ -434,31 +434,46 @@ export async function runIntraday(cfg: IntradayRunConfig): Promise<IntradayResul
           const zoneKey = `${sym}|${z.bottom.toFixed(4)}|${z.top.toFixed(4)}|${direction}`;
           if (seenToday.has(zoneKey)) continue;
 
-          // ---- THE ENTRY (2026-07-21 spec): the TAP of the boundary facing price.
-          // No confirmation candle, no structure read, no score, no model — the
-          // live monitor's `emptySpaceTap` rules, evaluated per completed candle:
-          //   * the candle must have COME FROM empty space (opened outside the zone
-          //     on the facing side), and
-          //   * its excursion must have REACHED the boundary but not run deep inside
-          //     it (gap-through / already-accepted cases are skipped), and
-          //   * the previous completed candle must not have closed through the zone.
+          // ---- THE ENTRY (2026-07-21 spec + the owner's refinement): the TAP of the
+          // first boundary facing price, approached through empty space. Mirrors the
+          // live `emptySpaceTap`, evaluated per completed 15-minute candle:
+          //   1. the PREVIOUS completed candle must sit ENTIRELY outside every active
+          //      zone (that is what "in empty space" means, and it also rules out a
+          //      delayed entry after price already reacted at the level);
+          //   2. this must be the FIRST boundary in the direction of travel;
+          //   3. this candle must have REACHED the boundary within 0.1 ATR without
+          //      opening beyond it (a gap clean through the level);
+          // No confirmation candle, no structure read, no score, no model.
           const cur = b.c;
           const boundary = direction === "call" ? z.top : z.bottom;
-          const fromEmptySpace = direction === "call" ? b.o > boundary : b.o < boundary;
-          if (!fromEmptySpace) continue;
-          const excursion = direction === "call" ? boundary - b.l : b.h - boundary;
-          if (excursion < 0) continue; // never reached the level in this candle
-          const height = Math.max(0, z.top - z.bottom);
-          const maxPen = Math.min(Math.max(height * 0.25, boundary * 0.0006), boundary * 0.004);
-          if (excursion > maxPen) {
-            skip("gapped_through_or_deep_inside");
-            continue;
-          }
+          const zonesActive = setup.active_zones?.length ? setup.active_zones : [z];
+          const tol = setup.htf_atr && setup.htf_atr > 0 ? setup.htf_atr * 0.1 : boundary * 0.001;
+
           const prevBar = bi > 0 ? dayBars[bi - 1] : undefined;
-          if (prevBar && ((direction === "call" && prevBar.c < z.bottom) || (direction === "put" && prevBar.c > z.top))) {
-            skip("price_accepted_through_zone");
+          if (!prevBar) continue; // no prior candle to establish empty space
+          const overlapped = zonesActive.find((az) => prevBar.h >= az.bottom && prevBar.l <= az.top);
+          if (overlapped) {
+            skip("empty_space_invalid");
             continue;
           }
+          const nearer = zonesActive.find((az) =>
+            az.bottom === z.bottom && az.top === z.top
+              ? false
+              : direction === "call"
+                ? az.top < prevBar.c + tol && az.top > boundary
+                : az.bottom > prevBar.c - tol && az.bottom < boundary,
+          );
+          if (nearer) {
+            skip("not_first_boundary");
+            continue;
+          }
+          const gapped = direction === "call" ? b.o < boundary - tol : b.o > boundary + tol;
+          if (gapped) {
+            skip("gapped_through");
+            continue;
+          }
+          const excursion = direction === "call" ? boundary - b.l : b.h - boundary;
+          if (excursion < -tol) continue; // never reached the level in this candle
           // Playbook score + reaction-DB prediction are still computed, but PURELY as
           // MEASUREMENT (report groupings / target for the underlying outcome) — they
           // gate nothing, exactly like the live path.
@@ -501,10 +516,10 @@ export async function runIntraday(cfg: IntradayRunConfig): Promise<IntradayResul
             gates: {
               scan: "replayed_4h_completed_bars",
               entry_window: "replayed",
-              empty_space: "replayed_clear_runway",
-              boundary_tap: "replayed_per_completed_15m_candle",
+              empty_space: "replayed_clear_runway + prior_candle_outside_all_active_zones",
+              boundary_tap: "replayed_per_completed_15m_candle_within_0.1_atr",
+              first_boundary_only: "replayed",
               gap_through_guard: "replayed",
-              acceptance_guard: "replayed",
               confirmation: "none_in_strategy",
               score_gate: "none_in_strategy",
               sniper_engine: "none_in_strategy",
