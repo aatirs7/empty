@@ -231,7 +231,7 @@ async function IntradayView({ runId, run }: { runId: number; run: { profileId: s
           </p>
           <p className="text-muted">avg win {usd(s.avgWinUsd)} vs avg loss {usd(s.avgLossUsd)}</p>
           <p>
-            Target 1 (+50%) hit {s.t1RatePct ?? "—"}% · Target 2 (+75%) hit {s.t2RatePct ?? "—"}% · breakeven exit after T1 {s.breakevenAfterT1Pct ?? "—"}% · stopped out {s.stopRatePct ?? "—"}%
+            Reached +40% (breakeven armed) {s.t1RatePct ?? "—"}% · reached the +100% target {s.t2RatePct ?? "—"}% · exited at breakeven after arming {s.breakevenAfterT1Pct ?? "—"}% · stopped out {s.stopRatePct ?? "—"}%
           </p>
           <p className="text-[11px] text-muted">skips: {Object.entries(r.skips).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}</p>
         </div>

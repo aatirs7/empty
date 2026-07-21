@@ -22,9 +22,7 @@ import { getMultiStockBars, getIntradayBars, getOptionBars, type Bar, type Optio
 import { getProfile } from "../profiles";
 import { buildZoneSetups, type ZoneSetup } from "../strategy";
 import { classifyAndScore } from "../playbook";
-import { evaluateSniper, indexTrend, type MarketContext } from "../sniper";
-import { evaluateConfirmation } from "../confirm";
-import { classifyStructure } from "../intel";
+import { indexTrend, type MarketContext } from "../sniper";
 import { predict } from "../predict";
 import { loadUniverse } from "../scanner";
 import { tradingDaysFromBars, barDate } from "./clock";
@@ -36,7 +34,6 @@ import { DEFAULT_SPREAD, type SpreadConfig, askOf, bidOf, strikeGrid, occSymbol,
 const MIN_15M = 15 * 60_000;
 const MIN_4H = 4 * 60 * 60_000;
 const DAY_MS = 86_400_000;
-const STRUCT_EXEC_OVERRIDE = 60; // opposed 15m structure passes only with exec >= this (mirrors monitor)
 const EOD_FLATTEN_ET_MIN = 15 * 60 + 35; // ~25 min before the close, like live nearClose
 
 export interface IntradayRunConfig {
@@ -130,23 +127,28 @@ async function loadIntraday(symbols: string[], from: string, to: string): Promis
 }
 
 // ---------------------------------------------------------------------------
-// The two-contract ladder simulated against REAL 15m option bars. Pure —
-// exported for the self-test. Conservative within-bar ordering: the stop is
-// checked before the profit targets (order inside a bar is unknowable);
-// close-based events (15m invalidation) resolve at the bar END, after both.
+// The profile's ladder simulated against REAL 15m option bars. Pure — exported
+// for the self-test. Conservative within-bar ordering: the stop is checked
+// before the profit targets (order inside a bar is unknowable); close-based
+// events (optional 15m invalidation) resolve at the bar END, after both.
+// SB 15M (2026-07-21 spec) runs ONE contract: rung 1 is a stop RATCHET at +40%
+// with no sell (trim1Qty 0), and the whole contract exits at +100%.
 // ---------------------------------------------------------------------------
 export interface LadderSimInput {
   entryAsk: number;
-  qty: number; // contracts filled (2 planned)
+  qty: number; // contracts filled
   direction: "call" | "put";
   zone: { bottom: number; top: number };
   entryMs: number; // fill moment — only bars AFTER this simulate
   optionBars: OptionBar[]; // the contract's real 15m bars (entry day)
   underlying15: Bar[]; // the day's underlying 15m bars
   spread: SpreadConfig;
-  stopLoss: number; // -0.2
-  trim1Pct: number; // 0.5 (sell 1, stop -> breakeven)
-  runnerTakeProfit: number; // 0.75
+  stopLoss: number; // -0.2 (original stop, off the fill)
+  trim1Pct: number; // rung 1 level (SB 15M: +0.4 — ratchet only)
+  trim1Qty?: number; // contracts sold at rung 1 (SB 15M: 0 => hold, just ratchet)
+  stopAfterTrim1?: number; // stop once rung 1 prints (default 0 = breakeven)
+  runnerTakeProfit: number; // final target (SB 15M: +1.0, sells everything)
+  invalidate15m?: boolean; // close through the zone exits (NOT in the SB 15M spec)
 }
 export interface LadderSimResult {
   sells: { qty: number; price: number; reason: string; atMs: number }[];
@@ -198,22 +200,29 @@ export function simulateLadder(inp: LadderSimInput): LadderSimResult {
       sell(qty, fill, stop === 0 ? "breakeven_stop" : `stop_${Math.round(stop * 100)}%`, barEnd);
       break;
     }
-    // 2. Trim 1: sell one contract at +trim1Pct; stop ratchets STRAIGHT to breakeven.
-    if (!t1Hit && qty > 1 && bidOf(ob.h, spread) >= inp.entryAsk * (1 + inp.trim1Pct)) {
+    // 2. Rung 1: the stop ratchets (never loosens) the moment +trim1Pct prints;
+    //    a contract is sold only if the rung actually has a sell size. SB 15M's
+    //    +40% rung is a ratchet ONLY — the spec is explicit that it is not a
+    //    profit-take.
+    const trim1Qty = inp.trim1Qty ?? 1;
+    if (!t1Hit && bidOf(ob.h, spread) >= inp.entryAsk * (1 + inp.trim1Pct)) {
       t1Hit = true;
-      stop = 0;
-      sell(1, inp.entryAsk * (1 + inp.trim1Pct), "trim1_+50%", barEnd);
+      stop = inp.stopAfterTrim1 ?? 0;
+      if (trim1Qty > 0 && qty > trim1Qty) {
+        sell(trim1Qty, inp.entryAsk * (1 + inp.trim1Pct), `trim1_+${Math.round(inp.trim1Pct * 100)}%`, barEnd);
+      }
     }
-    // 3. Runner target: the last contract at +runnerTakeProfit (same bar allowed —
+    // 3. Final target: everything still open at +runnerTakeProfit (same bar allowed —
     //    a bar spanning both levels realistically fills both).
-    if (qty > 0 && (t1Hit || qty === 1) && bidOf(ob.h, spread) >= inp.entryAsk * (1 + inp.runnerTakeProfit)) {
+    if (qty > 0 && bidOf(ob.h, spread) >= inp.entryAsk * (1 + inp.runnerTakeProfit)) {
       t2Hit = true;
-      sell(qty, inp.entryAsk * (1 + inp.runnerTakeProfit), "runner_+75%", barEnd);
+      sell(qty, inp.entryAsk * (1 + inp.runnerTakeProfit), `target_+${Math.round(inp.runnerTakeProfit * 100)}%`, barEnd);
       break;
     }
-    // 4. Structural invalidation at the bar END: the COMPLETED underlying 15m
-    //    candle closed through the zone against the trade.
-    const ub = under.get(ob.t);
+    // 4. Optional structural invalidation at the bar END: the COMPLETED underlying
+    //    15m candle closed through the zone against the trade. OFF for SB 15M —
+    //    its spec's only exits are the stop, breakeven, +100% and the close.
+    const ub = inp.invalidate15m ? under.get(ob.t) : undefined;
     if (qty > 0 && ub && ((inp.direction === "call" && ub.c < inp.zone.bottom) || (inp.direction === "put" && ub.c > inp.zone.top))) {
       sell(qty, bidOf(ob.c, spread), "15m_invalidation", barEnd);
       break;
@@ -361,10 +370,9 @@ export async function runIntraday(cfg: IntradayRunConfig): Promise<IntradayResul
     seed: cfg.seed ?? "",
     constants: {
       entryWindowEt: profile.entryWindowEt,
-      structExecOverride: STRUCT_EXEC_OVERRIDE,
       eodFlattenEtMin: EOD_FLATTEN_ET_MIN,
-      minScore: profile.minScore,
-      ladder: { stopLoss: profile.exit.stopLoss, trim1Pct: L.trim1Pct, runnerTakeProfit: L.runnerTakeProfit ?? 0.75 },
+      entry: "empty_space_boundary_tap",
+      ladder: { stopLoss: profile.exit.stopLoss, rungs: L.rungs, runnerTakeProfit: L.runnerTakeProfit ?? 1.0 },
       caps: { maxPerDay: profile.caps.maxTradesPerDay ?? 3, maxOpen: profile.caps.maxOpenPositions, budget: profile.caps.perTradeBudget, maxContracts: profile.caps.maxContracts },
       contract: profile.contract,
       spread,
@@ -426,36 +434,42 @@ export async function runIntraday(cfg: IntradayRunConfig): Promise<IntradayResul
           const zoneKey = `${sym}|${z.bottom.toFixed(4)}|${z.top.toFixed(4)}|${direction}`;
           if (seenToday.has(zoneKey)) continue;
 
+          // ---- THE ENTRY (2026-07-21 spec): the TAP of the boundary facing price.
+          // No confirmation candle, no structure read, no score, no model — the
+          // live monitor's `emptySpaceTap` rules, evaluated per completed candle:
+          //   * the candle must have COME FROM empty space (opened outside the zone
+          //     on the facing side), and
+          //   * its excursion must have REACHED the boundary but not run deep inside
+          //     it (gap-through / already-accepted cases are skipped), and
+          //   * the previous completed candle must not have closed through the zone.
           const cur = b.c;
-          if (!(cur >= z.bottom * 0.99 && cur <= z.top * 1.01)) continue; // at the boundary
-
-          const c15 = data.completed15(sym, T);
-          const conf = evaluateConfirmation(c15, direction, z, profile.confirmation.minRelVolume);
-          if (!conf.confirmed) continue;
-          const structure = classifyStructure(c15);
-          const opposed = (direction === "call" && structure === "bearish") || (direction === "put" && structure === "bullish");
-          if (opposed && conf.executionScore < STRUCT_EXEC_OVERRIDE) {
-            skip("structure_opposed");
+          const boundary = direction === "call" ? z.top : z.bottom;
+          const fromEmptySpace = direction === "call" ? b.o > boundary : b.o < boundary;
+          if (!fromEmptySpace) continue;
+          const excursion = direction === "call" ? boundary - b.l : b.h - boundary;
+          if (excursion < 0) continue; // never reached the level in this candle
+          const height = Math.max(0, z.top - z.bottom);
+          const maxPen = Math.min(Math.max(height * 0.25, boundary * 0.0006), boundary * 0.004);
+          if (excursion > maxPen) {
+            skip("gapped_through_or_deep_inside");
             continue;
           }
+          const prevBar = bi > 0 ? dayBars[bi - 1] : undefined;
+          if (prevBar && ((direction === "call" && prevBar.c < z.bottom) || (direction === "put" && prevBar.c > z.top))) {
+            skip("price_accepted_through_zone");
+            continue;
+          }
+          // Playbook score + reaction-DB prediction are still computed, but PURELY as
+          // MEASUREMENT (report groupings / target for the underlying outcome) — they
+          // gate nothing, exactly like the live path.
           let pb: ReturnType<typeof classifyAndScore>;
           try {
             pb = classifyAndScore(daily400, z, direction, cur);
           } catch {
             continue;
           }
-          if (pb.score < profile.minScore) {
-            skip("score_below_min");
-            continue;
-          }
           const marketAlign = ((marketCtx.spy + marketCtx.qqq) / 2) * (direction === "call" ? 1 : -1);
           const pred = await predict(sym, cur, "4h", direction, setup.approach ?? "", marketAlign, new Date(T));
-          const ev = evaluateSniper(pb, daily400, direction, conf.executionScore, setup.clear_runway, marketCtx, pred, true);
-          if (!ev.passed) {
-            skip("sniper_rejected");
-            continue;
-          }
-          // catalyst gate: stubbed fail-open (labeled)
 
           seenToday.add(zoneKey);
           const next = dayBars[bi + 1];
@@ -480,19 +494,22 @@ export async function runIntraday(cfg: IntradayRunConfig): Promise<IntradayResul
             gapThrough: false,
             statedTarget: pred.targetMain ?? pb.safeTarget,
             statedProbability: pred.probability,
-            statedConfidence: ev.overall,
+            statedConfidence: pb.score, // no confidence engine in this profile — the score is descriptive only
             statedSampleSize: pred.sampleSize,
             statedHoldBars: pred.expectedHoldBars,
             predictionBucket: null,
             gates: {
               scan: "replayed_4h_completed_bars",
               entry_window: "replayed",
-              confirmation: "replayed_completed_15m",
-              structure: "replayed",
-              score_gate: "replayed",
-              prediction: "replayed_asof",
-              sniper_engine: "replayed",
-              catalyst: "stubbed_open",
+              empty_space: "replayed_clear_runway",
+              boundary_tap: "replayed_per_completed_15m_candle",
+              gap_through_guard: "replayed",
+              acceptance_guard: "replayed",
+              confirmation: "none_in_strategy",
+              score_gate: "none_in_strategy",
+              sniper_engine: "none_in_strategy",
+              catalyst: "none_in_strategy",
+              prediction: "measurement_only_asof",
             },
             wouldTradeLive: true, // provisional — the portfolio sim decides
             outcome,
@@ -529,6 +546,7 @@ export async function runIntraday(cfg: IntradayRunConfig): Promise<IntradayResul
           const chosen = priced.reduce((best, x) => (Math.abs(x.ask - profile.contract.priceIdeal) < Math.abs(best.ask - profile.contract.priceIdeal) ? x : best));
           const qty = Math.max(1, Math.min(profile.caps.maxContracts, Math.floor(profile.caps.perTradeBudget / (chosen.ask * 100))));
 
+          const rung1 = L.rungs?.[0];
           const sim = simulateLadder({
             entryAsk: chosen.ask,
             qty,
@@ -539,8 +557,11 @@ export async function runIntraday(cfg: IntradayRunConfig): Promise<IntradayResul
             underlying15: dayBars,
             spread,
             stopLoss: profile.exit.stopLoss,
-            trim1Pct: L.trim1Pct,
-            runnerTakeProfit: L.runnerTakeProfit ?? 0.75,
+            trim1Pct: rung1?.atPct ?? L.trim1Pct,
+            trim1Qty: rung1 ? rung1.sellQty : L.trim1Qty,
+            stopAfterTrim1: rung1?.stopTo ?? L.stopAfterTrim1,
+            runnerTakeProfit: L.runnerTakeProfit ?? 1.0,
+            invalidate15m: profile.exit.invalidateOn15mClose === true,
           });
           const align = marketAlign > 0.1 ? "aligned" : marketAlign < -0.1 ? "opposed" : "neutral";
           trades.push({
@@ -583,7 +604,8 @@ export async function runIntraday(cfg: IntradayRunConfig): Promise<IntradayResul
       skips,
       byTicker: groupStats(trades, (t) => t.symbol),
       byHourEt: groupStats(trades, (t) => `${t.entryHourEt}:00`),
-      byScore: groupStats(trades, (t) => (t.score >= 90 ? "90+" : t.score >= 80 ? "80-89" : "75-79")),
+      // Descriptive only — the strategy has no score gate, so the full range appears.
+      byScore: groupStats(trades, (t) => (t.score >= 90 ? "90+" : t.score >= 75 ? "75-89" : t.score >= 60 ? "60-74" : "<60")),
       byDirection: groupStats(trades, (t) => t.direction),
       byAlignment: groupStats(trades, (t) => t.marketAligned),
       byExitReason: groupStats(trades, (t) => t.exitReason),

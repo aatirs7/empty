@@ -1,10 +1,13 @@
-# SBv2 — Order-Block Flip + First Retest (`sbv2`)
+# SBv2 — 4H Empty-Space Breakout & Retest (`sbv2`)
 
 > **LIVING DOC — update on every strategy change** (same rule as WhatsNew/HANDOFF).
 > This file states exactly how the strategy is configured IN CODE. Source of truth:
-> `src/lib/profiles.ts` (SBV2), `src/lib/flips.ts`, `src/lib/strategy.ts`
-> (buildFlipSetups), `src/lib/monitor.ts`, `src/lib/intel.ts`, `src/lib/vet-flips.ts`,
-> `src/lib/resolve.ts`, `src/lib/execute.ts`. Spec: `sniperbot-daily-swing-v2.md`.
+> `src/lib/profiles.ts` (SBV2), `src/lib/breakout.ts` (detectBreakouts),
+> `src/lib/strategy.ts` (buildBreakoutSetups), `src/lib/scanner.ts`,
+> `src/lib/monitor.ts` (touch entry + swing exits), `src/lib/intel.ts` (risk-only),
+> `src/lib/resolve.ts`, `src/lib/execute.ts`. Spec: `message (4).txt` (2026-07-21).
+> **This COMPLETELY REPLACES the daily-flip logic** (retired 2026-07-21; its code
+> stays in `flips.ts` for reference, unused by any active profile).
 > _Last updated: 2026-07-21_
 
 ## Identity
@@ -12,121 +15,116 @@
 | | |
 |---|---|
 | Profile id | `sbv2` (label **SBv2**) |
-| Status | ACTIVE, auto-execute **ON** (owner enabled 2026-07-13) |
+| Status | ACTIVE; auto per the owner's runtime toggle (`npm run profile-auto`) |
 | Account | Own paper account via `ALPACA_API_KEY_ID3` / `ALPACA_API_SECRET_KEY3` |
-| Universe | Same ~129 large/mega-cap names as SBv1 (`profileId = sbv2` rows) |
-| Timeframe | Daily flips, 1–2 day swing |
-| Baseline | SPY; daily report runs an SBv1-vs-SBv2 head-to-head |
+| Universe | Same ~129 large/mega-cap names as SBv1 |
+| Timeframes | DAILY generates the order-block zones; the 4-HOUR chart does everything else |
+| Baseline | SPY; daily report head-to-head vs SBv1 |
 
 ## The idea (plain English)
 
-Farrukh's logic reset, run in PARALLEL with SBv1 (never replacing it). Instead of
-fading a zone tap, SBv2 trades the **role flip**: when price BREAKS a daily order
-block and ACCEPTS through it (a real daily close beyond the whole zone — the
-overnight-gap case counts), the zone flips role. Broke ABOVE ⇒ the zone's TOP
-becomes support ⇒ the FIRST pullback that taps that top is a **call** entry.
-Broke BELOW ⇒ the BOTTOM becomes resistance ⇒ first tap = **put**. Zone bounce =
-liquidity = a fast hard move = premium pump across all contracts — so the entry
-is mechanical and the contract is picked by price, not strike.
+A stock breaks OUT of a major daily order block on the 4-hour chart, into clean
+empty space (the black area before the next zone). The broken boundary should now
+act as the springboard: when price pulls back and touches it the first time, buy
+immediately — no confirmation candle, no news check, no model, no probability.
+The option premium is the whole trade plan: sell everything at +100%, stop at
+−25%, and get out early if a 4-hour candle closes back inside the zone (the
+breakout failed).
 
-## Setup detection (nightly scan, 00:00 ET; flips re-derived fresh from settled daily bars — no state table)
+## Setup detection (nightly scan + hourly re-scan while the market is open)
 
-- Zones: same daily math as SBv1 (ATR-50, displacement 1.7×, full history).
-- **Flip qualification** (`flips.ts detectFlips`): a daily close beyond the ENTIRE
-  zone (acceptance), within the last **2 sessions** (`sessionsSinceFlip ≤ 2`).
-  Dropped (with funnel counts logged): wick-through only (no closing acceptance) ·
-  closed back inside after accepting · **first retest already happened** ·
-  stale (> 2 sessions) · price already ran > **12%** from the boundary.
-- Daily timeframe ONLY qualifies a flip; up to 3 flips watched per symbol.
-- White space is informational for SBv2 (`requireClearRunway: false`) — flip
-  validity + first-retest is the gate.
-- **Nightly news vet** (`/api/vet-flips`, 00:30 ET): ONE Claude Haiku web-search
-  per symbol+direction (shared across flip profiles) — scheduled catalyst AND
-  "fresh material news against/supporting this accepted breakout?" Verdict stored
-  on the candidate (`setup.news`); un-vetted flips **fail open**.
+- **Zones: DAILY only** (ATR-50, displacement 1.7× — spec-fixed). Projected onto
+  the 4h chart; they stay fixed until new daily zones form. No 4h/weekly/intraday
+  zones, no other zone engine.
+- **Breakout qualification** (`breakout.ts`, COMPLETED 4h candles only — the
+  forming candle is always excluded):
+  - A completed 4h candle **closes beyond the zone boundary** (above the top ⇒
+    call side; below the bottom ⇒ put side). A wick poke without an outside close
+    is rejected (`wick_only`).
+  - The qualifying candle is the FIRST bar of the current outside run — later
+    outside candles age the same breakout, they don't restart it.
+  - **Cancelled/retired when** (funnel counts logged per scan): a completed 4h
+    candle closed back inside (`closed_back_inside`) · the first retest already
+    touched the boundary (`already_retested` — one trade per breakout, then it's
+    spent) · older than **6 completed 4h bars** ≈ 2 sessions with no retest
+    (`stale`) · another daily zone within **2%** ahead (`no_empty_space`) · price
+    already traveled **> 60%** of the space to the next zone (`space_consumed`) ·
+    unobstructed but price ran **> 12%** from the boundary (`too_far`).
+  - Stored per candidate: the retest **boundary**, breakout candle time, bars
+    since, empty-space %, consumed %.
+- Verified on real data 2026-07-21: 129 names → 18 valid setups, funnel
+  1102 stale / 411 already-retested / 26 closed-back-inside / 11 no-space /
+  5 consumed / 2 wick-only.
 
-## Entry gates (live monitor, every minute — MECHANICAL by design, in order)
+## Entry (live monitor, every minute — MECHANICAL, in order)
 
-1. **Tap of the flipped boundary:** live price within **0.4%** (`FLIP_TAP_BAND`)
-   of the flipped edge — a real touch, not a two-tick crossing. Once per
-   candidate per day (tap activity dedup). Fires a "checking…" push + audit row.
-2. **Scan freshness:** candidate ≤ 3 days old (flip validity can't change
-   intraday — no re-derivation at fire time; that caused false invalidations).
-3. **Chart readable:** `classifyAndScore` must compute (playbook recorded for
-   display; **NO minimum-score gate** — the reset spec enters on the clean retest).
-4. **NO sniper engine, NO confirmation candle** — deliberately skipped (mechanical).
-5. **News veto** (from the nightly vet): block on `catalyst` (earnings/Fed) or
-   `newsAgainst` (fresh news contradicting the breakout). Fail-open if un-vetted.
-6. **Reaction-DB target must exist** (`predict.targetMain != null`, daily bucket):
-   no historical target = move too small / thin history = no trade.
-7. **Market-intelligence + portfolio-risk layer** (`intel.ts`, 2026-07-20, after
-   the 7/17 −$402 correlated-calls day; REVERT: env `SBV2_INTEL=off`). All bar
-   math + live positions, zero model calls, fails OPEN on data errors. In order:
-   - **Session loss response:** 3 losses today → done for the session; 2 straight
-     losses → only continue if the market is clearly aligned with the trade.
-   - **Market bias filter:** QQQ + SPY classified into 5 levels (day % + VWAP side
-     + 75-min momentum + SMA20 side + 5-day drift). STRONGLY opposed market blocks
-     outright; ordinarily opposed requires relative strength ≥ 1% vs QQQ AND
-     aligned stock structure.
-   - **Stock structure:** 15-min strict fractal swings (HH/HL vs LH/LL with a
-     protected-swing check) must not oppose the trade.
-   - **Exposure caps:** max 2 open same-direction (unless market strongly aligned),
-     max 2 per sector (static universe sector map).
-   Every accept/veto logs a plain-English verdict.
-8. Confidence = the DB hit rate (`pred.probability`). Outcome push follows
-   ("Bought …" or "not entered — why").
+1. **First actual TOUCH of the stored boundary** — call: price at/under the
+   broken top; put: price at/over the broken bottom. NOT a proximity band ("do
+   not trigger simply because price is near the level"). Once per candidate per
+   day (tap-activity dedup); "checking…" push + audit row on the touch.
+2. **Scan freshness:** candidate ≤ 3 days old.
+3. **Live cancel check:** completed 4h candles since the breakout are re-checked
+   at touch time — a close back inside the zone cancels the setup (a 4h candle
+   CAN complete mid-session, unlike the old daily-flip logic).
+4. **Risk layer ONLY** (`evaluateSbv2Intel(..., { riskOnly: true })`, kill switch
+   `SBV2_INTEL=off`): 3 losses today → done for the session · max 2 open
+   same-direction · max 2 per sector. **The market/structure/relative-strength
+   gates are REMOVED from qualification** per spec ("keep account-level
+   protections but do not use them to determine chart direction or trade
+   qualification").
+5. **Then buy immediately.** Removed entirely per spec: confirmation candle ·
+   sniper engine · setup-score gate · QQQ/SPY/sector bias · RS filter · 15-min
+   structure filter · reaction-DB target requirement · nightly news vet /
+   model approval (vet-flips no longer covers sbv2). Execute's live wrong-way
+   check still rejects an entry whose price already crossed through the zone.
 
-## Contract selection (price-first — Farrukh: "don't focus on strike")
+## Contract selection (`resolveContract`, plain price band — no predict/EV anywhere)
 
-`resolveContract` (`resolve.ts`), NOT the EV picker:
-- Expiry: nearest weekly **Friday ≥ 2 days out** (`minDays: 2` — a Thursday tap
-  buys NEXT Friday, never a 1-DTE).
-- Strike window: up to **8% OTM** / 4% ITM. Owner 2026-07-21: *"only take the setup
-  if the contract is no more than 8% OTM."* This is a HARD gate, not a preference —
-  if no liquid $0.45–0.80 contract sits within 8% OTM, the setup is **skipped**
-  (no deeper-OTM fallback). Enforced twice: the `resolveContract` strike window, and
-  an explicit assert in `execute.ts` on the `flip_retest` path. (Was 25% — strike
-  treated as unimportant; expensive names will now skip more often.)
-- Pick the contract whose **ask is closest to $0.60** within **$0.45–$0.80**,
-  requiring a real two-sided market (bid > 0, bid ≥ 0.5 × ask, ask > $0.05).
-- **No reachability requirement** (dropped 2026-07-16) and no horizon-match gate —
-  the bet is the premium pump, not intrinsic value at target.
+- **Weekly** expiry, nearest Friday **≥ 2 days out** (a Thursday retest buys next
+  Friday, never a 1-DTE).
+- Premium **$1.00–$1.50** (ideal $1.20). **No fallback to cheaper lottery
+  contracts** — out-of-band means SKIP, logged and pushed.
+- ATM preferred / slightly OTM acceptable: strike window **4% OTM** / 3% ITM,
+  plus the execute-side OTM assert (no fallback pick can slip a deeper strike).
+- Real two-sided market: bid > 0, bid ≥ 0.7 × ask.
 
 ## Sizing + caps
 
-- **ONE contract** (`maxContracts: 1`), `perTradeBudget` $100.
-- `maxOpenPositions` 10 · **3 trades/day** (added 2026-07-17 after 20 morning
-  entries; "be patient for the top setups").
-- Paper-only assertion on every order.
+- **1 contract** (unchanged — "use the configured SBv2 contract quantity");
+  `perTradeBudget` $160 covers a $1.50 ask.
+- `maxOpenPositions` 10 · 3 trades/day (account protections, kept per spec).
 
-## Exit rules (swing style, per-minute, in priority order)
+## Exit rules (swing style, per-minute, in priority order — PREMIUM rules only)
 
-1. **Premium stop −50%** (`swingStopLoss: -0.5`) — Farrukh: "sell at intended
-   target or 50% stop".
-2. **Swing invalidation:** last completed daily close back through the zone.
-3. **Target:** underlying reaches the persisted reaction-DB target
-   (`predictedTarget` stored in the proposal at entry).
-4. **Catastrophe floor:** bid ≤ **$0.10** AND ≤ 2 days to expiry.
-5. **Expiry salvage:** ≤ 1 day to expiry.
-(No $2 premium ride — SBv2 never had one.)
+1. **+100% take-profit** (`swingTakeProfit: 1.0`): sell the ENTIRE position when
+   the premium doubles. "The option premium target is the exit."
+2. **−25% stop** (`swingStopLoss: -0.25`) off the actual average fill. Never
+   widened, never averaged down.
+3. **4H invalidation** (`invalidateOn4hClose`): a COMPLETED 4-hour candle closing
+   back inside the daily zone exits immediately — before the stop if needed.
+4. Safeties kept (inert in practice — the −25% stop fires first): catastrophe
+   floor $0.10 within 2 days of expiry, expiry salvage.
+- **No reaction-DB targets, no predicted underlying targets** — removed per spec
+  (the underlying-target exit is disabled whenever `swingTakeProfit` is set).
+
+## Logging (per spec)
+
+Setup: zone values + boundary + breakout candle + bars-since + empty-space /
+consumed % (candidate `setup` jsonb) · scan funnel in the scan log & daily
+report · touch rows with price/time · proposal carries the full setup + plain
+explanation · order rows carry contract/expiry/strike/fill/exit/P&L · every
+skip is an activity row with the exact reason (+push when auto is on).
 
 ## Measurement
 
-- Own account / log / P&L / scorecard / shadow track; daily report head-to-head
-  vs SBv1 + SPY benchmark; scan funnel (why flips weren't promoted) in the report.
-- Backtest Stage 1 (Apr–Jul 2026, variant #1): 490 signals, 53.1% hit,
-  **calibration flat** (~52% realized at every stated probability), ≈ random-entry
-  baseline — no timing edge in that (strong-uptrend) window. See `/backtest`.
-- Backtest Stage 2 (same window, real historical option chains + modeled spread):
-  273 fillable trades → **net −$2,009 all-signals / −$1,122 under live caps on a
-  $1,000 account** (win rate ~14%; 202 of 273 trades died at the −50% stop; the
-  58 target hits made +$3,971 but couldn't cover the stops). Edge worsens under
-  wider-spread sensitivity. 217 signals found no $0.45–0.80 contract.
+- Own account / log / P&L / scorecard / shadow track; daily report vs SBv1 + SPY.
+- **Backtesting:** runs #1/#3/#6 on `/backtest` measure the RETIRED flip logic
+  (valid history, wrong strategy) — the CLI refuses new "SBv2" runs so the old
+  engine can't masquerade as the new logic. A 4h-granularity breakout replay is
+  the follow-up if wanted.
 
 ## Change log
 
-- 2026-07-21: contract must be **≤ 8% OTM** (owner) — strike window 25% → 8%, plus an execute-side assert; setups with no in-band contract that close are skipped.
-- 2026-07-20: intel layer added (session-loss response, market bias, structure, exposure caps). Revert: `SBV2_INTEL=off`.
-- 2026-07-17: 3 trades/day cap; price-first contract pick ($0.45–0.80 closest to $0.60, weekly ≥ 2d via `minDays`); pushes name the profile.
-- 2026-07-16: re-size to ONE $0.45–0.80 contract; `requireTargetReachable` dropped; −50% swing stop added.
-- 2026-07-13: launch; entry = tap band (not crossing); news vet moved to nightly scan; catalyst removed from the hot path; false-flip-invalidation + tick-timeout bugs fixed; auto ON.
+- 2026-07-21 (**this rework**): daily-flip logic fully replaced by the 4H empty-space breakout & retest per `message (4).txt`. Entry = first actual touch (band removed); confirmation/news-vet/DB-target/bias/structure/RS/score all removed; intel reduced to risk-only (session losses + exposure caps); contracts $1.00–$1.50 weekly ≥2d, ATM-ish (4% OTM window + execute assert); exits = +100% TP / −25% stop / 4h close-back-inside; scanner fetches daily+4h and logs the breakout funnel; hourly intraday re-scan.
+- 2026-07-21 (earlier): ≤8% OTM cap (superseded by 4% above); backtests of the flip logic: Stage 1 flat calibration ≈ random; Stage 2 −$1,122 (25% window) / −$1,069 (8% cap) under live caps.
+- 2026-07-20: intel layer added (now risk-only). 2026-07-17: 3-trades/day cap; price-first $0.45-0.80 pick (retired). 2026-07-16: 1-contract re-size, −50% stop (retired). 2026-07-13: original flip launch (retired).

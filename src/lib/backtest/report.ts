@@ -379,8 +379,9 @@ export async function buildIntradayReport(runId: number): Promise<IntradayReport
     "One regime: one market environment.",
     "PRICING: real 15-minute historical option bars, but NBBO history is unavailable — the spread is MODELED (visible config).",
     "Within-bar ordering is unknowable at 15m granularity: the stop is checked before the targets (conservative tie rule).",
-    "The catalyst gate was stubbed fail-open — live would have skipped some of these entries around earnings/Fed.",
-    "Fill optimism: entries at next-bar open + vwap-based asks; live fills are worse on fast moves.",
+    "The tap is approximated per COMPLETED 15-minute candle: live fires the instant price touches the boundary, the replay at the end of the candle that touched it.",
+    "Fill optimism: entries at next-bar open + vwap-based asks; live fills are worse on fast moves. Live also enters AT the boundary, which can be better or worse than the next bar's open.",
+    "Playbook score and reaction-DB prediction are recorded for grouping only — this strategy gates on neither, exactly like the live path.",
     "Sample size: state N; small-N cells (per-ticker, per-hour) are directional at best.",
     "Backtest ≠ forward result: this earns paper trading, not funding.",
   ];
@@ -404,7 +405,7 @@ export async function buildIntradayReport(runId: number): Promise<IntradayReport
     skips: (m.intraday.skips ?? {}) as Record<string, number>,
     byTicker: (m.intraday.byTicker ?? []) as GroupStat[],
     byHourEt: (m.intraday.byHourEt ?? []) as GroupStat[],
-    byScore: (m.intraday.byScore ?? []) as GroupStat[],
+    byScore: (m.intraday.byScore ?? []) as GroupStat[], // descriptive only — no score gate in this strategy
     byDirection: (m.intraday.byDirection ?? []) as GroupStat[],
     byAlignment: (m.intraday.byAlignment ?? []) as GroupStat[],
     byExitReason: (m.intraday.byExitReason ?? []) as GroupStat[],
@@ -420,7 +421,7 @@ const money = (x: number | null | undefined) => (x == null ? "—" : `${x < 0 ? 
 function intradayStatsLines(label: string, s: IntradayTradeStats): string[] {
   return [
     `${label}: n=${s.n} · net ${money(s.netPl)} · win ${s.winRate ?? "—"}% · profit factor ${s.profitFactor ?? "—"}`,
-    `  avg win ${money(s.avgWinUsd)} vs avg loss ${money(s.avgLossUsd)} · T1 hit ${s.t1RatePct ?? "—"}% · T2 hit ${s.t2RatePct ?? "—"}% · breakeven-after-T1 ${s.breakevenAfterT1Pct ?? "—"}% · stopped ${s.stopRatePct ?? "—"}%`,
+    `  avg win ${money(s.avgWinUsd)} vs avg loss ${money(s.avgLossUsd)} · reached rung 1 ${s.t1RatePct ?? "—"}% · reached the final target ${s.t2RatePct ?? "—"}% · breakeven exit after rung 1 ${s.breakevenAfterT1Pct ?? "—"}% · stopped ${s.stopRatePct ?? "—"}%`,
   ];
 }
 
@@ -448,7 +449,7 @@ export function renderIntradayReport(r: IntradayReport): string {
   L.push("");
   L.push(...groupLines("BY TIME OF DAY (ET entry hour):", r.byHourEt));
   L.push("");
-  L.push(...groupLines("BY SETUP SCORE:", r.byScore));
+  L.push(...groupLines("BY SETUP SCORE (descriptive — not a gate):", r.byScore));
   L.push("");
   L.push(...groupLines("CALLS vs PUTS:", r.byDirection));
   L.push("");

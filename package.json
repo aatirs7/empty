@@ -23,6 +23,7 @@
     "backtest": "tsx scripts/backtest.ts",
     "backtest:selftest": "tsx scripts/backtest-selftest.ts",
     "ladder:selftest": "tsx scripts/ladder-selftest.ts",
+    "breakout:check": "tsx scripts/breakout-check.ts",
     "arm": "tsx scripts/arm-paper-month.ts",
     "profile-auto": "tsx scripts/profile-auto.ts",
     "monitor": "tsx scripts/monitor.ts",

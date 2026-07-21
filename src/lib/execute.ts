@@ -182,6 +182,9 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
       strikeHint: proposal.strikeHint ?? "ATM",
       expiryHint: proposal.expiryHint ?? "friday",
       contract: profile.contract,
+      // SBv2 breakout (2026-07-21): weekly swing — a Thursday retest must buy NEXT
+      // Friday, never a 1-DTE. Other plain-band profiles (QQQ Manual 0DTE) keep 0.
+      minDays: profile.entryKind === "flip_retest" ? 2 : 0,
     });
   }
   // Owner 2026-07-21 (SBv2): a flip setup is only tradable if the contract is no more

@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-21-v18";
+const VERSION = "2026-07-21-v19";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "SBv2 is now the 4H Empty-Space Breakout & Retest",
+    body: "SBv2's daily-flip logic is fully replaced. The new play: a stock BREAKS OUT of a major daily order block on a completed 4-hour candle, into clean empty space (real room before the next zone). The broken boundary becomes the entry level — the FIRST time price pulls back and actually touches it, SBv2 buys immediately. No confirmation candle, no news check, no probability model, no score, no market bias — those are all gone by design; only the account protections stay (3 losses = done for the day, max 2 same-direction, max 2 per sector). Contracts are weekly $1.00–$1.50, at or near the money — no cheap lottery strikes, no contract in range means skip. The trade plan is pure premium math: sell everything at +100%, stop at −25% off the real fill, and bail early if a 4-hour candle closes back inside the zone (the breakout failed). Each breakout gets exactly one trade. The scan log shows why setups were rejected (stale, already retested, closed back inside, no empty space). Note: the Backtest page's old SBv2 runs measured the RETIRED flip logic — the new logic hasn't been backtested yet.",
+  },
   {
     title: "QQQ Manual is now purely mechanical",
     body: "QQQ Manual follows your levels and nothing else. From the 9:30 open it watches your list, and the FIRST level QQQ actually touches takes the day's single trade — one trade per session, then it ignores the rest. CALL or PUT is decided at the touch, not when you save the levels: if price is coming DOWN into the level it buys calls, coming UP into it, puts (read off the last completed 15-minute bar). A touch now means price really reaches or crosses the level, not \"close enough\". Every filter it used to run — the 60% history floor, the target requirement, the news check, the expected-value math, the score — is gone. It buys exactly 5 same-day contracts priced $0.30–0.35 with enough size to fill all 5; if no such contract exists it skips the trade and logs exactly why. New exit ladder: stop −25%, sell 2 at +50% (stop moves to breakeven), sell 1 at +75% (stop moves to +25%, so a fade back there sells the rest), sell the final 2 at +100%, and everything flattens before the close. Every step — the level, the 15-minute bar it was judged against, the direction, each trim and the current stop — is written to the log. No other strategy changed.",

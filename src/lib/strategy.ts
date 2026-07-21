@@ -19,6 +19,7 @@
 import type { Bar } from "./alpaca";
 import { computeZones, type Zone, type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 import { detectFlipsDetailed, DEFAULT_FLIP_OPTIONS, type FlipRejection } from "./flips";
+import { detectBreakoutsDetailed, DEFAULT_BREAKOUT_OPTIONS, type BreakoutRejection } from "./breakout";
 
 export interface ZoneSetup {
   active_zone: { bottom: number; top: number } | null; // no demand/supply label
@@ -31,12 +32,17 @@ export interface ZoneSetup {
   distance_to_edge_pct: number | null;
   setup_valid: boolean;
   price: number;
-  // Flip fields (SBv2 only; absent/`"tap"` for SBv1 tap setups). When setup_kind is
-  // "flip", tapped_edge/flipped_boundary is the flipped boundary to retest.
-  setup_kind?: "tap" | "flip";
+  // Flip/breakout fields (absent/`"tap"` for SBv1 tap setups). When setup_kind is
+  // "flip" or "breakout", tapped_edge/flipped_boundary is the boundary to retest.
+  // "breakout" (SBv2 2026-07-21): a completed 4H candle body-closed outside a DAILY
+  // zone into empty space; accepted_at = the qualifying 4h candle, sessions_since_flip
+  // = completed 4h bars since it.
+  setup_kind?: "tap" | "flip" | "breakout";
   flipped_boundary?: number;
   accepted_at?: string;
   sessions_since_flip?: number;
+  empty_space_pct?: number | null;
+  space_consumed_pct?: number | null;
 }
 
 export interface StrategyOptions {
@@ -251,4 +257,69 @@ export function buildFlipSetupsDetailed(bars: Bar[], opts: StrategyOptions = DEF
 /** Thin wrapper — flip setups only (unchanged callers). */
 export function buildFlipSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS, limit = 1): ZoneSetup[] {
   return buildFlipSetupsDetailed(bars, opts, limit).setups;
+}
+
+export interface BreakoutBuild {
+  setups: ZoneSetup[];
+  rejections: Partial<Record<BreakoutRejection, number>>;
+}
+
+/**
+ * SBv2 (2026-07-21 spec): 4H EMPTY-SPACE BREAKOUT & RETEST setups. DAILY bars
+ * generate the order-block zones; COMPLETED 4h bars qualify the breakout, the
+ * retest state, and the empty space. The current reference price is the last
+ * completed 4h close (the 4-hour chart is the execution timeframe).
+ */
+export function buildBreakoutSetupsDetailed(
+  dailyBars: Bar[],
+  bars4h: Bar[],
+  opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS,
+  limit = 1,
+): BreakoutBuild {
+  const { zones } = computeZones(dailyBars, opts.zone);
+  const price = bars4h.length ? bars4h[bars4h.length - 1].c : dailyBars[dailyBars.length - 1].c;
+  const empty: ZoneSetup = {
+    active_zone: null,
+    tapped_edge: null,
+    trigger_edge: "first_touch",
+    approach: null,
+    direction: null,
+    clear_runway: false,
+    tap_granularity: "daily_scan",
+    distance_to_edge_pct: null,
+    setup_valid: false,
+    price,
+    setup_kind: "breakout",
+  };
+  if (zones.length === 0 || bars4h.length === 0) return { setups: [empty], rejections: {} };
+
+  const { breakouts, rejections } = detectBreakoutsDetailed(zones, bars4h, price, DEFAULT_BREAKOUT_OPTIONS);
+  const out: ZoneSetup[] = [];
+  const seen = new Set<string>();
+  for (const b of breakouts) {
+    const key = `${b.zone.bottom.toFixed(4)}-${b.zone.top.toFixed(4)}-${b.direction}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      active_zone: b.zone,
+      tapped_edge: b.boundary,
+      trigger_edge: "first_touch",
+      // The retest approaches the boundary from the accepted (breakout) side.
+      approach: b.direction === "call" ? "from_above" : "from_below",
+      direction: b.direction,
+      clear_runway: true, // empty space already validated by the detector
+      tap_granularity: "daily_scan",
+      distance_to_edge_pct: Math.round((Math.abs(price - b.boundary) / price) * 10000) / 100,
+      setup_valid: true, // a qualified breakout awaiting its first retest
+      price,
+      setup_kind: "breakout",
+      flipped_boundary: b.boundary,
+      accepted_at: b.breakoutAt,
+      sessions_since_flip: b.barsSinceBreakout,
+      empty_space_pct: b.emptySpacePct,
+      space_consumed_pct: b.consumedPct,
+    });
+    if (out.length >= limit) break;
+  }
+  return { setups: out.length ? out : [empty], rejections };
 }

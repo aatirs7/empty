@@ -187,8 +187,48 @@ const BULLISH_SIDE: Bias[] = ["bull", "strong_bull"];
 const BEARISH_SIDE: Bias[] = ["bear", "strong_bear"];
 
 /** Evaluate an SBv2 tap. Returns allowed=false with a plain-English summary when the
- *  intelligence layer vetoes the entry. All facts are bar-math + live positions. */
-export async function evaluateSbv2Intel(symbol: string, direction: "call" | "put"): Promise<IntelVerdict> {
+ *  intelligence layer vetoes the entry. All facts are bar-math + live positions.
+ *
+ *  `riskOnly` (SBv2 2026-07-21 breakout spec): the spec REMOVED all market/structure/
+ *  relative-strength gates from trade qualification but explicitly keeps
+ *  "session-loss limits and portfolio position limits ... strictly as account-risk
+ *  protections" — so risk-only mode runs ONLY the loss-response + exposure caps
+ *  (and skips the market/stock bar fetches entirely). */
+export async function evaluateSbv2Intel(
+  symbol: string,
+  direction: "call" | "put",
+  opts?: { riskOnly?: boolean },
+): Promise<IntelVerdict> {
+  const riskOnly = opts?.riskOnly === true;
+  if (riskOnly) {
+    const [losses, positions] = await Promise.all([sessionLosses("sbv2"), getBroker("sbv2").listPositions()]);
+    const openSameDir = positions.filter((p) => parseOcc(p.symbol)?.type === direction).length;
+    const sector = sectorOf(symbol);
+    const openSameSector = positions.filter((p) => {
+      const occ = parseOcc(p.symbol);
+      return occ != null && sectorOf(occ.underlying) === sector;
+    }).length;
+    const rblock = (why: string): IntelVerdict => ({
+      allowed: false,
+      grade: "C",
+      summary: `Risk veto: ${why}`,
+      marketBias: "neutral",
+      stockStructure: "neutral",
+      relStrengthPct: 0,
+    });
+    if (losses.lossesToday >= 3) return rblock("3 losses already today — done adding risk for the session.");
+    if (openSameDir >= 2) return rblock(`already holding ${openSameDir} ${direction}s — same-direction exposure cap.`);
+    if (openSameSector >= 2) return rblock(`already holding ${openSameSector} positions in ${sector} — sector concentration cap.`);
+    return {
+      allowed: true,
+      grade: "A",
+      summary: `Risk OK: ${losses.lossesToday} losses today, ${openSameDir} open ${direction}s, sector ${sector} x${openSameSector}.`,
+      marketBias: "neutral",
+      stockStructure: "neutral",
+      relStrengthPct: 0,
+    };
+  }
+
   const [{ bias: marketBias, qqqDayPct }, stock15, stock5, losses, positions] = await Promise.all([
     marketSnapshot(),
     getIntradayBars(symbol, "15Min", 5 * 390), // ~5 sessions of 15-min structure

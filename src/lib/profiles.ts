@@ -78,6 +78,13 @@ export interface ExitConfig {
   // intended target or 50% stop"). Only read when set — SBv1 leaves it unset and
   // keeps its deliberate no-mid-swing-stop behavior.
   swingStopLoss?: number; // e.g. -0.5 => sell if premium falls 50% below entry
+  // Optional swing PREMIUM take-profit as a fraction of entry (SBv2 2026-07-21:
+  // 1.0 = sell everything at +100%). When set, the underlying-target exit is
+  // DISABLED for the profile — the option premium is the exit, per spec.
+  swingTakeProfit?: number;
+  // Swing invalidation timeframe override (SBv2 2026-07-21): exit when a COMPLETED
+  // 4-HOUR candle closes back inside the zone (instead of the daily close).
+  invalidateOn4hClose?: boolean;
   takeProfit: number; // intraday only: +1.0 => +100% of premium
   stopLoss: number; // intraday only: -0.35 => -35% of premium
   sameDayExit: boolean; // 0DTE: flatten before the close
@@ -125,13 +132,17 @@ export interface Profile {
   active: boolean; // scanner still produces candidates (e.g. for shadow measurement)
   shelved?: boolean; // quarantined: the live monitor ignores it (no proposals/signals)
   // and it's excluded from the daily report. Kept scanned only for shadow history.
-  // How the scanner builds setups: "tap" (default — stateless edge tap, SBv1) or
-  // "flip" (SBv2 — a daily order-block that broke + accepted, awaiting first retest).
-  setupKind?: "tap" | "flip";
+  // How the scanner builds setups: "tap" (default — stateless edge tap, SBv1),
+  // "flip" (RETIRED 2026-07-21 — the old SBv2 daily-flip logic; no active profile
+  // uses it, code kept for reference), or "breakout" (SBv2 2026-07-21 — completed
+  // 4H body-close outside a daily zone into empty space, awaiting first retest).
+  setupKind?: "tap" | "flip" | "breakout";
   // How the live monitor triggers an entry: "tap" (default — a boundary crossing /
-  // confirmation candle) or "flip_retest" (SBv2 — the FIRST live tap of the flipped
-  // boundary, re-validated against the daily flip state at fire time).
-  entryKind?: "tap" | "flip_retest";
+  // confirmation candle), "flip_retest" (SBv2 — the FIRST live tap of the stored
+  // boundary, re-validated at fire time), or "empty_space_tap" (SB 15M — the first
+  // live touch of the zone boundary FACING price after an approach through empty
+  // space; rejects a gap-through, a deep-inside tap, or a stale feed).
+  entryKind?: "tap" | "flip_retest" | "empty_space_tap";
   strategy: StrategyOptions;
   zoneTimeframes: ZoneTimeframe[]; // zone timeframes to scan (QQQ = Daily + 4H)
   confirmation: ConfirmationConfig;
@@ -192,50 +203,58 @@ const SNIPER_SWING: Profile = {
   baselineSymbol: "SPY",
 };
 
-// SBv2 — SniperBot v2 (Farrukh's LOGIC RESET, sniperbot-daily-swing-v2.md). A
-// genuinely DIFFERENT setup from SBv1: daily order-block FLIP + FIRST retest, run in
-// PARALLEL for a head-to-head comparison. A daily zone that price breaks AND accepts
-// through (daily close / overnight gap+hold) flips (resistance→support, support→
-// resistance); the FIRST live tap of the flipped boundary is the entry. Same universe
-// as SBv1, its OWN paper account (ALPACA_*_3), its OWN log/P&L/shadow/scorecard track.
-// Auto OFF until the owner enables it. PAPER-ONLY.
+// SBv2 — 4H EMPTY-SPACE BREAKOUT & RETEST (Farrukh spec "message (4).txt",
+// 2026-07-21 — COMPLETELY REPLACES the daily-flip logic). DAILY order blocks are
+// the zones; the 4-HOUR chart does everything else: a COMPLETED 4h candle whose
+// BODY closes outside a daily zone into valid empty space qualifies a breakout;
+// the FIRST touch of the broken boundary is the entry — immediately, with NO
+// confirmation candle, NO news vet, NO reaction-DB target, NO market/sector
+// bias, NO score gate (all removed per spec). Session-loss + position caps stay
+// as pure account-risk protections. Own paper account (ALPACA_*_3). PAPER-ONLY.
 const SBV2: Profile = {
   id: "sbv2",
   label: "SBv2",
-  description: "Daily order-block FLIP + first retest, 1-2 day swing. Parallel to SBv1 for comparison.",
+  description: "4H empty-space breakout of a daily order block + first-retest entry. Premium exits: +100% target / -25% stop.",
   active: true,
-  setupKind: "flip", // scanner builds flip setups (broke + accepted, awaiting first retest)
-  entryKind: "flip_retest", // monitor fires on the FIRST live tap of the flipped boundary
-  strategy: DEFAULT_STRATEGY_OPTIONS,
-  zoneTimeframes: [DAILY_TF], // DAILY ONLY qualifies a flip (1D / ATR50 / disp 1.7)
-  confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.3 },
-  requireClearRunway: false, // empty-space read is informational; flip validity + first-retest gate instead
-  watchPerTimeframe: 3, // a symbol may carry more than one flipped zone awaiting a retest
-  minScore: 75, // retained for display/shadow only — the live flip_retest entry is MECHANICAL (no score gate)
+  setupKind: "breakout", // scanner: daily zones + completed-4h qualification (breakout.ts)
+  entryKind: "flip_retest", // monitor fires on the FIRST live touch of the stored boundary
+  strategy: DEFAULT_STRATEGY_OPTIONS, // zone opts: daily ATR-50, displacement 1.7 (spec-fixed)
+  zoneTimeframes: [DAILY_TF], // DAILY generates ALL zones; 4h bars are fetched by the breakout scan
+  // FALSE keeps the predict/EV machinery entirely out of the execute path — the
+  // spec removes the reaction-DB from this profile (contract = plain price band).
+  confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1.3 },
+  requireClearRunway: false, // empty space is validated INSIDE the breakout detector
+  watchPerTimeframe: 3, // a symbol may carry more than one qualified breakout awaiting retest
+  minScore: 75, // display/shadow only — the live entry is mechanical (no score gate)
   contract: {
-    // Farrukh 2026-07-16: "Enter a contract priced around $0.50-0.75, just get one.
-    // Strike isn't important — looking for a fast hard move that causes a premium pump
-    // across all contracts." One mid-priced contract; reachability gate dropped in
-    // execute.ts (requireTargetReachable=false) so expensive names trade again.
-    expiryKind: "friday", // nearest weekly ≥ the predicted 1-3 day hold (selectByEV horizon-matches)
-    // Owner 2026-07-21: "only take the setup if the contract is no more than 8% OTM."
-    // The strike window is the gate — if no liquid $0.45-0.80 contract sits within 8%
-    // OTM, resolveContract finds nothing, execute rejects, and the setup is SKIPPED
-    // (we do not fall back to a further-OTM strike). Was 25 (strike-agnostic).
-    otmPct: 8,
-    itmPct: 4,
-    priceFloor: 0.45,
-    priceIdeal: 0.6,
-    priceCap: 0.8, // "around $0.50-0.75" with a little slack on expensive names
-    liquiditySpread: 0.5, // (unused on the selectByEV path SBv2 takes; kept for consistency)
+    // Spec: weekly options, premium $1.00-$1.50, ATM preferred / slightly OTM
+    // acceptable, NO far-OTM lottery fallback — out-of-band means SKIP.
+    expiryKind: "friday",
+    otmPct: 4, // "slightly OTM acceptable" — and the execute-side OTM assert enforces it
+    itmPct: 3,
+    priceFloor: 1.0,
+    priceIdeal: 1.2,
+    priceCap: 1.5,
+    liquiditySpread: 0.7, // tight two-sided market required
   },
-  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 10 }, // "just get one"
-  // Swing exit: sell when the UNDERLYING reaches the reaction-DB target (predict.targetMain,
-  // persisted at entry) OR the premium drops 50% (Farrukh: "wait to sell at intended
-  // target or 50% stop"). Safeties kept: swing-invalidation + catastrophe floor ($0.10)
-  // within 2 days of expiry.
-  exit: { style: "swing", swingStopLoss: -0.5, catastropheFloor: 0.1, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
-  autoDefault: false, // OFF until the owner enables it in settings (shadow-measured first)
+  // qty stays 1 ("use the configured SBv2 contract quantity"); budget covers a $1.50 ask.
+  caps: { perTradeBudget: 160, maxContracts: 1, maxOpenPositions: 10 },
+  // PREMIUM exits only (spec): +100% take-profit on the option, -25% stop from the
+  // actual fill, and a completed 4H candle closing back inside the daily zone
+  // invalidates immediately. No reaction-DB / underlying targets. Catastrophe floor
+  // + expiry salvage stay as inert safeties (the -25% stop fires long before them).
+  exit: {
+    style: "swing",
+    swingStopLoss: -0.25,
+    swingTakeProfit: 1.0,
+    invalidateOn4hClose: true,
+    catastropheFloor: 0.1,
+    catastropheDays: 2,
+    takeProfit: 1.0,
+    stopLoss: -0.3,
+    sameDayExit: false,
+  },
+  autoDefault: false, // owner's runtime toggle decides (profile_settings)
   baselineSymbol: "SPY",
 };
 
@@ -369,55 +388,83 @@ const QQQ_MANUAL: Profile = {
   entryWindowEt: { startMin: 9 * 60 + 30, endMin: 15 * 60 + 25 },
 };
 
-// SB 15M Empty-Space Day Trader (Farrukh spec 2026-07-21). Intraday-only: 4-hour
-// order-block zones (ATR-50, displacement 1.3x) evaluated on the 15-MINUTE chart.
-// Entry = a COMPLETED 15-min confirmation candle rejecting the zone boundary that
-// faces price (top boundary = call support when price is above; bottom = put
-// resistance when below — exactly buildZoneSetups' stateless rule), inside clean
-// empty space (clear_runway hard gate), during 9:45am-2:45pm ET only. Two ~$1.00
-// weekly contracts; -20% stop; sell 1 at +50% (stop -> breakeven immediately);
-// sell the last at +75% / breakeven / a completed 15-min close through the zone;
-// ALWAYS flat before the close (no overnight, no swing conversion). Own paper
-// account via ALPACA_*_4 (auto-buy + exits HARD-GATED on those keys). Auto OFF —
-// spec: paper-trade and review before enabling.
+// 15M EMPTY-SPACE ZONE-TAP DAY TRADER (Farrukh spec 2026-07-21, "message (5).txt")
+// — REPLACES the previous SB15M confirmation-candle strategy on the same profile id.
+//
+// The chart is the 15-MINUTE chart; "4 hours" is ONLY the indicator's HTF-for-OBs
+// input, which is exactly what zoneTimeframes: [FOURH_TF] means here (order blocks
+// computed off 4H data, ATR 50, displacement 1.3) — we never "switch to the 4H
+// chart", never read daily/weekly/5m/1m zones, and never mix another profile's zones.
+//
+// Setup: price trading in EMPTY SPACE (no zone covering it) with a zone above or
+// below. Entry is the FIRST TOUCH of the boundary FACING price — price falling from
+// empty space into the TOP of a zone below => CALLS; price rallying from empty space
+// into the BOTTOM of a zone above => PUTS. The tap IS the trigger: no confirmation
+// candle, no second retest, no 5m/1m confirmation, no market-structure break, no
+// SPY/QQQ confirmation, no model approval, no score minimum. One weekly contract at
+// ~$1.00-2.00, ATM/slightly ITM. Stop -20% off the ACTUAL fill; at +40% the stop
+// moves to breakeven (NOT a profit-take — keep holding); sell the whole contract at
+// +100%; flat before the close, every day. Own paper account via ALPACA_*_4
+// (auto-buy + exits HARD-GATED on those keys). Auto OFF — paper-measure first.
 const SB15M: Profile = {
   id: "sb15m",
   label: "SB 15M",
-  description: "Intraday 4H-zone boundary retests on the 15-min chart, empty space required. Day trades only.",
+  description: "15-min empty-space zone-tap day trader: first touch of the facing 4H-OB boundary, one $1-2 contract, -20% / breakeven at +40% / +100%.",
   active: true,
+  entryKind: "empty_space_tap", // monitor fires on the boundary TAP itself (no candle)
   strategy: DEFAULT_STRATEGY_OPTIONS,
-  zoneTimeframes: [FOURH_TF], // 4-hour ONLY (ATR 50, displacement 1.3 — spec-fixed)
-  confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.3 }, // monitor's sb15m branch confirms on COMPLETED 15-min candles
-  requireClearRunway: true, // "empty space" is the point of the profile
+  zoneTimeframes: [FOURH_TF], // HTF-for-OBs = 4 hours, ATR 50, displacement 1.3 (spec-fixed)
+  // No confirmation candle (spec: "The level tap itself is the primary trigger").
+  // This also keeps the predict/EV machinery out of the execute path — the contract
+  // is chosen off the price band, not a model.
+  confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1.3 },
+  requireClearRunway: true, // "empty space" IS the setup
   watchPerTimeframe: 2,
-  minScore: 75, // spec §20: only enter at >= 75
-  netContractCosts: true, // spread too wide / EV under round-trip cost => no trade (spec §11/§21)
+  minScore: 0, // spec: no setup-score minimum
   contract: {
-    expiryKind: "friday", // liquid weekly for an intraday hold
-    otmPct: 2, // ATM / one strike OTM at most (spec §11)
-    itmPct: 4, // slightly ITM preferred
-    priceFloor: 0.7,
-    priceIdeal: 1.0, // "target contract price near $1.00"
-    priceCap: 1.35,
-    liquiditySpread: 0.75, // tight two-sided market required
+    // "Liquid WEEKLY contract, at-the-money or slightly in-the-money, responsive to
+    // the stock; avoid far OTM, wide spreads, thin volume. Premium ~$1.00-$2.00."
+    expiryKind: "friday",
+    otmPct: 1.5, // at most a strike OTM — far-OTM is explicitly excluded
+    itmPct: 5, // slightly ITM is PREFERRED, so the window reaches further ITM than OTM
+    priceFloor: 1.0, // "minimum preferred price ~$1.00"
+    priceIdeal: 1.4, // mid-band; ITM-ish contracts land here on liquid mega-caps
+    priceCap: 2.0, // "maximum preferred price ~$2.00" — nothing materially above
+    liquiditySpread: 0.75, // tight two-sided market ("spread unreasonably wide" => no trade)
   },
-  caps: { perTradeBudget: 220, maxContracts: 2, maxOpenPositions: 2 }, // 2 x ~$1.00 ~= $200 exposure
-  // Two-contract ladder: -20% base stop; at +50% sell 1 and the stop goes STRAIGHT
-  // to breakeven (stopAfterTrim1 0 = spec §14); the last contract exits at +75%
-  // (runnerTakeProfit), breakeven, a completed 15-min close through the zone, or
-  // the end-of-day flatten. trim2 is unreachable by design (the ladder always
-  // leaves 1 runner) — runnerTakeProfit is the second contract's +75% exit.
+  // ONE contract (spec: "Enter one option contract", never average down, never add).
+  caps: { perTradeBudget: 210, maxContracts: 1, exactContracts: 1, maxOpenPositions: 2 },
+  // Spec's complete position-management sequence: stop -20% off the ACTUAL fill; at
+  // +40% move the stop to breakeven and KEEP HOLDING (explicitly not a profit-take);
+  // sell the whole contract at +100%; exit at breakeven if it reverses after that;
+  // close before the session ends if neither fired. Nothing else exits this trade.
   exit: {
     style: "intraday",
-    takeProfit: 0.75,
-    stopLoss: -0.2,
+    takeProfit: 1.0,
+    stopLoss: -0.2, // original stop, 20% below the fill
     sameDayExit: true,
-    forceEodFlatten: true, // day trades on WEEKLY contracts — flatten every session
-    invalidateOn15mClose: true, // spec §12: structural exit before the % stop
-    ladder: { trim1Pct: 0.5, trim1Qty: 1, stopAfterTrim1: 0, breakevenPct: 0.5, trim2Pct: 0.75, trim2Qty: 1, targetProximity: 0, runnerTakeProfit: 0.75 },
+    forceEodFlatten: true, // day trades on WEEKLY contracts — flatten EVERY session
+    ladder: {
+      // sellQty 0 = a stop-ratchet-only rung: at +40% the stop goes to breakeven and
+      // the contract is held. The +100% exit is runnerTakeProfit (sell everything).
+      rungs: [{ atPct: 0.4, sellQty: 0, stopTo: 0 }],
+      plannedQty: 1,
+      holdTimeout: false, // no time-based exit in the spec
+      targetProximity: 0, // no underlying-target exit in the spec
+      runnerTakeProfit: 1.0, // "Sell the entire contract at a 100% gain"
+      // Legacy fields unused in rungs mode; kept to satisfy the shared shape.
+      trim1Pct: 0.4,
+      trim1Qty: 0,
+      stopAfterTrim1: 0,
+      breakevenPct: 0.4,
+      trim2Pct: 1.0,
+      trim2Qty: 1,
+    },
   },
-  autoDefault: false, // spec §25: paper-trade + review before enabling
+  autoDefault: false, // paper-measure + review before enabling
   baselineSymbol: "SPY",
+  // "Allow the opening price action to establish itself" … "avoid new entries late in
+  // the afternoon when there is insufficient time to reach the target."
   entryWindowEt: { startMin: 9 * 60 + 45, endMin: 14 * 60 + 45 }, // 9:45am-2:45pm ET
 };
 

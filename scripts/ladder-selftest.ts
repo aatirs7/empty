@@ -115,19 +115,34 @@ const base = { exit: MANUAL, entryQty: 5, trims: [] as number[], heldQty: 5 };
   check("3-contract fill trims 1 at +50%", p.trim?.qty === 1, p.trim);
 }
 
-// --- SB15M legacy config must be unchanged --------------------------------------
+// --- SB 15M: ONE contract, −20% → breakeven at +40% (no sell) → +100% ------------
 {
-  const b = { exit: SB15M, entryQty: 2, trims: [] as number[], heldQty: 2 };
-  check("SB15M base stop -20%", ladderPlan({ ...b, ret: 0, peak: 0 }).stop === -0.2);
-  const t = ladderPlan({ ...b, ret: 0.5, peak: 0.5 });
-  check("SB15M sells 1 at +50%", t.trim?.qty === 1 && t.trim?.atPct === 0.5, t.trim);
-  check("SB15M stop goes straight to breakeven", t.trim?.newStop === 0, t.trim);
-  const r = ladderPlan({ ...b, trims: [0.5], heldQty: 1, ret: 0.75, peak: 0.75 });
-  check("SB15M runner exits at +75%", r.close.includes("take-profit"), r);
-  const inv = ladderPlan({ ...b, ret: 0.3, peak: 0.3, invalidatedReason: "15m close through the zone" });
-  check("SB15M 15m invalidation closes", inv.close.includes("15m close"), inv);
-  const to = ladderPlan({ ...b, ret: 0.1, peak: 0.1, timedOutMin: 60 });
-  check("SB15M keeps the no-bounce timeout", to.close.includes("no bounce"), to);
+  const b = { exit: SB15M, entryQty: 1, trims: [] as number[], heldQty: 1 };
+  check("SB15M base stop is -20%", ladderPlan({ ...b, ret: 0, peak: 0 }).stop === -0.2);
+  const stopped = ladderPlan({ ...b, ret: -0.2, peak: 0.1 });
+  check("SB15M -20% closes the contract", stopped.close !== "" && stopped.trim === null, stopped);
+  check("SB15M -19% holds", ladderPlan({ ...b, ret: -0.19, peak: 0.1 }).close === "");
+
+  // +40% is a stop ratchet, NOT a profit-take: keep holding the single contract.
+  const at40 = ladderPlan({ ...b, ret: 0.4, peak: 0.4 });
+  check("SB15M does NOT sell at +40%", at40.close === "" && at40.trim === null, at40);
+  check("SB15M stop moves to breakeven at +40%", at40.stop === 0, at40.stop);
+  check("SB15M stop is still -20% at +39%", ladderPlan({ ...b, ret: 0.39, peak: 0.39 }).stop === -0.2);
+
+  // Once breakeven is armed it never reverts, and a reversal exits at breakeven.
+  const back = ladderPlan({ ...b, ret: 0, peak: 0.6 });
+  check("SB15M reversal after +40% exits at breakeven", back.close.includes("breakeven"), back);
+  check("SB15M stop never reverts to -20%", ladderPlan({ ...b, ret: -0.1, peak: 0.5 }).stop === 0);
+
+  // +100% sells the whole contract.
+  const target = ladderPlan({ ...b, ret: 1.0, peak: 1.0 });
+  check("SB15M sells everything at +100%", target.close.includes("take-profit") && target.trim === null, target);
+  check("SB15M holds at +99%", ladderPlan({ ...b, ret: 0.99, peak: 0.99 }).close === "");
+
+  // Day-trade guarantee + the exits the spec does NOT have.
+  check("SB15M flattens at the close", ladderPlan({ ...b, ret: 0.2, peak: 0.45, eodFlatten: true }).close.includes("end-of-day"));
+  const none = ladderPlan({ ...b, ret: 0.2, peak: 0.2, nearTargetLevel: 999, timedOutMin: 999 });
+  check("SB15M has no target/timeout exits", none.close === "", none);
 }
 
 console.log(`${pass}/${pass + fails.length} ladder assertions passed`);

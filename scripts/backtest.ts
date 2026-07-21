@@ -65,6 +65,14 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  if (profileId === "sbv2") {
+    console.error(
+      "SBv2's logic was REPLACED on 2026-07-21 (4H empty-space breakout & retest). The engine still replays the RETIRED daily-flip logic, so a new 'SBv2' run would measure a strategy that no longer exists.\n" +
+        "Existing runs #1/#3/#6 remain valid measurements of the retired flip logic. A 4h-granularity breakout replay is the follow-up — ask for it when you want the new logic backtested.",
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   const from = arg("from");
   const to = arg("to");

@@ -25,13 +25,13 @@ import { getProfile, activeProfiles, type Profile, type ExitConfig } from "./pro
 import { scanProfile } from "./scanner";
 import { zoneOfPosition } from "./manage";
 import { getProfileSettings } from "./profile-settings";
-import { confirmEntry, evaluateConfirmation } from "./confirm";
+import { confirmEntry } from "./confirm";
 import { evaluateSniper, indexTrend, type MarketContext } from "./sniper";
 import { predict } from "./predict";
 import { checkCatalyst } from "./catalyst";
 import { logActivity, fireKind } from "./activity";
 import { carryForwardManualLevels } from "./manual-levels";
-import { intelEnabled, evaluateSbv2Intel, classifyStructure } from "./intel";
+import { intelEnabled, evaluateSbv2Intel } from "./intel";
 import type { Bar } from "./alpaca";
 
 export interface Fire {
@@ -149,6 +149,70 @@ const FLIP_TAP_BAND = 0.004; // 0.4%
 // the prior completed 15-minute bar. This band, plus a last-tick crossing test, is
 // only the cheap superset that decides whether the full evaluation runs at all.
 const LEVEL_PRECHECK_BAND = 0.005;
+
+// SB 15M (empty-space zone tap) — precheck band around the FACING boundary; the real
+// entry test is `emptySpaceTap` below (touch + penetration + acceptance + feed age).
+const TAP_PRECHECK_BAND = 0.004;
+// How far price may reach past the boundary and still count as "touches or slightly
+// penetrates" rather than "already deep inside the zone" / "gapped through": a
+// quarter of the zone's own height, with a floor so a razor-thin zone is still
+// tradable and a ceiling so a huge zone doesn't allow a deep entry.
+const MAX_PENETRATION_ZONE_FRAC = 0.25;
+const MIN_PENETRATION_PCT = 0.0006; // 0.06% of price
+const MAX_PENETRATION_PCT = 0.004; // 0.4% of price
+// A touch must be a real reach of the level, not "close enough" — this is only the
+// tolerance for minute-granularity quotes.
+const TOUCH_TOLERANCE_PCT = 0.0004; // 0.04% of price
+// The 15-minute feed must be current: the newest bar (forming included) can't be
+// older than this or we're trading a delayed quote.
+const MAX_FEED_AGE_MS = 20 * 60_000;
+
+/** SB 15M entry test (Farrukh spec, "message (5).txt"): price approaching through
+ *  EMPTY SPACE touches the boundary FACING it — call = the TOP of a zone below,
+ *  put = the BOTTOM of a zone above. Rejects the spec's do-not-enter cases: gapping
+ *  clean through the level, already deep inside the zone, price having ACCEPTED
+ *  through the zone, and a delayed data feed. */
+type TapVerdict = { ok: true; boundary: number; penetration: number; barTime: string } | { ok: false; reason: string | null };
+async function emptySpaceTap(
+  symbol: string,
+  direction: "call" | "put",
+  zone: { bottom: number; top: number },
+  cur: number,
+): Promise<TapVerdict> {
+  const boundary = direction === "call" ? zone.top : zone.bottom;
+  if (!(boundary > 0)) return { ok: false, reason: null };
+  const tol = cur * TOUCH_TOLERANCE_PCT;
+  // Signed distance INTO the zone (negative = price hasn't reached the level yet).
+  const penetration = direction === "call" ? boundary - cur : cur - boundary;
+  if (penetration < -tol) return { ok: false, reason: null }; // not touched yet — stay on the watchlist
+  const height = Math.max(0, zone.top - zone.bottom);
+  const maxPen = Math.min(
+    Math.max(height * MAX_PENETRATION_ZONE_FRAC, cur * MIN_PENETRATION_PCT),
+    cur * MAX_PENETRATION_PCT,
+  );
+  if (penetration > maxPen) {
+    return { ok: false, reason: `price ${cur} is ${penetration.toFixed(2)} past the ${boundary} boundary (max ${maxPen.toFixed(2)}) — gapped through or already deep inside the zone` };
+  }
+  // Feed age + acceptance-through check, both off the 15-minute chart the profile
+  // trades. A completed bar that CLOSED beyond the far side of the zone means price
+  // accepted through it — the level is no longer a rejection level.
+  let bars: Bar[] = [];
+  try {
+    bars = await getIntradayBars(symbol, "15Min", 3 * 24 * 60);
+  } catch {
+    return { ok: false, reason: "15-minute data unavailable" };
+  }
+  const newest = bars[bars.length - 1];
+  if (!newest || Date.now() - Date.parse(newest.t) > MAX_FEED_AGE_MS) {
+    return { ok: false, reason: "data feed delayed (no fresh 15-minute bar)" };
+  }
+  const completed = bars.filter((b) => Date.parse(b.t) + 15 * 60_000 <= Date.now());
+  const last = completed[completed.length - 1];
+  if (last && ((direction === "call" && last.c < zone.bottom) || (direction === "put" && last.c > zone.top))) {
+    return { ok: false, reason: `last completed 15m bar closed ${last.c}, through the zone ${zone.bottom}-${zone.top} — price has accepted through` };
+  }
+  return { ok: true, boundary, penetration, barTime: newest.t };
+}
 
 /** QQQ Manual, owner 2026-07-21. The prior COMPLETED 15-minute bar decides BOTH
  *  whether the level was really touched and which way we trade it:
@@ -325,11 +389,14 @@ export function ladderPlan(i: LadderPlanInput): LadderPlanResult {
   }
   if (close) return { stop, close, trim: null };
 
-  // Trims — the FIRST untaken rung whose level has printed, in order. Always leave at
-  // least one contract open (a full exit is a `close`, never a trim).
+  // Trims — the FIRST untaken SELLING rung whose level has printed, in order. Always
+  // leave at least one contract open (a full exit is a `close`, never a trim).
+  // A rung with sellQty 0 is a stop ratchet only (SB 15M's +40% breakeven move): it
+  // never sells and never blocks a later rung.
   const planned = L.plannedQty ?? L.trim1Qty + L.trim2Qty + 1;
   const scale = i.entryQty / planned;
-  const idx = rungs.findIndex((r, n) => !i.trims.includes(r.atPct) && i.ret >= r.atPct && (n === 0 || i.trims.includes(rungs[n - 1].atPct)));
+  const taken = (n: number) => rungs[n].sellQty <= 0 || i.trims.includes(rungs[n].atPct);
+  const idx = rungs.findIndex((r, n) => r.sellQty > 0 && !i.trims.includes(r.atPct) && i.ret >= r.atPct && (n === 0 || taken(n - 1)));
   if (idx < 0 || i.heldQty <= 1) return { stop, close: "", trim: null };
   const qty = Math.min(Math.max(1, Math.round(rungs[idx].sellQty * scale)), i.heldQty - 1);
   return { stop, close: "", trim: { qty, atPct: rungs[idx].atPct, newStop: stopAt(i.peak, rungs[idx].atPct) } };
@@ -558,8 +625,15 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
       const tgtPrem = profile.exit.targetPremium;
       if (tgtPrem && bid >= tgtPrem) reason = `rode to $${bid.toFixed(2)} (>= $${tgtPrem.toFixed(2)} target)`;
 
-      // Optional mid-swing premium stop (Farrukh 2026-07-16, SBv2: "wait to sell at
-      // intended target or 50% stop"). Unset for SBv1 → no mid-swing stop, unchanged.
+      // Swing PREMIUM take-profit (SBv2 2026-07-21: sell EVERYTHING at +100% —
+      // "the option premium target is the exit"). Unset for SBv1 → unchanged.
+      const sTp = profile.exit.swingTakeProfit;
+      if (!reason && sTp != null && ret >= sTp) {
+        reason = `hit +${Math.round(sTp * 100)}% premium target (${Math.round(ret * 100)}%)`;
+      }
+
+      // Optional mid-swing premium stop (SBv2: -25% off the actual fill). Unset for
+      // SBv1 → no mid-swing stop, unchanged.
       const sStop = profile.exit.swingStopLoss;
       if (!reason && sStop != null && ret <= sStop) {
         reason = `hit swing stop (${Math.round(ret * 100)}% <= ${Math.round(sStop * 100)}%)`;
@@ -568,33 +642,50 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
       if (!reason) {
         const zone = occ ? await cachedZone(p.symbol) : null;
         if (zone && occ) {
-          let bars: Bar[] = [];
-          try {
-            bars = await getStockBars(occ.underlying, 400);
-          } catch {
-            /* no bars -> fall through to expiry check */
-          }
-          if (bars.length) {
-            const underlyingNow = bars[bars.length - 1].c;
-            const completed = bars.filter((b) => b.t.slice(0, 10) < today);
-            const lastClose = completed.length ? completed[completed.length - 1].c : null;
-            if (lastClose != null && zone.direction === "call" && lastClose < zone.bottom) {
-              reason = `swing invalidated — daily close ${lastClose} back below the zone`;
-            } else if (lastClose != null && zone.direction === "put" && lastClose > zone.top) {
-              reason = `swing invalidated — daily close ${lastClose} back above the zone`;
-            } else {
-              // Prefer the reaction-DB target persisted at entry (SBv2). Fall back to the
-              // playbook safe-target when absent (SBv1 — unchanged behavior).
-              let target: number | null = zone.predictedTarget;
-              if (target == null) {
-                try {
-                  target = classifyAndScore(bars, { bottom: zone.bottom, top: zone.top }, zone.direction, underlyingNow).safeTarget;
-                } catch {
-                  target = null;
-                }
+          if (profile.exit.invalidateOn4hClose) {
+            // SBv2 (2026-07-21): a COMPLETED 4-hour candle closing back inside the
+            // daily zone invalidates the breakout immediately — do not wait for the
+            // daily close. No underlying-target exit for this profile (premium rules
+            // above are the exits, per spec).
+            try {
+              const raw4h = await getIntradayBars(occ.underlying, "4Hour", 3 * 24 * 60);
+              const done = raw4h.filter((b) => Date.parse(b.t) + 4 * 60 * 60_000 <= Date.now());
+              const last4h = done.length ? done[done.length - 1] : null;
+              if (last4h && ((zone.direction === "call" && last4h.c < zone.top) || (zone.direction === "put" && last4h.c > zone.bottom))) {
+                reason = `breakout invalidated — 4h close ${last4h.c} back inside the zone`;
               }
-              if (target != null && ((zone.direction === "call" && underlyingNow >= target) || (zone.direction === "put" && underlyingNow <= target))) {
-                reason = `hit target ${target} (underlying ${underlyingNow})`;
+            } catch {
+              /* bars unavailable — the premium stop still protects */
+            }
+          } else {
+            let bars: Bar[] = [];
+            try {
+              bars = await getStockBars(occ.underlying, 400);
+            } catch {
+              /* no bars -> fall through to expiry check */
+            }
+            if (bars.length) {
+              const underlyingNow = bars[bars.length - 1].c;
+              const completed = bars.filter((b) => b.t.slice(0, 10) < today);
+              const lastClose = completed.length ? completed[completed.length - 1].c : null;
+              if (lastClose != null && zone.direction === "call" && lastClose < zone.bottom) {
+                reason = `swing invalidated — daily close ${lastClose} back below the zone`;
+              } else if (lastClose != null && zone.direction === "put" && lastClose > zone.top) {
+                reason = `swing invalidated — daily close ${lastClose} back above the zone`;
+              } else if (profile.exit.swingTakeProfit == null) {
+                // Underlying-target exit (SBv1: persisted DB target, else the playbook
+                // safe-target). Profiles with a premium take-profit skip this entirely.
+                let target: number | null = zone.predictedTarget;
+                if (target == null) {
+                  try {
+                    target = classifyAndScore(bars, { bottom: zone.bottom, top: zone.top }, zone.direction, underlyingNow).safeTarget;
+                  } catch {
+                    target = null;
+                  }
+                }
+                if (target != null && ((zone.direction === "call" && underlyingNow >= target) || (zone.direction === "put" && underlyingNow <= target))) {
+                  reason = `hit target ${target} (underlying ${underlyingNow})`;
+                }
               }
             }
           }
@@ -670,11 +761,11 @@ async function refreshIntradayScans(): Promise<void> {
     // candidate delete/insert) was pure DB/API waste (qqq_0dte after the pause).
     // Their nightly /api/scan coverage for shadow measurement is unaffected.
     if (p.shelved) continue;
-    // 15min/1h zones refresh every ~5 min; 4h-zone profiles (SB15M) refresh HOURLY —
-    // a 4-hour zone can only change when a 4H bar completes mid-session, so a 5-min
-    // cadence would be pure API waste across an 18-name universe.
+    // 15min/1h zones refresh every ~5 min; 4h-driven profiles (SB15M zones, SBv2
+    // breakout qualification) refresh HOURLY — 4h state only changes when a 4H
+    // bar completes mid-session, so a 5-min cadence would be pure API waste.
     const fast = p.zoneTimeframes.some((z) => z.timeframe === "1h" || z.timeframe === "15min");
-    const slow = !fast && p.zoneTimeframes.some((z) => z.timeframe === "4h");
+    const slow = !fast && (p.zoneTimeframes.some((z) => z.timeframe === "4h") || p.setupKind === "breakout");
     if (!fast && !slow) continue;
     const cadence = fast ? INTRADAY_RESCAN_MS : 60 * 60_000;
     const [newest] = await db
@@ -854,8 +945,13 @@ export async function monitorTick(): Promise<Fire[]> {
     const z = c.zone as { bottom: number; top: number };
     const p = getProfile(c.profileId);
     if (p.entryKind === "flip_retest") {
+      // SBv2 (2026-07-21 spec): an ACTUAL touch/penetration of the stored boundary,
+      // not proximity. The precheck is a small superset (touch OR within the band)
+      // so the full evaluation still runs when the touch lands between ticks.
       const b = (c.setup as { flipped_boundary?: number } | null)?.flipped_boundary ?? (c.direction === "call" ? z.top : z.bottom);
-      return b > 0 && Math.abs(cur - b) / b <= FLIP_TAP_BAND;
+      if (b <= 0) return false;
+      const touched = c.direction === "call" ? cur <= b : cur >= b;
+      return touched || Math.abs(cur - b) / b <= FLIP_TAP_BAND;
     }
     if (p.manualLevels) {
       // SUPERSET of the real touch test (manualApproach): near the level, or price
@@ -866,6 +962,12 @@ export async function monitorTick(): Promise<Fire[]> {
       const last = mem.lastPrice.get(c.symbol);
       const crossed = last != null && (last - lvl) * (cur - lvl) <= 0;
       return crossed || Math.abs(cur - lvl) / lvl <= LEVEL_PRECHECK_BAND;
+    }
+    if (p.entryKind === "empty_space_tap") {
+      // SUPERSET of the real touch test: anywhere near the FACING boundary.
+      if (!inEntryWindow(p)) return false;
+      const b = c.direction === "call" ? z.top : z.bottom;
+      return b > 0 && Math.abs(cur - b) / b <= TAP_PRECHECK_BAND;
     }
     if (p.confirmation.enabled) return cur >= z.bottom * 0.99 && cur <= z.top * 1.01;
     return true; // tap-crossing profiles need prev-tick state — must run the loop
@@ -936,29 +1038,60 @@ export async function monitorTick(): Promise<Fire[]> {
     // Decide whether this candidate triggers NOW.
     let confirmReason = "";
     let execScore = 0;
+    let sniperSummaryExtra = ""; // risk-layer verdict text (SBv2), merged into the alert below
     let manualEntry: { level: number; approach: string; barClose: number; barTime: string } | null = null;
+    let emptySpaceEntry: { boundary: number; penetration: number } | null = null;
     if (profile.entryKind === "flip_retest") {
-      // SBv2: enter on the FIRST TAP of the flipped boundary — price reaching the level
-      // (within a small band), NOT a strict two-tick crossing (which can miss a fast tap
-      // that happens between minute ticks). Deduped via tappedSet so it fires once per
-      // candidate per day even when a tap doesn't result in a proposal.
-      if (tappedSet.has(c.id)) continue; // already tapped today
+      // SBv2 (2026-07-21 spec): enter on the FIRST actual TOUCH (or slight
+      // penetration) of the stored breakout boundary — "do not trigger simply
+      // because price is near the level". Call: price at/under the broken top;
+      // put: price at/over the broken bottom. Deduped via tappedSet so it fires
+      // once per candidate per day even when a touch doesn't produce an order.
+      if (tappedSet.has(c.id)) continue; // already touched today
       const boundary = (c.setup as { flipped_boundary?: number } | null)?.flipped_boundary ?? (direction === "call" ? z.top : z.bottom);
-      const atBoundary = boundary > 0 && Math.abs(cur - boundary) / boundary <= FLIP_TAP_BAND;
-      if (!atBoundary) continue;
-      // "Checking" audit alert (SBv2): fire the moment the flipped boundary is tapped,
-      // for ALL watchlist setups, so alert timing/accuracy can be audited. This is NOT a
-      // command — the buy may still be blocked; a separate "Bought"/"not entered" push
-      // follows once the outcome is known. Logging the tap below adds this candidate to
-      // tappedSet on the next tick, so it won't re-fire while price rests at the zone.
-      // Pushes only for profiles that can actually BUY (auto on) — SBv3 is an undiverged
-      // SBv2 clone, so alerting for both would double every tap notification; its taps
-      // are still logged for measurement.
+      if (boundary <= 0) continue;
+      const touched = direction === "call" ? cur <= boundary : cur >= boundary;
+      if (!touched) continue;
+      // "Checking" audit alert: fires the moment the boundary is touched, for ALL
+      // watchlist setups. NOT a command — the buy may still be blocked; a second
+      // push reports the outcome. Logging the touch adds this candidate to
+      // tappedSet on the next tick so it won't re-fire while price sits there.
       if ((await cachedSettings(c.profileId)).autoExecute) {
-        await sendPush(`${profile.label}: ${c.symbol} zone tap ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
+        await sendPush(`${profile.label}: ${c.symbol} boundary touch ${cur}`, `${direction.toUpperCase()} — checking…`, "/positions").catch(() => {});
       }
-      await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `zone tap ${cur} — checking ${direction.toUpperCase()}` }]);
-      confirmReason = " First retest of the flipped boundary.";
+      await logActivity([{ profileId: c.profileId, symbol: c.symbol, kind: "tap", direction, price: cur, candidateId: c.id, detail: `breakout boundary ${boundary} touched at ${cur} — checking ${direction.toUpperCase()}` }]);
+      confirmReason = " First retest of the 4H breakout boundary.";
+    } else if (profile.entryKind === "empty_space_tap") {
+      // SB 15M — 15-minute empty-space zone tap. The zone came from the scan (4H HTF
+      // order blocks, ATR 50, displacement 1.3, empty-space/clear-runway gated); the
+      // TAP of the boundary facing price is the whole trigger. No confirmation candle,
+      // no structure read, no score, no model — per spec. `emptySpaceTap` enforces the
+      // do-not-enter cases (gap-through / deep inside / accepted through / stale feed).
+      if (tappedSet.has(c.id)) continue; // already fired today (no re-entry without a new setup)
+      if (!inEntryWindow(profile)) continue; // 9:45am-2:45pm ET
+      const tap = await emptySpaceTap(c.symbol, direction, z, cur);
+      if (!tap.ok) {
+        // reason null = simply not at the level yet (not worth a log row).
+        if (tap.reason) fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — ${tap.reason}` });
+        continue;
+      }
+      if ((await cachedSettings(c.profileId)).autoExecute) {
+        await sendPush(`${profile.label}: ${c.symbol} zone tap ${cur}`, `${direction.toUpperCase()} at the ${direction === "call" ? "top" : "bottom"} boundary ${tap.boundary} — checking…`, "/positions").catch(() => {});
+      }
+      await logActivity([
+        {
+          profileId: c.profileId,
+          symbol: c.symbol,
+          kind: "tap",
+          direction,
+          price: cur,
+          candidateId: c.id,
+          detail: `tapped the ${direction === "call" ? "top" : "bottom"} boundary ${tap.boundary} from ${c.approach?.replace("_", " ") ?? (direction === "call" ? "above" : "below")} at ${cur}`,
+          meta: { boundary: tap.boundary, penetration: Math.round(tap.penetration * 100) / 100, approach: c.approach, direction, price: cur, zone: z },
+        },
+      ]);
+      emptySpaceEntry = { boundary: tap.boundary, penetration: tap.penetration };
+      confirmReason = ` First touch of the ${direction === "call" ? "TOP boundary of the zone below" : "BOTTOM boundary of the zone above"} (${tap.boundary}) approaching from ${direction === "call" ? "above" : "below"} through empty space.`;
     } else if (profile.manualLevels) {
       // QQQ Manual — PURELY MECHANICAL (owner 2026-07-21). Monitoring runs from the
       // 9:30 open; the FIRST level actually touched takes the session's only trade.
@@ -997,53 +1130,28 @@ export async function monitorTick(): Promise<Fire[]> {
       ]);
       confirmReason = ` Level ${level} touched at ${cur}; prior completed 15m bar (${touch.barTime}) closed ${touch.barClose}, i.e. approaching ${touch.approach.replace("_", " ")} → ${direction.toUpperCase()}.`;
     } else if (profile.confirmation.enabled) {
-      // Confirmation profiles (SBv1, QQQ 0DTE, SB15M): fire only when price is AT
-      // the zone AND an intraday confirmation candle prints (rejection/engulf/strong
-      // close + relative volume) — never on a bare tap.
+      // Confirmation profiles (SBv1, QQQ 0DTE): fire only when price is AT the zone
+      // AND an intraday confirmation candle prints (rejection/engulf/strong close +
+      // relative volume) — never on a bare tap.
       const atZone = cur >= z.bottom * 0.99 && cur <= z.top * 1.01;
       if (!atZone) continue;
-      if (profile.id === "sb15m") {
-        // SB 15M day trader (spec 2026-07-21): decisions on COMPLETED 15-minute
-        // candles only, inside the 9:45am-2:45pm ET window, with the 15-min market
-        // structure as a confirmation filter (structure never triggers on its own;
-        // an OPPOSED structure blocks unless the rejection candle is strong —
-        // spec §8's "unless the zone reaction produces a confirmed reversal").
-        if (!inEntryWindow(profile)) continue;
-        let bars15: Bar[] = [];
-        try {
-          bars15 = await getIntradayBars(c.symbol, "15Min", 3 * 390);
-        } catch {
-          continue;
-        }
-        const completed = bars15.filter((b) => Date.parse(b.t) + 15 * 60_000 <= Date.now());
-        const conf = evaluateConfirmation(completed, direction, z, profile.confirmation.minRelVolume);
-        if (!conf.confirmed) continue;
-        const structure = classifyStructure(completed);
-        const opposed = (direction === "call" && structure === "bearish") || (direction === "put" && structure === "bullish");
-        if (opposed && conf.executionScore < 60) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — 15m structure ${structure} opposes the ${direction} and the rejection isn't strong (exec ${conf.executionScore})` });
-          continue;
-        }
-        confirmReason = ` Confirmed on a completed 15m candle: ${conf.reason}. 15m structure ${structure}.`;
-        execScore = conf.executionScore;
-      } else {
-        const conf = await confirmEntry(c.symbol, direction, z, profile.confirmation.minRelVolume);
-        if (!conf.confirmed) continue;
-        confirmReason = ` Confirmed: ${conf.reason}.`;
-        execScore = conf.executionScore;
-      }
+      const conf = await confirmEntry(c.symbol, direction, z, profile.confirmation.minRelVolume);
+      if (!conf.confirmed) continue;
+      confirmReason = ` Confirmed: ${conf.reason}.`;
+      execScore = conf.executionScore;
     } else {
       // Tap-only profiles (zones_legacy): a boundary crossing between two ticks.
       if (prev === undefined) continue; // first sighting: establish baseline
       if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
     }
 
-    // Score the setup; only fire if it clears the profile's quality threshold. QQQ
-    // Manual skips this entirely — its entry is the owner's level, and a scoring
-    // failure must never block a trade it has already decided to take.
+    // Score the setup; only fire if it clears the profile's quality threshold. The
+    // mechanical profiles (QQQ Manual, SB 15M) skip this entirely — their entry is the
+    // level itself, and a scoring failure must never block a trade already decided.
+    const noScoring = profile.manualLevels || profile.entryKind === "empty_space_tap";
     let pb: ReturnType<typeof classifyAndScore> | null = null;
     let bars: Bar[] = [];
-    if (!profile.manualLevels) {
+    if (!noScoring) {
       try {
         bars = await getStockBars(c.symbol, 400);
         pb = classifyAndScore(bars, z, direction, cur);
@@ -1052,18 +1160,48 @@ export async function monitorTick(): Promise<Fire[]> {
       }
     }
 
-    // SBv2 flip validity is fixed at the scan (off the settled daily close) — it can't
-    // change intraday because there's no new daily close during the session. We do NOT
-    // re-derive it from a fresh data fetch (that fetch can disagree with the scanner's
-    // and falsely invalidate a good flip). The real intraday guard is execute.ts's
-    // live price-vs-zone check (rejects a wrong-way entry if price has crossed the zone).
-    // We only guard against an ANCIENT candidate (a missed nightly scan).
+    // SBv2 (2026-07-21 spec) pre-entry guards, in order:
+    //  1. scan freshness (a missed nightly scan must not trade ancient candidates);
+    //  2. CANCEL if a completed 4h candle has closed back inside the zone since the
+    //     qualifying breakout ("if a completed 4-hour candle closes back inside or
+    //     below the zone before entry, cancel the setup") — checked live because a
+    //     4h candle CAN complete mid-session, unlike the old daily-flip logic;
+    //  3. the intel layer in RISK-ONLY mode: session-loss + exposure caps stay as
+    //     account protections, but NO market/structure/RS gates (spec removed them).
     if (profile.entryKind === "flip_retest") {
       const scanAgeDays = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${c.runDate}T00:00:00Z`)) / 86_400_000;
       if (scanAgeDays > 3) {
-        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `flip scan ${Math.round(scanAgeDays)}d old (missed scan) — skipped` });
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `breakout scan ${Math.round(scanAgeDays)}d old (missed scan) — skipped` });
         await notifyBlocked(c.profileId, c.symbol, direction, "watchlist scan too old");
         continue;
+      }
+      const acceptedAt = (c.setup as { accepted_at?: string } | null)?.accepted_at;
+      if (acceptedAt) {
+        try {
+          const raw4h = await getIntradayBars(c.symbol, "4Hour", 4 * 24 * 60);
+          const done = raw4h.filter((b) => Date.parse(b.t) + 4 * 60 * 60_000 <= Date.now() && Date.parse(b.t) > Date.parse(acceptedAt));
+          const cancelled = done.some((b) => (direction === "call" ? b.c < z.top : b.c > z.bottom));
+          if (cancelled) {
+            fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "breakout cancelled — a completed 4h candle closed back inside the zone" });
+            await notifyBlocked(c.profileId, c.symbol, direction, "4h candle closed back inside the zone");
+            continue;
+          }
+        } catch {
+          /* bars unavailable — execute's live wrong-way check still guards the entry */
+        }
+      }
+      if (intelEnabled(c.profileId)) {
+        try {
+          const verdict = await evaluateSbv2Intel(c.symbol, direction, { riskOnly: true });
+          if (!verdict.allowed) {
+            fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: verdict.summary });
+            await notifyBlocked(c.profileId, c.symbol, direction, verdict.summary.slice(0, 90));
+            continue;
+          }
+          sniperSummaryExtra = ` ${verdict.summary}`;
+        } catch {
+          /* risk layer fails OPEN — a data hiccup must not disable the strategy */
+        }
       }
     }
     // SBv2 (flip_retest) enters MECHANICALLY on a valid first-retest tap: NO playbook
@@ -1071,15 +1209,15 @@ export async function monitorTick(): Promise<Fire[]> {
     // keeps only the spec's light gates: a valid DB target (reward/move large enough) +
     // the news-against veto. SBv1/QQQ keep the score gate + sniper engine unchanged.
     const mechanical = profile.entryKind === "flip_retest";
-    if (!pb && !profile.manualLevels) {
+    if (!pb && !noScoring) {
       fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "could not score; skipped" });
       if (mechanical) await notifyBlocked(c.profileId, c.symbol, direction, "could not read the chart");
       continue;
     }
-    // Playbook score gate — skipped for mechanical entries (SBv2 flips per spec) AND
-    // manual levels (QQQ Manual has no score at all: the owner's level and the 15-min
-    // approach direction ARE the decision).
-    if (pb && !mechanical && !profile.manualLevels && pb.score < profile.minScore) {
+    // Playbook score gate — skipped for mechanical entries (SBv2 flips per spec) and
+    // for the level/tap profiles (QQQ Manual and SB 15M have no score at all: the
+    // owner's level, or the zone boundary tap, IS the decision).
+    if (pb && !mechanical && !noScoring && pb.score < profile.minScore) {
       fires.push({
         symbol: c.symbol,
         direction,
@@ -1091,81 +1229,37 @@ export async function monitorTick(): Promise<Fire[]> {
       continue;
     }
 
-    // Confidence engine (SBv1/QQQ) or mechanical flip vet (SBv2). Both use the reaction
-    // DB for numbers; neither lets the model produce a probability/target.
-    // QQQ Manual has no score and no probability model — it's a mechanical rule, so
-    // there's nothing honest to put here beyond "the rule fired".
+    // Confidence engine (SBv1/QQQ 0DTE/SB15M). Uses the reaction DB for numbers;
+    // never lets the model produce a probability/target. SBv2 (2026-07-21 spec) and
+    // QQQ Manual are MECHANICAL — no prediction, no news vet, no sniper engine: the
+    // setup rule IS the decision, so this whole block is theirs to skip.
     let sniperConfidence = pb ? pb.score / 100 : 0.5;
     let sniperSummary = "";
-    if (profile.confirmation.enabled) {
+    if (mechanical) {
+      sniperSummary = ` 4H breakout retest — mechanical entry (spec: no confirmation, no news vet, no DB target).${sniperSummaryExtra}`;
+    } else if (profile.confirmation.enabled) {
       const marketAlign = ((marketCtx.spy + marketCtx.qqq) / 2) * (direction === "call" ? 1 : -1);
       const pred = await predict(c.symbol, cur, c.timeframe, direction, c.approach ?? "", marketAlign);
       // HARD probability floor (QQQ 0DTE): a ~50% coin flip loses to spread + same-day
       // theta, so below the floor the correct action is NO trade. Only profiles that set
-      // minProbability are affected (SBv1/SBv2 leave it unset → unchanged).
+      // minProbability are affected.
       if (profile.minProbability != null && pred.probability < profile.minProbability) {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — probability ${Math.round(pred.probability)}% < ${profile.minProbability}% floor (coin flip)` });
         continue;
       }
-      if (mechanical) {
-        // News veto — read the verdict the NIGHTLY vet (/api/vet-flips) stored on the
-        // candidate. Zero hot-path Claude cost (the ~40s web-search call would blow the
-        // 60s tick when several names tap at once). Block on a scheduled earnings/Fed
-        // catalyst or fresh news against the accepted breakout. Un-vetted flips have no
-        // verdict → fail open (trade).
-        const news = (c.setup as { news?: { catalyst?: boolean; event?: string; newsAgainst?: boolean; newsFor?: boolean; summary?: string } } | null)?.news;
-        if (news?.catalyst) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${news.event ?? "scheduled event"}` });
-          await notifyBlocked(c.profileId, c.symbol, direction, `earnings/Fed: ${news.event || "scheduled event"}`);
-          continue;
-        }
-        if (news?.newsAgainst) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — news contradicts the flip: ${news.summary ?? ""}`.trim() });
-          await notifyBlocked(c.profileId, c.symbol, direction, "fresh news against the breakout");
-          continue;
-        }
-        // Reward / "move large enough": require a reaction-DB target — no target means
-        // thin history or too small a projected move, so skip.
-        if (pred.targetMain == null) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "skipped — no DB target (move too small / thin history)" });
-          await notifyBlocked(c.profileId, c.symbol, direction, "no historical target (move too small)");
-          continue;
-        }
-        // Market-intelligence + portfolio-risk layer (owner 2026-07-18, after the
-        // 7/17 correlated-calls day): market/stock bias, structure, relative
-        // strength, same-direction + sector exposure caps, session loss response.
-        // ONE call site, all logic in src/lib/intel.ts. REVERT: env SBV2_INTEL=off.
-        if (intelEnabled(c.profileId)) {
-          try {
-            const verdict = await evaluateSbv2Intel(c.symbol, direction);
-            if (!verdict.allowed) {
-              fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: verdict.summary });
-              await notifyBlocked(c.profileId, c.symbol, direction, verdict.summary.slice(0, 90));
-              continue;
-            }
-            sniperSummary = ` ${verdict.summary}`;
-          } catch {
-            /* intel is advisory scaffolding — a data hiccup FAILS OPEN to the
-               mechanical entry rather than silently disabling SBv2 */
-          }
-        }
-        sniperConfidence = Math.max(0, Math.min(1, pred.probability / 100));
-        sniperSummary = ` ${pred.reason} Target ${pred.targetMain}.${news?.newsFor ? " News supports it." : ""}` + sniperSummary;
-      } else {
-        const isIntraday = profile.exit.style === "intraday"; // QQQ 0DTE — judge as a same-day scalp
-        const ev = evaluateSniper(pb!, bars, direction, execScore, c.clearRunway, marketCtx, pred, isIntraday);
-        if (!ev.passed) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
-          continue;
-        }
-        const cat = await cachedCatalyst(c.symbol, c.profileId, direction, today, c.id);
-        if (cat.catalyst) {
-          fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
-          continue;
-        }
-        sniperConfidence = ev.overall / 100;
-        sniperSummary = ` ${pred.reason} ${ev.summary}${cat.checked ? "" : " (catalyst unchecked)"}`;
+      const isIntraday = profile.exit.style === "intraday"; // 0DTE/day-trade — judge as a same-day scalp
+      const ev = evaluateSniper(pb!, bars, direction, execScore, c.clearRunway, marketCtx, pred, isIntraday);
+      if (!ev.passed) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `rejected: ${ev.rejections[0] ?? "adversarial"}` });
+        continue;
       }
+      const cat = await cachedCatalyst(c.symbol, c.profileId, direction, today, c.id);
+      if (cat.catalyst) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `skipped — catalyst: ${cat.event}` });
+        continue;
+      }
+      sniperConfidence = ev.overall / 100;
+      sniperSummary = ` ${pred.reason} ${ev.summary}${cat.checked ? "" : " (catalyst unchecked)"}`;
     }
 
     const zoneWord = direction === "call" ? "support" : "resistance";
@@ -1174,10 +1268,25 @@ export async function monitorTick(): Promise<Fire[]> {
     // QQQ Manual's alert records the auditable facts of the mechanical decision:
     // the level, the prior completed 15-min bar it was judged against, the approach
     // direction, and the resulting call/put. No score, no target — it has neither.
+    // SB 15M's alert follows the spec's ALERT FORMAT: every field the owner asked for,
+    // in plain text, so a signal can be audited against the chart after the fact.
+    const sb15mAlert = () =>
+      [
+        `${direction.toUpperCase()}S: ${c.symbol} — 15M EMPTY-SPACE ZONE-TAP DAY TRADER.`,
+        `Chart 15-minute (HTF for OBs 4 hours, HTF ATR 50, displacement 1.3x ATR).`,
+        `Empty space VALID (clear runway in the trade's direction).`,
+        `Approach from ${direction === "call" ? "above" : "below"}; zone ${direction === "call" ? "BELOW" : "ABOVE"} price ${z.bottom}-${z.top}.`,
+        `Entry boundary ${emptySpaceEntry?.boundary ?? tapPrice} (${tapBoundary} of the zone), stock at ${cur}.`,
+        `One weekly contract $1.00-2.00, ATM/slightly ITM.`,
+        `Original stop -20% of the fill; at +40% the stop moves to breakeven (hold, do NOT sell); final target +100%; mandatory exit before the close.`,
+        `Why: price traded in empty space and tapped the first facing boundary${emptySpaceEntry ? ` (${emptySpaceEntry.penetration >= 0 ? "penetrated" : "reached"} ${Math.abs(emptySpaceEntry.penetration).toFixed(2)})` : ""}.`,
+      ].join(" ");
     const alert =
-      profile.manualLevels && manualEntry
-        ? `${direction.toUpperCase()}S: ${c.symbol} — manual level ${manualEntry.level}.${confirmReason} Mechanical entry: 5 same-day contracts at $0.30-0.35, ladder exit (-25% stop; +50% sell 2, stop breakeven; +75% sell 1, stop +25%; +100% sell the rest).`
-        : `${direction.toUpperCase()}S: ${c.symbol} — ${pb!.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb!.safeTarget ?? "?"}, extended ${pb!.extendedTarget ?? "?"}. Score ${pb!.displayScore}/100.${confirmReason}${sniperSummary}`;
+      profile.entryKind === "empty_space_tap"
+        ? sb15mAlert()
+        : profile.manualLevels && manualEntry
+          ? `${direction.toUpperCase()}S: ${c.symbol} — manual level ${manualEntry.level}.${confirmReason} Mechanical entry: 5 same-day contracts at $0.30-0.35, ladder exit (-25% stop; +50% sell 2, stop breakeven; +75% sell 1, stop +25%; +100% sell the rest).`
+          : `${direction.toUpperCase()}S: ${c.symbol} — ${pb!.playbook}. ${tapBoundary} zone tapped ${tapPrice} (${zoneWord} zone ${z.bottom}-${z.top}) at ${cur}. Safe target ${pb!.safeTarget ?? "?"}, extended ${pb!.extendedTarget ?? "?"}. Score ${pb!.displayScore}/100.${confirmReason}${sniperSummary}`;
     try {
       const runId = await ensureMonitorRun();
       const [prop] = await db
@@ -1195,10 +1304,12 @@ export async function monitorTick(): Promise<Fire[]> {
           pricedInAssessment: "unclear",
           rationale: `${alert} ${pb?.reason ?? ""}`.trim(),
           plainExplanation: `${
-            profile.manualLevels && manualEntry
+            profile.entryKind === "empty_space_tap"
+              ? `${c.symbol} was travelling through empty space and just touched the first zone boundary facing it (${emptySpaceEntry?.boundary ?? tapPrice})`
+              : profile.manualLevels && manualEntry
               ? `QQQ came ${manualEntry.approach.replace("_", " ")} into your ${manualEntry.level} level and touched it`
               : profile.entryKind === "flip_retest"
-                ? `${c.symbol} just retested a flipped daily order block live (${pb!.playbook})`
+                ? `${c.symbol} broke out of a daily order block on the 4-hour chart and just came back to retest the broken boundary`
                 : `${c.symbol} just tapped its zone live (${pb!.playbook})`
           }, betting on a ${direction === "call" ? "bounce up off support" : "rejection down off resistance"} ${
             profile.exit.style === "intraday" ? "intraday" : profile.id === "sbv2" ? "over the next 1-2 days" : "over the next 1-2 weeks"
@@ -1243,7 +1354,8 @@ export async function monitorTick(): Promise<Fire[]> {
             .set({ status: "expired", zoneRead: `${alert} Auto-skip: ${why}` })
             .where(eq(proposals.id, prop.id));
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: why });
-          if (profile.entryKind === "flip_retest" || profile.manualLevels) await notifyBlocked(c.profileId, c.symbol, direction, friendlyBlock(why));
+          if (profile.entryKind === "flip_retest" || profile.entryKind === "empty_space_tap" || profile.manualLevels)
+            await notifyBlocked(c.profileId, c.symbol, direction, friendlyBlock(why));
         }
       } else {
         fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "proposal created (auto-buy off)" });

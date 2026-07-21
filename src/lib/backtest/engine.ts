@@ -375,6 +375,12 @@ export async function replaySignals(cfg: Stage1RunConfig): Promise<ReplayResult>
   if (profile.id !== "sniper_swing" && profile.id !== "sbv2") {
     throw new Error(`profile ${cfg.profileId} is not Stage-1 backtestable`);
   }
+  if (profile.id === "sbv2" && profile.setupKind !== "flip") {
+    // The replay below implements the RETIRED daily-flip logic. Live SBv2 became the
+    // 4H breakout strategy on 2026-07-21 — refusing beats silently measuring the
+    // wrong strategy under the current profile's name. (Runs #1/#3/#6 = flip logic.)
+    throw new Error("SBv2's live logic is now the 4H breakout (2026-07-21); this engine replays the retired flip logic. A 4h-granularity breakout replay is a follow-up.");
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(cfg.from) || !/^\d{4}-\d{2}-\d{2}$/.test(cfg.to) || cfg.from > cfg.to) {
     throw new Error(`bad window ${cfg.from}..${cfg.to}`);
   }

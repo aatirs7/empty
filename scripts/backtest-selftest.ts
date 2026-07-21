@@ -194,7 +194,7 @@ async function main() {
     check("stage2: strike grid spans the window", strikeGrid(100, "call", 25, 4).length > 10);
   }
 
-  // ---- 5c. Intraday two-contract ladder sim (SB 15M) — synthetic 15m bars.
+  // ---- 5c. Intraday ladder sim (SB 15M: ONE contract) — synthetic 15m bars.
   {
     const { simulateLadder, etMinutesAt } = await import("../src/lib/backtest/intraday");
     const { DEFAULT_SPREAD } = await import("../src/lib/backtest/pricing");
@@ -203,20 +203,24 @@ async function main() {
     const ob = (i: number, o: number, h: number, l: number, c: number) => ({ t: new Date(t0 + i * 15 * 60_000).toISOString(), o, h, l, c, v: 500, vw: (o + c) / 2, n: 100 });
     const ub = (i: number, o: number, h: number, l: number, c: number) => ({ t: new Date(t0 + i * 15 * 60_000).toISOString(), o, h, l, c, v: 1 });
     const zone = { bottom: 98, top: 100 };
-    const base = { entryAsk: 1.0, qty: 2, direction: "call" as const, zone, entryMs: t0, spread: DEFAULT_SPREAD, stopLoss: -0.2, trim1Pct: 0.5, runnerTakeProfit: 0.75 };
+    // SB 15M (2026-07-21 spec): ONE contract, -20% stop, +40% = stop to breakeven
+    // (NO sell), +100% sells the contract, flat before the close.
+    const base = { entryAsk: 1.0, qty: 1, direction: "call" as const, zone, entryMs: t0, spread: DEFAULT_SPREAD, stopLoss: -0.2, trim1Pct: 0.4, trim1Qty: 0, stopAfterTrim1: 0, runnerTakeProfit: 1.0 };
 
-    // T1 then breakeven stop: bar 1 spikes to +50% -> trim 1 + stop->breakeven; bar 2 dips to entry -> runner out at breakeven.
-    const a = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.1, 0.95, 1.05), ob(1, 1.05, 1.8, 1.05, 1.6), ob(2, 1.6, 1.65, 0.9, 1.0)], underlying15: [ub(0, 100.5, 101, 100, 100.8), ub(1, 100.8, 103, 100.8, 102.5), ub(2, 102.5, 102.6, 100.2, 100.4)] });
-    check("ladder: T1 sells 1 at +50%, runner exits at BREAKEVEN stop", a.t1Hit && !a.t2Hit && a.breakevenExit && a.sells.length === 2 && a.exitReason === "breakeven_stop", JSON.stringify(a.sells));
-    // Full win: T1 then T2.
-    const b = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.8, 1, 1.7), ob(1, 1.7, 2.2, 1.6, 2.0)], underlying15: [ub(0, 100.5, 103, 100.4, 102.9), ub(1, 102.9, 104, 102.8, 103.8)] });
-    check("ladder: T1 + runner take-profit at +75%", b.t1Hit && b.t2Hit && b.plUsd > 100, `pl=${b.plUsd}`);
-    // Straight stop: -20% on the option low sells BOTH.
+    // +40% arms breakeven WITHOUT selling; a later dip to entry exits at breakeven.
+    const a = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.1, 0.95, 1.05), ob(1, 1.05, 1.5, 1.05, 1.45), ob(2, 1.45, 1.5, 0.9, 1.0)], underlying15: [ub(0, 100.5, 101, 100, 100.8), ub(1, 100.8, 103, 100.8, 102.5), ub(2, 102.5, 102.6, 100.2, 100.4)] });
+    check("ladder: +40% arms breakeven and sells NOTHING", a.t1Hit && a.sells.length === 1 && a.breakevenExit && a.exitReason === "breakeven_stop", JSON.stringify(a.sells));
+    // Full win: straight to +100% — one sell, the whole contract.
+    const b = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.5, 1, 1.45), ob(1, 1.45, 2.2, 1.4, 2.1)], underlying15: [ub(0, 100.5, 103, 100.4, 102.9), ub(1, 102.9, 104, 102.8, 103.8)] });
+    check("ladder: sells the whole contract at +100%", b.t2Hit && b.sells.length === 1 && b.sells[0].qty === 1 && b.plUsd > 80, `pl=${b.plUsd} sells=${JSON.stringify(b.sells)}`);
+    // Straight stop: -20% on the option low.
     const c = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.05, 0.6, 0.7)], underlying15: [ub(0, 100.5, 100.6, 99.2, 99.4)] });
-    check("ladder: -20% stop sells everything (stopOut)", c.stopOut && !c.t1Hit && c.exitReason === "stop_-20%" && c.plUsd < 0);
-    // Structural invalidation: underlying 15m close through the zone.
-    const d = simulateLadder({ ...base, optionBars: [ob(0, 1, 1.1, 0.95, 1.0), ob(1, 1.0, 1.05, 0.9, 0.95)], underlying15: [ub(0, 100.5, 100.8, 99.9, 100.2), ub(1, 100.2, 100.3, 97.4, 97.6)] });
-    check("ladder: 15m close through the zone flattens", d.exitReason === "15m_invalidation" && !d.stopOut);
+    check("ladder: -20% stop exits (stopOut)", c.stopOut && !c.t1Hit && c.exitReason === "stop_-20%" && c.plUsd < 0);
+    // The 15m structural exit is OFF unless a profile asks for it (SB 15M does not).
+    const dBars = { optionBars: [ob(0, 1, 1.1, 0.95, 1.0), ob(1, 1.0, 1.05, 0.9, 0.95)], underlying15: [ub(0, 100.5, 100.8, 99.9, 100.2), ub(1, 100.2, 100.3, 97.4, 97.6)] };
+    check("ladder: 15m close-through does NOT exit by default", simulateLadder({ ...base, ...dBars }).exitReason !== "15m_invalidation");
+    const d = simulateLadder({ ...base, ...dBars, invalidate15m: true });
+    check("ladder: 15m close-through exits when the profile enables it", d.exitReason === "15m_invalidation" && !d.stopOut, d.exitReason);
     // EOD flatten: quiet bars until 15:35 ET.
     const bars = Array.from({ length: 24 }, (_, i) => ob(i, 1, 1.1, 0.95, 1.02));
     const ubs = Array.from({ length: 24 }, (_, i) => ub(i, 100.5, 100.8, 100.2, 100.6));
