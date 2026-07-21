@@ -4,9 +4,13 @@ import { createPortal } from "react-dom";
 
 // Bump when there are new updates to announce; the modal auto-opens once per
 // version. Keep this list current — add an entry whenever a feature ships.
-const VERSION = "2026-07-16-v13";
+const VERSION = "2026-07-20-v14";
 
 const UPDATES: { title: string; body: string }[] = [
+  {
+    title: "Backtesting: replay a strategy against history",
+    body: "Vega can now replay SBv1 or SBv2 against months of real historical bars and show what WOULD have happened — hit rate, whether the stated probabilities were honest (an 85% setup should win more than a 55% one), how far trades went against you before working, and whether the signals beat random entries on the same stocks. Zero lookahead: at every simulated moment the strategy only sees data that existed then, and every report prints its own limitations so a good-looking number can't oversell itself. Results live on the new Backtest page (P&L → Backtest results, or Settings). Runs are started from the terminal; a strategy change can now be sanity-checked in an afternoon instead of waiting weeks of live paper trading.",
+  },
   {
     title: "Sell at the target, not at a percentage",
     body: "Every strategy now exits at the projected TARGET PRICE instead of a percent rule. SBv1 sells when the stock reaches its historical-database target (the old 'ride to $2' bonus rule is gone; its safeties stay). SBv2 now buys ONE contract around $0.50-0.75 — strike doesn't matter, it's betting on a fast hard move pumping every contract — and sells at the target or a 50% stop; this also unlocks the expensive names it used to skip. Position pages now show the real sell target, and every position and log entry shows the exact contract traded (strike + expiry + fill).",

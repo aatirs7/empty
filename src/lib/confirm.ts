@@ -30,6 +30,17 @@ export async function confirmEntry(
   } catch {
     return NO_DATA;
   }
+  return evaluateConfirmation(bars, direction, zone, minRelVolume);
+}
+
+/** Pure confirmation logic over an injected 5-min bar window (most recent last).
+ *  Same math as the live path — the backtest feeds it point-in-time bars. */
+export function evaluateConfirmation(
+  bars: Bar[],
+  direction: "call" | "put",
+  zone: { bottom: number; top: number },
+  minRelVolume: number,
+): Confirmation {
   if (bars.length < 6) return { ...NO_DATA, reason: "too few intraday bars" };
 
   const last = bars[bars.length - 1];

@@ -44,6 +44,7 @@ const CHOP: Prediction = {
 /**
  * Predict the underlying's next move at a zone, from the reaction DB.
  * @param marketAlign  -1..1 how well the broad market agrees with the trade direction.
+ * @param asOf  point-in-time cutoff (backtest replay only; undefined = live, full DB).
  */
 export async function predict(
   symbol: string,
@@ -52,8 +53,9 @@ export async function predict(
   direction: "call" | "put",
   approach: string,
   marketAlign = 0,
+  asOf?: Date,
 ): Promise<Prediction> {
-  const stats = await queryReactions({ symbol, timeframe, direction, approach, spot });
+  const stats = await queryReactions({ symbol, timeframe, direction, approach, spot, asOf });
   if (stats.n === 0) return CHOP;
 
   const probability = Math.round(stats.hitRate * 100);

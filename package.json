@@ -20,6 +20,8 @@
     "scorecard": "tsx scripts/scorecard.ts",
     "backfill": "tsx scripts/backfill-reactions.ts",
     "backfill:intraday": "tsx scripts/backfill-intraday.ts",
+    "backtest": "tsx scripts/backtest.ts",
+    "backtest:selftest": "tsx scripts/backtest-selftest.ts",
     "arm": "tsx scripts/arm-paper-month.ts",
     "profile-auto": "tsx scripts/profile-auto.ts",
     "monitor": "tsx scripts/monitor.ts",

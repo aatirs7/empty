@@ -21,6 +21,13 @@ export default async function SettingsPage() {
         How Vega trades &rarr;
         <span className="block text-[11px] text-muted mt-0.5">The strategy, in plain English</span>
       </Link>
+      <Link
+        href="/backtest"
+        className="block bg-panel border border-border rounded-2xl p-4 text-center text-sm text-accent"
+      >
+        Backtest results &rarr;
+        <span className="block text-[11px] text-muted mt-0.5">Strategy replays against history — hit rates, honesty checks</span>
+      </Link>
       <div className="bg-panel border border-border rounded-2xl p-4 space-y-2 text-center">
         <p className="text-sm font-medium">Trade notifications</p>
         <p className="text-xs text-muted leading-relaxed">

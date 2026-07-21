@@ -73,6 +73,10 @@ export default async function PnlPage({ searchParams }: { searchParams: Promise<
         See the paper-month scorecard &rarr;
       </a>
 
+      <a href="/backtest" className="block text-center text-xs text-accent">
+        Backtest results &rarr;
+      </a>
+
       <p className="text-xs text-muted">
         Paper account. Trade P&amp;L is this account&apos;s paper equity change since it started (realized + unrealized)
         from Alpaca. API cost is only this account&apos;s own Claude spend (SniperBot&apos;s catalyst check; QQQ 0DTE uses

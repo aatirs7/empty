@@ -5,7 +5,7 @@
  * similar prior reactions and returns hit rate / expected move / targets WITH a
  * sample size and a minimum-sample honesty gate. All code-computed from real bars.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, lte } from "drizzle-orm";
 import { db } from "../db";
 import { reactions, type ReactionRow } from "../db/schema";
 import { computeZones, type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
@@ -148,6 +148,22 @@ export interface ReactionQuery {
   approach: string; // from_above | from_below
   pattern?: string;
   spot: number;
+  // Point-in-time cutoff (backtest replay). When set, only reactions whose ENTIRE
+  // forward outcome window settled before this moment are matched — a row tapped at
+  // T encodes `hold` FUTURE bars in its mfe/mae, so the cutoff backs off by the
+  // timeframe's forward window. Undefined = live behavior (full DB), unchanged.
+  asOf?: Date;
+}
+
+/** Conservative calendar span covering tuning().hold forward bars per timeframe,
+ *  with session-gap slack (bars are trading-time, the cutoff is calendar-time). */
+const FORWARD_WINDOW_MS: Record<string, number> = {
+  "15min": 2 * 86_400_000, // 8 bars ≈ 2h + weekend/session slack
+  "1h": 3 * 86_400_000, // 7 bars ≈ 1 session
+  "4h": 8 * 86_400_000, // 12 bars ≈ 4.5 sessions
+};
+export function forwardWindowMs(timeframe: string): number {
+  return FORWARD_WINDOW_MS[timeframe] ?? 16 * 86_400_000; // daily: 10 trading bars ≈ 14 calendar days
 }
 
 export interface ReactionStats {
@@ -176,6 +192,8 @@ const pctile = (xs: number[], p: number): number => {
  *  enough sample. Always returns the sample size + a low-confidence flag. */
 export async function queryReactions(q: ReactionQuery): Promise<ReactionStats> {
   const base = [eq(reactions.timeframe, q.timeframe), eq(reactions.approach, q.approach)];
+  // Anti-lookahead (backtest): filter AT THE SOURCE so no caller can see the future.
+  if (q.asOf) base.push(lte(reactions.tappedAt, new Date(q.asOf.getTime() - forwardWindowMs(q.timeframe))));
   // Tier 1: symbol + approach + pattern. Tier 2: symbol + approach. Tier 3: approach (all symbols).
   const tiers: { where: ReturnType<typeof and>; label: string }[] = [
     { where: and(eq(reactions.symbol, q.symbol), ...base, ...(q.pattern ? [eq(reactions.pattern, q.pattern)] : [])), label: "symbol+pattern" },

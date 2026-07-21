@@ -1,0 +1,91 @@
+CREATE TABLE "backtest_runs" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"profile_id" text NOT NULL,
+	"stage" integer NOT NULL,
+	"from_date" date NOT NULL,
+	"to_date" date NOT NULL,
+	"granularity" text NOT NULL,
+	"pricing_path" text DEFAULT 'none' NOT NULL,
+	"spread_assumptions" jsonb,
+	"config" jsonb NOT NULL,
+	"config_hash" text NOT NULL,
+	"window_variant_count" integer DEFAULT 1 NOT NULL,
+	"universe_source" text NOT NULL,
+	"bars_feed" text DEFAULT 'iex' NOT NULL,
+	"status" text DEFAULT 'running' NOT NULL,
+	"error" text,
+	"signal_count" integer,
+	"metrics" jsonb,
+	"limitations" jsonb,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"completed_at" timestamp with time zone
+);
+--> statement-breakpoint
+CREATE TABLE "backtest_signals" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"run_id" integer NOT NULL,
+	"symbol" text NOT NULL,
+	"fired_at" timestamp with time zone NOT NULL,
+	"direction" text NOT NULL,
+	"setup_kind" text NOT NULL,
+	"playbook_type" text,
+	"score" integer,
+	"zone_bottom" numeric,
+	"zone_top" numeric,
+	"tapped_edge" numeric,
+	"approach" text,
+	"entry_underlying" numeric NOT NULL,
+	"entry_approx" boolean DEFAULT true NOT NULL,
+	"gap_through" boolean DEFAULT false NOT NULL,
+	"stated_target" numeric,
+	"stated_probability" integer,
+	"stated_confidence" integer,
+	"stated_sample_size" integer,
+	"stated_hold_bars" integer,
+	"prediction_bucket" text,
+	"gates" jsonb NOT NULL,
+	"would_trade_live" boolean DEFAULT true NOT NULL,
+	"target_hit" boolean,
+	"bars_to_target" integer,
+	"invalidated" boolean,
+	"invalidated_at_bar" integer,
+	"invalidated_first" boolean,
+	"tie" boolean,
+	"mfe_pct" numeric,
+	"mae_pct" numeric,
+	"ret_1d" numeric,
+	"ret_2d" numeric,
+	"ret_3d" numeric,
+	"ret_5d" numeric,
+	"ret_10d" numeric,
+	"forward_bars" integer,
+	"outcome_status" text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "backtest_trades" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"run_id" integer NOT NULL,
+	"signal_id" integer NOT NULL,
+	"contract_symbol" text,
+	"strike" numeric,
+	"expiry" date,
+	"pricing_source" text NOT NULL,
+	"iv_used" numeric,
+	"entry_premium" numeric,
+	"exit_premium" numeric,
+	"spread_pct_assumed" numeric,
+	"qty" integer,
+	"entry_at" timestamp with time zone,
+	"exit_at" timestamp with time zone,
+	"exit_reason" text,
+	"pl_usd" numeric,
+	"return_pct" numeric,
+	"fees" numeric,
+	"notes" jsonb
+);
+--> statement-breakpoint
+ALTER TABLE "backtest_signals" ADD CONSTRAINT "backtest_signals_run_id_backtest_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."backtest_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "backtest_trades" ADD CONSTRAINT "backtest_trades_run_id_backtest_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."backtest_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "backtest_trades" ADD CONSTRAINT "backtest_trades_signal_id_backtest_signals_id_fk" FOREIGN KEY ("signal_id") REFERENCES "public"."backtest_signals"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "backtest_signals_run_idx" ON "backtest_signals" USING btree ("run_id");--> statement-breakpoint
+CREATE INDEX "reactions_tapped_at_idx" ON "reactions" USING btree ("tapped_at");

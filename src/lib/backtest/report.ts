@@ -1,0 +1,262 @@
+/**
+ * Stage 1 backtest report (vega-backtest-spec.md §Stage 1 output metrics).
+ * Reads a completed run from backtest_runs/backtest_signals, computes the
+ * metrics, and renders console text. Every report carries the mandatory
+ * header (window, pricing path, assumptions, N) and the honest-limitations
+ * footer — a backtest number without those is not interpretable.
+ */
+import { db } from "../../db";
+import { backtestRuns, backtestSignals } from "../../db/schema";
+import { eq } from "drizzle-orm";
+import type { Stage1Baselines } from "./engine";
+
+interface SigRow {
+  symbol: string;
+  direction: string;
+  playbookType: string | null;
+  statedProbability: number | null;
+  statedHoldBars: number | null;
+  wouldTradeLive: boolean;
+  targetHit: boolean | null;
+  barsToTarget: number | null;
+  invalidated: boolean | null;
+  tie: boolean | null;
+  gapThrough: boolean;
+  mfePct: number;
+  maePct: number;
+  ret1d: number | null;
+  ret3d: number | null;
+  ret5d: number | null;
+  ret10d: number | null;
+  outcomeStatus: string;
+}
+
+export interface Stage1Report {
+  runId: number;
+  header: Record<string, string | number>;
+  n: number;
+  hitRateAll: number | null;
+  hitRateCapConstrained: number | null;
+  calibration: { bucket: string; n: number; statedMid: number; realizedPct: number | null }[];
+  timing: { statedMedianBars: number | null; realizedMedianBars: number | null };
+  mae: { p25: number; p50: number; p75: number; p90: number; winners: number | null; losers: number | null } | null;
+  meanRets: { r1: number | null; r3: number | null; r5: number | null; r10: number | null };
+  baselines: Stage1Baselines | null;
+  perPlaybook: { playbook: string; n: number; hitRatePct: number | null }[];
+  tieRatePct: number | null;
+  gapThroughRatePct: number | null;
+  truncated: number;
+  limitations: string[];
+}
+
+const pct = (x: number | null) => (x == null ? "—" : `${Math.round(x * 1000) / 10}%`);
+const pctile = (xs: number[], p: number): number => {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(p * s.length))];
+};
+const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+const median = (xs: number[]): number | null => (xs.length ? pctile(xs, 0.5) : null);
+
+/** The spec's six honest limitations, verbatim in spirit, plus run-specific labels. */
+function limitationLines(variantCount: number, granLabels: string[]): string[] {
+  return [
+    `Hindsight/overfitting risk: variants tested against this exact window so far: ${variantCount}. The more variants, the more likely the winner is noise.`,
+    "One regime: this window is ONE market environment — a strategy that works here may fail in the opposite regime (see window character above).",
+    "Modeled pricing error: n/a in Stage 1 (no options priced) — Stage 2 Path B estimates can be materially off for cheap OTM contracts.",
+    "Fill optimism: entries are boundary-touch approximations at daily granularity — live fills are worse, especially on fast taps.",
+    "Sample size: treat small-N results as directional at best; N is stated above.",
+    "Backtest ≠ forward result: passing earns a strategy the right to be paper traded, not to be funded.",
+    ...granLabels,
+  ];
+}
+
+export async function buildStage1Report(runId: number): Promise<Stage1Report> {
+  const [run] = await db.select().from(backtestRuns).where(eq(backtestRuns.id, runId));
+  if (!run) throw new Error(`backtest run ${runId} not found`);
+  const raw = await db.select().from(backtestSignals).where(eq(backtestSignals.runId, runId));
+  const sigs: SigRow[] = raw.map((r) => ({
+    symbol: r.symbol,
+    direction: r.direction,
+    playbookType: r.playbookType,
+    statedProbability: r.statedProbability,
+    statedHoldBars: r.statedHoldBars,
+    wouldTradeLive: r.wouldTradeLive,
+    targetHit: r.targetHit,
+    barsToTarget: r.barsToTarget,
+    invalidated: r.invalidated,
+    tie: r.tie,
+    gapThrough: r.gapThrough,
+    mfePct: Number(r.mfePct ?? 0),
+    maePct: Number(r.maePct ?? 0),
+    ret1d: r.ret1d != null ? Number(r.ret1d) : null,
+    ret3d: r.ret3d != null ? Number(r.ret3d) : null,
+    ret5d: r.ret5d != null ? Number(r.ret5d) : null,
+    ret10d: r.ret10d != null ? Number(r.ret10d) : null,
+    outcomeStatus: r.outcomeStatus,
+  }));
+
+  const n = sigs.length;
+  const hits = sigs.filter((s) => s.targetHit === true);
+  const capSigs = sigs.filter((s) => s.wouldTradeLive);
+  const hitRateAll = n ? hits.length / n : null;
+  const hitRateCap = capSigs.length ? capSigs.filter((s) => s.targetHit === true).length / capSigs.length : null;
+
+  // Calibration: stated probability buckets vs realized hit rate.
+  const buckets = [
+    { bucket: "<50", lo: 0, hi: 50, mid: 45 },
+    { bucket: "50-60", lo: 50, hi: 60, mid: 55 },
+    { bucket: "60-70", lo: 60, hi: 70, mid: 65 },
+    { bucket: "70-80", lo: 70, hi: 80, mid: 75 },
+    { bucket: "80+", lo: 80, hi: 101, mid: 85 },
+  ];
+  const calibration = buckets.map((b) => {
+    const inB = sigs.filter((s) => s.statedProbability != null && s.statedProbability >= b.lo && s.statedProbability < b.hi);
+    const hit = inB.filter((s) => s.targetHit === true).length;
+    return { bucket: b.bucket, n: inB.length, statedMid: b.mid, realizedPct: inB.length ? Math.round((hit / inB.length) * 1000) / 10 : null };
+  });
+
+  const timing = {
+    statedMedianBars: median(sigs.map((s) => s.statedHoldBars).filter((x): x is number => x != null)),
+    realizedMedianBars: median(hits.map((s) => s.barsToTarget).filter((x): x is number => x != null)),
+  };
+
+  const maes = sigs.map((s) => s.maePct);
+  const mae = n
+    ? {
+        p25: pctile(maes, 0.25),
+        p50: pctile(maes, 0.5),
+        p75: pctile(maes, 0.75),
+        p90: pctile(maes, 0.9),
+        winners: mean(hits.map((s) => s.maePct)),
+        losers: mean(sigs.filter((s) => s.targetHit !== true).map((s) => s.maePct)),
+      }
+    : null;
+
+  const meanRets = {
+    r1: mean(sigs.map((s) => s.ret1d).filter((x): x is number => x != null)),
+    r3: mean(sigs.map((s) => s.ret3d).filter((x): x is number => x != null)),
+    r5: mean(sigs.map((s) => s.ret5d).filter((x): x is number => x != null)),
+    r10: mean(sigs.map((s) => s.ret10d).filter((x): x is number => x != null)),
+  };
+
+  const byPb = new Map<string, SigRow[]>();
+  for (const s of sigs) {
+    const k = s.playbookType ?? "unknown";
+    byPb.set(k, [...(byPb.get(k) ?? []), s]);
+  }
+  const perPlaybook = [...byPb.entries()]
+    .map(([playbook, xs]) => ({
+      playbook,
+      n: xs.length,
+      hitRatePct: xs.length ? Math.round((xs.filter((s) => s.targetHit === true).length / xs.length) * 1000) / 10 : null,
+    }))
+    .sort((a, b) => b.n - a.n);
+
+  const metrics = (run.metrics ?? {}) as { baselines?: Stage1Baselines };
+  const cfg = (run.config ?? {}) as { constants?: Record<string, number>; label?: string | null };
+  const granLabels = [
+    "Granularity approximations (labeled per signal): entries at boundary-touch prices; 5-min confirmation gate approximated (SBv1); Claude gates (catalyst/news) stubbed FAIL-OPEN so signal counts are an upper bound; SBv2 intel layer OFF; universe is TODAY'S list (survivorship); bars are the free IEX feed.",
+  ];
+
+  const report: Stage1Report = {
+    runId,
+    header: {
+      profile: run.profileId,
+      window: `${run.fromDate} .. ${run.toDate}`,
+      granularity: run.granularity,
+      pricingPath: `${run.pricingPath} (Stage 1 — underlying only)`,
+      barsFeed: run.barsFeed,
+      universeSource: run.universeSource,
+      signals: run.signalCount ?? n,
+      configHash: run.configHash,
+      variantOfWindow: `#${run.windowVariantCount}`,
+      label: cfg.label ?? "",
+    },
+    n,
+    hitRateAll,
+    hitRateCapConstrained: hitRateCap,
+    calibration,
+    timing,
+    mae,
+    meanRets,
+    baselines: metrics.baselines ?? null,
+    perPlaybook,
+    tieRatePct: n ? Math.round((sigs.filter((s) => s.tie === true).length / n) * 1000) / 10 : null,
+    gapThroughRatePct: n ? Math.round((sigs.filter((s) => s.gapThrough).length / n) * 1000) / 10 : null,
+    truncated: sigs.filter((s) => s.outcomeStatus === "truncated").length,
+    limitations: limitationLines(run.windowVariantCount, granLabels),
+  };
+
+  // Persist the computed summary on the run row (idempotent re-render safe).
+  await db
+    .update(backtestRuns)
+    .set({
+      metrics: {
+        ...(metrics as Record<string, unknown>),
+        summary: {
+          hitRateAll,
+          hitRateCapConstrained: hitRateCap,
+          calibration,
+          timing,
+          mae,
+          meanRets,
+          perPlaybook,
+          tieRatePct: report.tieRatePct,
+          gapThroughRatePct: report.gapThroughRatePct,
+        },
+      },
+      limitations: report.limitations,
+    })
+    .where(eq(backtestRuns.id, runId));
+
+  return report;
+}
+
+export function renderStage1Report(r: Stage1Report): string {
+  const L: string[] = [];
+  L.push("=".repeat(72));
+  L.push(`BACKTEST STAGE 1 — run #${r.runId}`);
+  for (const [k, v] of Object.entries(r.header)) if (v !== "") L.push(`  ${k}: ${v}`);
+  L.push("=".repeat(72));
+  L.push("");
+  L.push(`Signals: ${r.n}   (truncated outcomes: ${r.truncated})`);
+  L.push(`Hit rate (target before invalidation): ALL ${pct(r.hitRateAll)} · cap-constrained (${3}/day) ${pct(r.hitRateCapConstrained)}`);
+  L.push("");
+  L.push("CALIBRATION — stated probability vs realized hit rate (the reaction-DB honesty test):");
+  for (const c of r.calibration) {
+    if (c.n === 0) continue;
+    L.push(`  ${c.bucket.padEnd(6)} n=${String(c.n).padStart(4)}  stated ~${c.statedMid}%  realized ${c.realizedPct != null ? c.realizedPct + "%" : "—"}`);
+  }
+  L.push("  (If the 80+ bucket doesn't beat 50-60, the probability number is decoration.)");
+  L.push("");
+  L.push(`TIMING — stated median hold ${r.timing.statedMedianBars ?? "—"} bars vs realized median ${r.timing.realizedMedianBars ?? "—"} bars to target.`);
+  if (r.mae) {
+    const f = (x: number | null) => (x == null ? "—" : `${Math.round(x * 1000) / 10}%`);
+    L.push(`MAE (worst move against, before resolution): p25 ${f(r.mae.p25)} · p50 ${f(r.mae.p50)} · p75 ${f(r.mae.p75)} · p90 ${f(r.mae.p90)}`);
+    L.push(`  winners avg ${f(r.mae.winners)} vs losers avg ${f(r.mae.losers)} — this sets stop placement empirically.`);
+  }
+  L.push("");
+  L.push("EDGE vs BASELINES:");
+  L.push(`  signal mean returns: +1d ${pct(r.meanRets.r1)} · +3d ${pct(r.meanRets.r3)} · +5d ${pct(r.meanRets.r5)} · +10d ${pct(r.meanRets.r10)}`);
+  if (r.baselines) {
+    const b = r.baselines;
+    L.push(`  random-entry baseline (same symbols/directions/target distances, n=${b.randomN}):`);
+    L.push(`    target touched ${pct(b.randomTargetTouchedRate)} · +1d ${pct(b.randomRet1d)} · +3d ${pct(b.randomRet3d)} · +5d ${pct(b.randomRet5d)} · +10d ${pct(b.randomRet10d)}`);
+    L.push(`  SPY buy-and-hold over the window: ${b.spyReturnPct != null ? b.spyReturnPct + "%" : "—"}`);
+    L.push(`  window character: ${b.windowCharacter}`);
+  }
+  L.push("");
+  L.push("PER-SETUP-TYPE (which playbooks actually work):");
+  for (const p of r.perPlaybook) L.push(`  ${p.playbook.padEnd(22)} n=${String(p.n).padStart(4)}  hit ${p.hitRatePct != null ? p.hitRatePct + "%" : "—"}`);
+  L.push("");
+  L.push(`Tie rate (target+invalidation same bar, ruled AGAINST the signal): ${r.tieRatePct ?? "—"}%`);
+  L.push(`Gap-through entries (open already beyond the boundary): ${r.gapThroughRatePct ?? "—"}%`);
+  L.push("");
+  L.push("HONEST LIMITATIONS (read before believing any number above):");
+  for (const l of r.limitations) L.push(`  - ${l}`);
+  L.push("");
+  L.push("DECISION GATE: if there is no edge on the underlying here, STOP — no options");
+  L.push("structure or exit tuning rescues a signal that can't predict the stock.");
+  return L.join("\n");
+}

@@ -1,6 +1,9 @@
 # Vega — Project Handoff
 
-_Last updated: 2026-07-09_
+_Last updated: 2026-07-20_
+
+## Backtesting engine (Stage 1, 2026-07-20)
+`src/lib/backtest/{clock,data,random,outcomes,engine,report}.ts` + `scripts/backtest.ts` + `scripts/backtest-selftest.ts` + tables `backtest_runs`/`backtest_signals`/`backtest_trades`. Point-in-time replay of SBv1/SBv2 with ZERO lookahead: `PointInTimeData` owns an `asOf`, strategy code gets a narrowed `StrategyView` (no today/future bars), `queryReactions` filters `asOf` at the source, and a 19-assertion self-test (deliberate future read, zone-formation timing, determinism, isolation) guards it. Reuses the live setup/gate code unchanged (`buildZoneSetups`/`buildFlipSetupsDetailed`/`classifyAndScore`/`evaluateSniper`/`predict`); Claude gates stubbed fail-open + labeled. Stage 1 = underlying-signal metrics (hit rate, probability calibration, MAE, random-entry + SPY baselines); **Stage 2 (options P&L) is gated on a Stage 1 review**. CLI: `npm run backtest -- --profile SBv2 --from ... --to ... --stage 1`. UI: `/backtest` (runs list) + `/backtest/[id]` (full report incl. honest-limitations footer), linked from P&L and Settings. Backtests never touch live trade tables.
 
 ## Current state (S-series + Q-series — READ FIRST)
 The single zone strategy below (I-series) became a **strategy PROFILE system**. See `CLAUDE.md` build status for the authoritative, milestone-by-milestone log; the essentials:

@@ -4,7 +4,7 @@
  * watchlist -> research_runs -> proposals -> orders, plus positions_snapshots.
  * Fully auditable: every run keeps its full parsed response and reasoning.
  */
-import { pgTable, serial, text, boolean, timestamp, date, jsonb, integer, numeric } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, timestamp, date, jsonb, integer, numeric, index } from "drizzle-orm/pg-core";
 
 // Symbols to research each morning.
 export const watchlist = pgTable("watchlist", {
@@ -278,6 +278,105 @@ export const reactions = pgTable("reactions", {
   fingerprint: jsonb("fingerprint").$type<Record<string, string | number>>(), // for similarity matching
   source: text("source").notNull().default("backfill"), // backfill | live
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // Point-in-time (asOf) queries filter on the tap time — index it for the backtest replay.
+  index("reactions_tapped_at_idx").on(t.tappedAt),
+]);
+
+// ---------------------------------------------------------------------------
+// BACKTEST tables (vega-backtest-spec.md). Fully separate from the live trade
+// tables — backtest code NEVER writes proposals/orders/shadow_outcomes, and
+// nothing live reads these. Every run stores its full config for reproducibility.
+// ---------------------------------------------------------------------------
+
+export const backtestRuns = pgTable("backtest_runs", {
+  id: serial("id").primaryKey(),
+  profileId: text("profile_id").notNull(),
+  stage: integer("stage").notNull(), // 1 = underlying-signal, 2 = options sim
+  fromDate: date("from_date").notNull(),
+  toDate: date("to_date").notNull(),
+  granularity: text("granularity").notNull(), // daily | intraday
+  pricingPath: text("pricing_path").notNull().default("none"), // none (stage 1) | real_chain | bs_model
+  spreadAssumptions: jsonb("spread_assumptions"), // stage 2 fill model; null in stage 1
+  config: jsonb("config").notNull(), // FULL canonical run config (profile snapshot, universe, bands, seed, ...)
+  configHash: text("config_hash").notNull(),
+  // Overfitting tracker: how many variants have been tested against this profile+window.
+  windowVariantCount: integer("window_variant_count").notNull().default(1),
+  universeSource: text("universe_source").notNull(), // current_table | cli_override
+  barsFeed: text("bars_feed").notNull().default("iex"),
+  status: text("status").notNull().default("running"), // running | complete | failed
+  error: text("error"),
+  signalCount: integer("signal_count"),
+  metrics: jsonb("metrics"), // computed report summary (hit rate, calibration, baselines, ...)
+  limitations: jsonb("limitations"), // the labeled approximations that applied to THIS run
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
+// One row per signal the replayed strategy fired, with its walk-forward outcome.
+export const backtestSignals = pgTable("backtest_signals", {
+  id: serial("id").primaryKey(),
+  runId: integer("run_id").notNull().references(() => backtestRuns.id, { onDelete: "cascade" }),
+  symbol: text("symbol").notNull(),
+  firedAt: timestamp("fired_at", { withTimezone: true }).notNull(), // simulated session close
+  direction: text("direction").notNull(), // call | put
+  setupKind: text("setup_kind").notNull(), // tap | flip
+  playbookType: text("playbook_type"),
+  score: integer("score"),
+  zoneBottom: numeric("zone_bottom"),
+  zoneTop: numeric("zone_top"),
+  tappedEdge: numeric("tapped_edge"),
+  approach: text("approach"),
+  entryUnderlying: numeric("entry_underlying").notNull(),
+  entryApprox: boolean("entry_approx").notNull().default(true), // daily-granularity boundary-touch entry
+  gapThrough: boolean("gap_through").notNull().default(false), // day OPENED already beyond the boundary
+  statedTarget: numeric("stated_target"),
+  statedProbability: integer("stated_probability"),
+  statedConfidence: integer("stated_confidence"),
+  statedSampleSize: integer("stated_sample_size"),
+  statedHoldBars: integer("stated_hold_bars"),
+  predictionBucket: text("prediction_bucket"), // which reaction-DB widening tier matched
+  gates: jsonb("gates").notNull(), // per-gate replay labels (replayed | approximated_daily | stubbed_open | off)
+  wouldTradeLive: boolean("would_trade_live").notNull().default(true), // survives daily/open-position caps
+  // Walk-forward outcome (computed by the engine from FUTURE bars — engine-only access).
+  targetHit: boolean("target_hit"),
+  barsToTarget: integer("bars_to_target"),
+  invalidated: boolean("invalidated"),
+  invalidatedAtBar: integer("invalidated_at_bar"),
+  invalidatedFirst: boolean("invalidated_first"), // invalidation before (or tied with) the target
+  tie: boolean("tie"), // target + invalidation in the SAME daily bar (tie rule: invalidation wins)
+  mfePct: numeric("mfe_pct"),
+  maePct: numeric("mae_pct"),
+  ret1d: numeric("ret_1d"),
+  ret2d: numeric("ret_2d"),
+  ret3d: numeric("ret_3d"),
+  ret5d: numeric("ret_5d"),
+  ret10d: numeric("ret_10d"),
+  forwardBars: integer("forward_bars"),
+  outcomeStatus: text("outcome_status").notNull(), // complete | truncated (window ended first)
+}, (t) => [index("backtest_signals_run_idx").on(t.runId)]);
+
+// Stage 2 options simulation results (table created now, populated by Stage 2).
+export const backtestTrades = pgTable("backtest_trades", {
+  id: serial("id").primaryKey(),
+  runId: integer("run_id").notNull().references(() => backtestRuns.id, { onDelete: "cascade" }),
+  signalId: integer("signal_id").notNull().references(() => backtestSignals.id, { onDelete: "cascade" }),
+  contractSymbol: text("contract_symbol"),
+  strike: numeric("strike"),
+  expiry: date("expiry"),
+  pricingSource: text("pricing_source").notNull(), // real_chain | bs_model
+  ivUsed: numeric("iv_used"),
+  entryPremium: numeric("entry_premium"), // ASK (never mid)
+  exitPremium: numeric("exit_premium"), // BID (never mid)
+  spreadPctAssumed: numeric("spread_pct_assumed"),
+  qty: integer("qty"),
+  entryAt: timestamp("entry_at", { withTimezone: true }),
+  exitAt: timestamp("exit_at", { withTimezone: true }),
+  exitReason: text("exit_reason"),
+  plUsd: numeric("pl_usd"),
+  returnPct: numeric("return_pct"),
+  fees: numeric("fees"),
+  notes: jsonb("notes"),
 });
 
 // Web Push subscriptions (one row per device/browser that opted in).
