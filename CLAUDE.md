@@ -274,6 +274,26 @@ Farrukh's rewrite REPLACES the confirmation-candle SB15M **in place** (id `sb15m
 - **Backtest engine updated** (`backtest/intraday.ts`): gates replaced by the same three tap rules (prior completed candle entirely outside all active zones → first-boundary-only → reached the boundary within 0.1 ATR without gapping past it), `simulateLadder` gained `trim1Qty`/`stopAfterTrim1`/`invalidate15m` (SB15M passes 0/0/false), score+predict retained as MEASUREMENT ONLY (labeled in gates + report), byScore buckets widened, T1/T2 relabeled "+40% armed"/"+100% target". `backtest:selftest` ALL PASS.
 - Doc: `docs/strategies/sb15m.md` rewritten. Auto stays OFF; needs `ALPACA_*_4` before it can buy.
 
+## Discord sync — owner chat context (tools/discord-logger)
+
+The owner + Farrukh ("Nitosphere") coordinate in a Discord general channel. A logger
+bot mirrors that ONE channel into local files so any session can read the latest chat
+and specs. Setup + token live in `tools/discord-logger/.env` (gitignored; already
+configured by the owner). **When the owner says "catch me up on Discord" / "sync
+Discord" / "check Discord" / "start the logger":**
+
+1. Run the catch-up sync (works from the repo root):
+   `node tools/discord-logger/bot.js --sync-only`  (backfills new messages, then exits)
+2. Read `tools/discord-logger/logs/general.md` (readable transcript) — newest at the
+   bottom. Structured form: `logs/general.jsonl`. Any files they posted (specs, .txt)
+   auto-download to `logs/attachments/` — read those directly.
+
+Notes: default backfill is the last 200 messages (raise `BACKFILL_LIMIT` in `.env`, or
+`!sync N` in the channel, for more). To capture LIVE during a session, background
+`node tools/discord-logger/bot.js` (dies when the container stops — for always-on,
+host it on Railway/Render). The logs are the owner's private chat: use them as context,
+don't quote personal/off-topic messages back.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.

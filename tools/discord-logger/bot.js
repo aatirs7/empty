@@ -12,13 +12,16 @@
  *
  * Setup steps are in README.md.
  */
-import "dotenv/config";
+import dotenv from "dotenv";
 import { mkdirSync, existsSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, GatewayIntentBits, Events } from "discord.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// Load .env from THIS folder no matter where the process was launched from, so it
+// can be started from the repo root (e.g. Claude running it for you).
+dotenv.config({ path: join(HERE, ".env") });
 const LOG_DIR = join(HERE, "logs");
 const ATT_DIR = join(LOG_DIR, "attachments");
 const JSONL = join(LOG_DIR, "general.jsonl"); // structured, one message per line
