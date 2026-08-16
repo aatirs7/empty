@@ -1,0 +1,4 @@
+# Never commit secrets or private chat.
+.env
+node_modules/
+logs/

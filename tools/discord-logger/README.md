@@ -1,0 +1,47 @@
+# Discord channel logger
+
+A tiny bot that mirrors **one** Discord channel (your general chat) into local files
+so Claude Code always has the history, and **auto-downloads attachments** (like the
+SB-D1 `.txt`) into `logs/attachments/`.
+
+- Scope: only the channel you point it at. It does **not** read your other channels or DMs.
+- Privacy: `.env` and `logs/` are gitignored — your token and chat never get committed.
+- TOS-safe: it's a real bot in your server, not your personal account.
+
+## One-time setup (~5 min, Discord side)
+
+1. **Create the bot app:** https://discord.com/developers/applications → **New Application** → name it (e.g. "Vega Logger").
+2. Left sidebar → **Bot** → **Reset Token** → copy the token (you'll paste it into `.env`). Keep it private.
+3. Same **Bot** page → scroll to **Privileged Gateway Intents** → turn **Message Content Intent** ON. *(Required, or message text comes through empty.)*
+4. Left sidebar → **OAuth2 → URL Generator** → scope **`bot`** → bot permissions: **View Channel**, **Read Message History** (and **Send Messages** if you want `!sync` replies). Copy the generated URL, open it, and add the bot to your server.
+5. Move the bot into (or give it access to) your **general** channel.
+6. In Discord: **Settings → Advanced → Developer Mode** ON. Right-click the general channel → **Copy Channel ID**.
+
+## Configure + run (this folder)
+
+```bash
+cd tools/discord-logger
+cp .env.example .env        # then paste your token + channel id into .env
+npm install
+npm start                   # backfills recent history, then logs live
+```
+
+- `npm start` — backfill the last ~200 messages, then stay running and log new ones.
+- `npm run sync` — backfill once and exit (good before a Claude session; no need to leave it running).
+- In the channel, typing `!sync 300` pulls the last 300 on demand.
+
+## What Claude reads
+
+- `logs/general.md` — readable transcript (newest appended at the bottom).
+- `logs/general.jsonl` — same data, one JSON object per message (for querying).
+- `logs/attachments/` — every file posted, saved as `<messageId>_<filename>`.
+
+Point me at `tools/discord-logger/logs/general.md` (or an attachment path) any session.
+
+## Notes
+
+- To capture messages in real time, leave `npm start` running (a terminal, or a
+  process manager). If you'd rather not keep it on, just run `npm run sync` before a
+  session — it grabs whatever's new since last time.
+- It has its own `package.json`, so `discord.js` never touches the main app or the
+  Vercel build.
