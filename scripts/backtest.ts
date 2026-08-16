@@ -15,6 +15,7 @@ import { runStage1, type BacktestableProfileId } from "../src/lib/backtest/engin
 import { runStage2 } from "../src/lib/backtest/stage2";
 import { runIntraday } from "../src/lib/backtest/intraday";
 import { runSbv2Breakout } from "../src/lib/backtest/sbv2-breakout";
+import { runSbd1Backtest } from "../src/lib/backtest/sbd1";
 import { buildStage1Report, renderStage1Report, buildStage2Report, renderStage2Report, buildIntradayReport, renderIntradayReport } from "../src/lib/backtest/report";
 
 function arg(name: string): string | undefined {
@@ -28,6 +29,10 @@ const PROFILE_ALIASES: Record<string, string> = {
   sbv2: "sbv2",
   sb15m: "sb15m",
   "sb 15m": "sb15m",
+  "sb-d1": "sb_d1",
+  sbd1: "sb_d1",
+  sb_d1: "sb_d1",
+  "sb d1": "sb_d1",
   qqq_manual: "qqq_manual",
   qqq_0dte: "qqq_0dte",
 };
@@ -77,6 +82,14 @@ async function main() {
     return;
   }
   const universe = arg("universe")?.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+
+  if (profileId === "sb_d1") {
+    // SB-D1 Precision — the fresh replacement for SBv1. Stock-level backtest first
+    // (spec §22): does the setup logic find real underlying reactions?
+    console.log(`SB-D1 stock-level backtest: ${from}..${to} (daily zones 1D/ATR50/1.7, four setups, underlying only)...`);
+    console.log(await runSbd1Backtest({ from, to, universe }));
+    return;
+  }
 
   if (profileId === "sbv2") {
     // The NEW SBv2 (4H empty-space breakout & retest, 2026-07-21): dedicated

@@ -9,9 +9,10 @@
 // qqq_0dte was PAUSED + hidden 2026-07-15 (account handed to qqq_manual); it stays
 // shadow-measured but has no tab, no report section, no scorecard track shown.
 // sbv3 was shelved 2026-07-16 (Farrukh: "close/disable for now") — no tab.
+// SBv1 (sniper_swing) was SHELVED 2026-07-27 and replaced by SB-D1 — no tab.
 export const UI_PROFILE_TABS = [
+  { id: "sb_d1", label: "SB-D1" },
   { id: "sbv2", label: "SBv2" },
-  { id: "sniper_swing", label: "SBv1" },
   { id: "qqq_manual", label: "QQQ Manual" },
   { id: "sb15m", label: "SB 15M" },
 ] as const;

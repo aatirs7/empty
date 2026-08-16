@@ -10,7 +10,7 @@
 import { type StrategyOptions, DEFAULT_STRATEGY_OPTIONS } from "./strategy";
 import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
-export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy" | "sb15m";
+export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy" | "sb15m" | "sb_d1";
 
 /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day;
  *  oneDay = next trading day (the QQQ 1-day-swing leg). */
@@ -173,13 +173,17 @@ export interface Profile {
   entryWindowEt?: { startMin: number; endMin: number };
 }
 
-// SniperBot Master — large/mega-cap institutional order-block swings, weekly options,
-// confirmation-gated, far-OTM cheap contracts sized for the $500 paper account.
+// SniperBot Master (SBv1) — SHELVED 2026-07-27: the owner replaced it with the
+// SB-D1 Precision profile ("completely remove the existing SV1 logic before
+// implementing the replacement"). Kept `active` for its historical scorecard/shadow
+// rows only; `shelved` removes it from the live monitor, auto-trading, and the daily
+// report so none of its logic runs. SB-D1 (below) is its fresh, standalone successor.
 const SNIPER_SWING: Profile = {
   id: "sniper_swing",
-  label: "SBv1",
-  description: "Large/mega-cap order-block swing setups, confirmed, weekly options.",
+  label: "SBv1 (shelved)",
+  description: "Retired — replaced by SB-D1 Precision (2026-07-27). Shadow history only.",
   active: true,
+  shelved: true,
   strategy: DEFAULT_STRATEGY_OPTIONS,
   zoneTimeframes: [DAILY_TF],
   confirmation: { enabled: true, timeframe: "5Min", minRelVolume: 1.3 },
@@ -199,7 +203,7 @@ const SNIPER_SWING: Profile = {
   // exit is purely target-price-driven. Still NO mid-swing stop ("keep the stop" =
   // keep the existing safeties: invalidation + catastrophe floor + expiry salvage).
   exit: { style: "swing", catastropheFloor: 0.15, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
-  autoDefault: true, // owner chose to auto-trade SniperBot on the paper account
+  autoDefault: false, // SHELVED — never auto-trades
   baselineSymbol: "SPY",
 };
 
@@ -495,6 +499,42 @@ const ZONES_LEGACY: Profile = {
   baselineSymbol: "SPY",
 };
 
+// SB-D1 Precision — the fresh replacement for SBv1 (Discord spec, 2026-07-27). A
+// selective DAILY swing system off 1D / ATR-50 / displacement-1.7 zones (the shared
+// Pine-v6 foundation), long calls + puts, one $1,000 paper account. Its detection /
+// trend / room / target / score logic is a STANDALONE engine in `src/lib/sbd1.ts`
+// (it does NOT reuse SBv1/SBv2 code); the config here carries the profile's account
+// caps + contract preferences. The live strike-engine + two-layer stops + circuit
+// breakers are staged after the §22 stock-level backtest validates the edge; the
+// contract band below is a placeholder until the delta-based strike engine lands.
+const SBD1: Profile = {
+  id: "sb_d1",
+  label: "SB-D1",
+  description: "SB-D1 Precision — selective 1D-zone swing (calls + puts), one $1,000 account. Fresh replacement for SBv1.",
+  active: true,
+  strategy: DEFAULT_STRATEGY_OPTIONS, // zone foundation only; SB-D1 detection lives in sbd1.ts
+  zoneTimeframes: [DAILY_TF], // 1D / ATR-50 / displacement-1.7 ONLY (spec §1)
+  confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1 }, // SB-D1 uses its own 15m confirmation (staged)
+  minScore: 78, // §17 aligned-trend floor (neutral needs 85, enforced in sbd1.ts)
+  contract: {
+    // §9 DTE 21-60 (≈ monthly) and §10 delta 0.50-0.80 (ATM/slightly-ITM). The
+    // real strike engine (greeks + IV scenarios + reward:risk) is staged; these are
+    // placeholder band values for the profile registry.
+    expiryKind: "twoToFourWeeks",
+    otmPct: 2,
+    itmPct: 8, // slightly ITM preferred (§10)
+    priceFloor: 0.75,
+    priceIdeal: 1.25, // §12 preferred premium $75-150
+    priceCap: 2.0, // §12 hard premium cap $200
+    liquiditySpread: 0.9, // §11 spread <= ~10% of midpoint
+  },
+  // §12/§20 Tier 1: 2% risk, ONE contract, ONE open position, ONE new entry/day.
+  caps: { perTradeBudget: 200, maxContracts: 1, maxOpenPositions: 1, maxTradesPerDay: 1 },
+  exit: { style: "swing", catastropheFloor: 0.1, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
+  autoDefault: false, // §22: paper-measure + validate before it ever trades
+  baselineSymbol: "SPY",
+};
+
 export const PROFILES: Record<ProfileId, Profile> = {
   sniper_swing: SNIPER_SWING,
   sbv2: SBV2,
@@ -503,9 +543,10 @@ export const PROFILES: Record<ProfileId, Profile> = {
   qqq_manual: QQQ_MANUAL,
   zones_legacy: ZONES_LEGACY,
   sb15m: SB15M,
+  sb_d1: SBD1,
 };
 
-export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy", "sb15m"];
+export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy", "sb15m", "sb_d1"];
 
 export function getProfile(id: string | null | undefined): Profile {
   return PROFILES[(id ?? "sniper_swing") as ProfileId] ?? SNIPER_SWING;
