@@ -105,6 +105,14 @@ export function computeZones(bars: Bar[], opts: ZoneOptions = DEFAULT_ZONE_OPTIO
 
     // Keep ALL zones for all time (full history, no FIFO drop). Old untapped
     // zones persist and remain tradeable; tapped ones are marked used above.
+    // ZONE BOUNDARIES — EXACT port of the Pine "HTF OB Tap Signals v6" box.new():
+    //   demand:  box.new(top=htfO[1], bottom=htfL[1])  → top = OB-candle OPEN, bottom = its LOW
+    //   supply:  box.new(top=htfH[1], bottom=htfO[1])  → top = OB-candle HIGH, bottom = its OPEN
+    // The OB candle is `prior` (the bar before the displacement/impulse). The zone is
+    // deliberately ASYMMETRIC (body edge on the impulse side, wick edge on the far
+    // side) — it is NOT the full high↔low range. Verified line-by-line against the
+    // indicator 2026-07-27. `cap` (maxWidthAtr) is an intraday-only distal clamp not
+    // present in Pine; daily (SBv1) leaves it Infinity, so daily is a pure port.
     const cap = opts.maxWidthAtr && atr[i] > 0 ? opts.maxWidthAtr * atr[i] : Infinity;
     if (upImpulse && priorBearish) {
       // demand: price taps the TOP (proximal); pull the bottom (distal) in if too wide.

@@ -195,18 +195,22 @@ interface RawBar {
 }
 const toBar = (b: RawBar): Bar => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v });
 
-/** Daily OHLCV bars for an underlying stock (free IEX feed), most recent last.
+/** Daily OHLCV bars for an underlying stock, most recent last. Uses the configured
+ *  feed (DATA_FEED; sip on the paid plan) so the daily OPEN matches the consolidated
+ *  tape / TradingView — the zone TOP is the OB candle's open, and IEX opens diverge
+ *  from consolidated by up to ~$0.50 (the reported zone-boundary mismatch).
  *  `end` (backtest replay) bounds the window on the right; omitted = today (live). */
 export async function getStockBars(symbol: string, days = 90, end?: Date): Promise<Bar[]> {
   const start = new Date(end ?? new Date());
   start.setUTCDate(start.getUTCDate() - days);
+  const feed = process.env.DATA_FEED ?? "iex";
   const bars: Bar[] = [];
   let pageToken: string | undefined;
   do {
     const q = new URLSearchParams({
       timeframe: "1Day",
       start: start.toISOString().slice(0, 10),
-      feed: "iex",
+      feed,
       limit: "10000",
       adjustment: "split",
     });
@@ -229,6 +233,7 @@ export async function getMultiStockBars(symbols: string[], days = 450, end?: Dat
   if (symbols.length === 0) return {};
   const start = new Date(end ?? new Date());
   start.setUTCDate(start.getUTCDate() - days);
+  const feed = process.env.DATA_FEED ?? "iex"; // sip (paid) matches the consolidated open → zone tops match TradingView
   const out: Record<string, Bar[]> = {};
   let pageToken: string | undefined;
   do {
@@ -236,7 +241,7 @@ export async function getMultiStockBars(symbols: string[], days = 450, end?: Dat
       symbols: symbols.join(","),
       timeframe: "1Day",
       start: start.toISOString().slice(0, 10),
-      feed: "iex",
+      feed,
       limit: "10000",
       adjustment: "split",
     });
