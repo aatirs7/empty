@@ -549,7 +549,14 @@ const VEGAMADE_V1: Profile = {
   ...SBD1,
   id: "vegamade_v1",
   label: "VegaMade v1",
-  description: "Claude-designed: fresh daily-zone tap, market-aligned (calls in up-markets, puts in down). Best of the backtested profiles.",
+  description: "Claude-designed: fresh daily-zone tap, market-aligned, ATM/ITM ~2wk contract, exit on the STOCK (2R target / zone break). First PROFITABLE option backtest (+$535, PF 1.18).",
+  // The winning design (2026-08-16, option-sim proven): a REAL ATM / slightly-ITM
+  // contract ~2 weeks out (high delta, gentle theta) — NOT a cheap 1-day lottery — so
+  // the option tracks the ~3-day underlying move. Exit is UNDERLYING-based: sell when
+  // the stock hits its 2R target or closes back through the zone; no -25% option stop
+  // (that was what sank the cheap variants). Catastrophe floor near expiry only.
+  contract: { expiryKind: "twoToFourWeeks", otmPct: 2, itmPct: 5, priceFloor: 0.5, priceIdeal: 2.5, priceCap: 25.0, liquiditySpread: 0.85 },
+  exit: { style: "swing", catastropheFloor: 0.15, catastropheDays: 3, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
 };
 
 export const PROFILES: Record<ProfileId, Profile> = {

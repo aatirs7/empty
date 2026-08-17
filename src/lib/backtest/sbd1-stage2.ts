@@ -15,7 +15,8 @@ import { PointInTimeData } from "./data";
 import { tradingDaysFromBars, barDate } from "./clock";
 import { evaluateSbd1, evaluateSbd1Simple, classifyTrend } from "../sbd1";
 import { selectContractPriceFirst, askOf, bidOf, DEFAULT_SPREAD, type SpreadConfig } from "./pricing";
-import { type OptionBar } from "../alpaca";
+import { simulateSwingExit } from "./stage2";
+import { type OptionBar, type Bar } from "../alpaca";
 
 export interface Sbd1Stage2Config {
   from: string;
@@ -31,6 +32,12 @@ const ITM_PCT = 6;
 const TP = 1.0; // +100% option take-profit
 const SL = -0.25; // -25% option stop
 const HOLD_SESSIONS = 2; // ~1-day swing, allow up to 2 sessions
+
+// VegaMade v1's swing contract: a REAL ATM / slightly-ITM option ~2 weeks out (high
+// delta, gentle theta) so it actually tracks the ~3-day underlying move. On mega-caps
+// that costs whatever it costs (a wide cap so one is always found) — this tests the
+// SIGNAL + underlying-exit edge PER CONTRACT, independent of account sizing.
+const VEGA_CONTRACT = { priceFloor: 0.5, priceIdeal: 2.5, priceCap: 25.0, otmPct: 2, itmPct: 5, minDays: 10 };
 
 interface Trade {
   symbol: string;
@@ -92,7 +99,12 @@ export async function runSbd1Stage2(cfg: Sbd1Stage2Config): Promise<string> {
         const key = `${sym}|${s.zone.bottom}|${s.zone.top}|${s.type}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        // Select a $0.50-1.00 contract from the real chain (short weekly, >=1 day out).
+
+        // VegaMade v1 (Claude's experiment) uses a PROPER SWING contract + an
+        // UNDERLYING-based exit; simple/precision keep the cheap +100%/-25% spec so
+        // the comparison is honest.
+        const isVega = variant === "vegamade";
+        const band = isVega ? VEGA_CONTRACT : { priceFloor: BAND.priceFloor, priceIdeal: BAND.priceIdeal, priceCap: BAND.priceCap, otmPct: OTM_PCT, itmPct: ITM_PCT, minDays: 1 };
         let sel = null;
         try {
           sel = await selectContractPriceFirst({
@@ -100,32 +112,62 @@ export async function runSbd1Stage2(cfg: Sbd1Stage2Config): Promise<string> {
             direction: s.direction,
             entryDay: day,
             spot: s.entry,
-            otmPct: OTM_PCT,
-            itmPct: ITM_PCT,
-            priceFloor: BAND.priceFloor,
-            priceIdeal: BAND.priceIdeal,
-            priceCap: BAND.priceCap,
-            minDays: 1,
+            otmPct: band.otmPct,
+            itmPct: band.itmPct,
+            priceFloor: band.priceFloor,
+            priceIdeal: band.priceIdeal,
+            priceCap: band.priceCap,
+            minDays: band.minDays,
             spread,
           });
         } catch {
           sel = null;
         }
         if (!sel) {
-          skip("no_contract_in_$0.50-1.00_band");
+          skip(isVega ? "no_swing_contract_in_band" : "no_contract_in_$0.50-1.00_band");
           continue;
         }
         const entryAsk = round2(askOf(sel.entryBar.vw, spread));
-        const exit = simulatePremiumExit(entryAsk, sel.bars, day, spread);
         const fees = spread.feePerContractRoundTrip;
+
+        let exitBid: number;
+        let reason: string;
+        if (isVega) {
+          // Sell when the STOCK hits its 2R target; cut when the stock closes back
+          // through the zone (setup broke); ride the swing otherwise. NO -25% option
+          // stop — that was what killed the cheap version. Catastrophe floor near
+          // expiry only. Real option bars from entry to expiry.
+          const underlyingBars: Bar[] = [today, ...data.futureBars(sym, 45)];
+          const ex = simulateSwingExit({
+            entryAsk,
+            direction: s.direction,
+            target: s.safeTarget,
+            zone: { bottom: s.zone.bottom, top: s.zone.top },
+            strike: sel.strike,
+            expiry: sel.expiry,
+            entryDay: day,
+            optionBars: sel.bars,
+            underlyingBars,
+            spread,
+            swingStopLoss: null, // underlying-based, no premium stop
+            catastropheFloor: 0.15,
+            catastropheDays: 3,
+          });
+          exitBid = ex.exitBid;
+          reason = ex.exitReason;
+        } else {
+          const ex = simulatePremiumExit(entryAsk, sel.bars, day, spread);
+          exitBid = ex.exitBid;
+          reason = ex.reason;
+        }
         trades.push({
           symbol: sym,
           day,
           direction: s.direction,
           entryAsk,
-          exitBid: round2(exit.exitBid),
-          plUsd: round2((exit.exitBid - entryAsk) * 100 - fees),
-          reason: exit.reason,
+          exitBid: round2(exitBid),
+          plUsd: round2((exitBid - entryAsk) * 100 - fees),
+          reason,
         });
       }
     }
@@ -154,9 +196,12 @@ function render(cfg: Sbd1Stage2Config, variant: string, symbols: number, days: n
     return `${d}s: ${g.length} trades · win ${g.length ? Math.round((w / g.length) * 100) : 0}% · net ${money(n)}`;
   };
 
+  const vega = variant === "vegamade";
   L.push("=".repeat(72));
-  L.push(`SB-D1 ${variant.toUpperCase()} — OPTION-PRICE SIM (real chain, +100%/-25% premium exit, 1 contract)`);
-  L.push(`  window: ${cfg.from} .. ${cfg.to}  ·  ${days} days  ·  ${symbols} symbols  ·  contract $0.50-1.00`);
+  L.push(`SB-D1 ${variant.toUpperCase()} — OPTION-PRICE SIM (real chain, 1 contract)`);
+  L.push(`  ${cfg.from} .. ${cfg.to} · ${days} days · ${symbols} symbols`);
+  L.push(vega ? "  contract: ATM/slightly-ITM ~2wk swing · exit: stock hits 2R target OR closes back through the zone (no -25% option stop)"
+              : "  contract: $0.50-1.00 · exit: +100% / -25% premium, ~1-day hold");
   L.push("=".repeat(72));
   L.push("");
   L.push(`Trades: ${trades.length}   ·   win rate ${trades.length ? Math.round((wins.length / trades.length) * 100) : 0}%   ·   profit factor ${pf ?? "—"}`);
@@ -166,7 +211,7 @@ function render(cfg: Sbd1Stage2Config, variant: string, symbols: number, days: n
   L.push(dir("call"));
   L.push(dir("put"));
   L.push("");
-  L.push(`Contract skips (no $0.50-1.00 strike on the real chain): ${skips["no_contract_in_$0.50-1.00_band"] ?? 0}`);
+  L.push(`Contract skips (no contract in band on the real chain): ${Object.values(skips).reduce((a,b)=>a+b,0)}`);
   L.push("");
   L.push("NOTES: real historical option bars; spread MODELED (no historical NBBO); stop");
   L.push("checked before target within a day (conservative); entry-day range skipped; 1");
