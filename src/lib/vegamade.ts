@@ -9,7 +9,7 @@
  * plays out over days). PAPER-ONLY — every order goes through getBroker (asserts paper).
  * Off unless the profile's autoExecute is on; supports a dry run for safe testing.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { vegamadePositions } from "../db/schema";
 import { getBroker } from "./broker";

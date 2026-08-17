@@ -2,5 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "installCommand": "npm install --no-audit --no-fund",
-  "crons": []
+  "crons": [
+    { "path": "/api/monitor", "schedule": "* * * * *" },
+    { "path": "/api/vegamade", "schedule": "0 22 * * 1-5" },
+    { "path": "/api/remind-levels", "schedule": "45 12 * * 1-5" },
+    { "path": "/api/remind-levels", "schedule": "45 13 * * 1-5" },
+    { "path": "/api/daily-report", "schedule": "10 20 * * 1-5" },
+    { "path": "/api/daily-report", "schedule": "10 21 * * 1-5" }
+  ]
 }
