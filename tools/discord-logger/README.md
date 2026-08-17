@@ -32,6 +32,29 @@ npm start                   # backfills recent history, then logs live
 - `npm run sync` — backfill once and exit (good before a Claude session; no need to leave it running).
 - In the channel, typing `!sync 300` pulls the last 300 on demand.
 
+## Command cheat sheet
+
+**In the terminal (to run the bot):**
+| Command | What it does |
+|---|---|
+| `npm start` | Start the bot: logs messages live, answers questions, makes changes. Leave it open. |
+| `npm run sync` | Backfill recent messages into the log, then exit (no live listen). |
+| `Ctrl + C` | Stop the bot. |
+
+**In Discord — you must @mention the bot each time (including follow-ups):**
+| You type | What happens |
+|---|---|
+| `@bot how does X work?` | Short answer from the code. No changes. |
+| `@bot add/change/fix/do X` | Edits the code, typechecks, commits **locally**, then asks "push or edits?" |
+| `@bot push` | Pushes the pending change to GitHub. (also: "ship it", "deploy", "go ahead", "lgtm") |
+| `@bot undo` | Reverts the pending change, nothing pushed. (also: "cancel", "revert", "scrap", "nvm") |
+| `@bot <more edits>` | After a change, any other reply = make those extra edits, then ask again. |
+| `!sync 300` | (no @ needed) Backfill the last 300 messages into the log on demand. |
+
+Notes: it decides "question vs change" from your wording (no exact keyword needed). A
+change takes ~1-3 min; it posts "👀 On it…" first. It never pushes/deploys on its own
+and never weakens the paper-only guardrails.
+
 ## Ask it questions (@mention)
 
 @mention the bot with a question and it answers from **this codebase**, e.g.:
