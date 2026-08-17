@@ -362,3 +362,79 @@ export function evaluateSbd1(dailyBars: Bar[]): Sbd1Eval {
 function round2(x: number): number {
   return Math.round(x * 100) / 100;
 }
+
+// ===================================================================================
+// SIMPLE variant — "SB-D1 Daily Zone Rejection Swing" (Nitosphere spec, 2026-08).
+// A much simpler strategy than the Precision engine above: the daily-zone TAP itself
+// is the entire trigger, with NO trend/room/score/distance/confirmation filters.
+//   CALL: price established ABOVE an active daily zone, then taps it from above.
+//   PUT:  price established BELOW an active daily zone, then taps it from below.
+// The real exit is option-based (+100% / -25% premium, ~1-day hold); this stock-level
+// pass measures the underlying on the SAME 2R yardstick as the Precision run so the
+// two are directly comparable (the option P&L sim is a later stage).
+// ===================================================================================
+export function evaluateSbd1Simple(dailyBars: Bar[]): Sbd1Eval {
+  const rej: Record<string, number> = {};
+  const tally = (k: string): void => {
+    rej[k] = (rej[k] ?? 0) + 1;
+  };
+  if (dailyBars.length < SBD1_ZONE_OPTS.atrLength + 6) return { trend: "neutral", setups: [], rejections: rej };
+  const atrArr = computeATR(dailyBars, SBD1_ZONE_OPTS.atrLength);
+  const atr = atrArr[dailyBars.length - 1];
+  if (!(atr > 0)) return { trend: "neutral", setups: [], rejections: rej };
+
+  // Zone state as of YESTERDAY (exclude today) so today's bar can genuinely TAP an
+  // already-active zone — computing zones over today would mark the tapped zone used.
+  const hist = dailyBars.slice(0, -1);
+  const { zones } = computeZones(hist, SBD1_ZONE_OPTS);
+  const today = dailyBars[dailyBars.length - 1];
+  const yday = dailyBars[dailyBars.length - 2];
+  const trend = classifyTrend(dailyBars);
+  const setups: Sbd1Setup[] = [];
+  const APPROX = [
+    "SIMPLE variant: raw daily-zone tap, NO filters. Underlying 2R yardstick for comparison only.",
+    "Real exit is option-based (+100% / -25% premium, ~1-day hold) — needs the option-price sim (next stage).",
+  ];
+
+  const push = (type: Sbd1SetupType, dir: "call" | "put", z: { bottom: number; top: number }, entry: number, invalidation: number, reason: string) => {
+    const risk = Math.abs(entry - invalidation);
+    if (!(risk > 0)) return;
+    setups.push({
+      type,
+      direction: dir,
+      zone: { bottom: z.bottom, top: z.top, mid: (z.bottom + z.top) / 2 },
+      entry: round2(entry),
+      invalidation: round2(invalidation),
+      safeTarget: round2(dir === "call" ? entry + 2 * risk : entry - 2 * risk),
+      extendedTarget: round2(dir === "call" ? entry + 3 * risk : entry - 3 * risk),
+      riskR: round2(risk),
+      rrSafe: 2,
+      fresh: true,
+      retests: 0,
+      distanceTraveledPct: 0,
+      trend,
+      score: 0,
+      atr: round2(atr),
+      reasons: [reason],
+      approximations: APPROX,
+    });
+  };
+
+  for (const z of zones) {
+    if (z.used) {
+      tally("zone_already_used");
+      continue;
+    }
+    // CALL: yesterday's close above the zone, today's bar dips to tap the top and
+    // holds (close not below the zone bottom = didn't break through).
+    if (yday.c > z.top && today.l <= z.top && today.c >= z.bottom) {
+      push("demand_rejection_call", "call", z, z.top, z.bottom - 0.1 * atr, "price above the daily zone tapped it from above");
+    } else if (yday.c < z.bottom && today.h >= z.bottom && today.c <= z.top) {
+      // PUT: yesterday below the zone, today taps the bottom from below and holds.
+      push("supply_rejection_put", "put", z, z.bottom, z.top + 0.1 * atr, "price below the daily zone tapped it from below");
+    } else {
+      tally("no_tap");
+    }
+  }
+  return { trend, setups, rejections: rej };
+}

@@ -84,10 +84,11 @@ async function main() {
   const universe = arg("universe")?.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
 
   if (profileId === "sb_d1") {
-    // SB-D1 Precision — the fresh replacement for SBv1. Stock-level backtest first
-    // (spec §22): does the setup logic find real underlying reactions?
-    console.log(`SB-D1 stock-level backtest: ${from}..${to} (daily zones 1D/ATR50/1.7, four setups, underlying only)...`);
-    console.log(await runSbd1Backtest({ from, to, universe }));
+    // SB-D1 stock-level backtest. --variant precision (full filter stack) or simple
+    // (raw daily-zone tap, Nitosphere spec). Same 2R underlying yardstick either way.
+    const variant = (arg("variant") ?? "precision") === "simple" ? "simple" : "precision";
+    console.log(`SB-D1 ${variant} stock-level backtest: ${from}..${to} (daily zones 1D/ATR50/1.7, underlying only)...`);
+    console.log(await runSbd1Backtest({ from, to, universe, variant }));
     return;
   }
 

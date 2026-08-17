@@ -13,12 +13,13 @@ import { loadUniverse } from "../scanner";
 import { PointInTimeData } from "./data";
 import { tradingDaysFromBars } from "./clock";
 import { walkForward, DEFAULT_HORIZON } from "./outcomes";
-import { evaluateSbd1, type Sbd1SetupType, type Sbd1Trend } from "../sbd1";
+import { evaluateSbd1, evaluateSbd1Simple, type Sbd1SetupType, type Sbd1Trend } from "../sbd1";
 
 export interface Sbd1BacktestConfig {
   from: string;
   to: string;
   universe?: string[];
+  variant?: "precision" | "simple"; // precision = full filter stack; simple = raw daily-zone tap
 }
 
 interface Rec {
@@ -46,6 +47,8 @@ const TYPE_LABEL: Record<Sbd1SetupType, string> = {
 };
 
 export async function runSbd1Backtest(cfg: Sbd1BacktestConfig): Promise<string> {
+  const variant = cfg.variant ?? "precision";
+  const evaluate = variant === "simple" ? evaluateSbd1Simple : evaluateSbd1;
   const universe = (cfg.universe?.length ? cfg.universe : await loadUniverse("sniper_swing")).slice().sort();
   if (universe.length === 0) throw new Error("SB-D1 backtest: empty universe (seed the sniper_swing universe or pass --universe).");
 
@@ -69,7 +72,7 @@ export async function runSbd1Backtest(cfg: Sbd1BacktestConfig): Promise<string> 
       const series = [...view.bars(sym), today];
       let evald;
       try {
-        evald = evaluateSbd1(series);
+        evald = evaluate(series);
       } catch {
         continue;
       }
@@ -101,7 +104,7 @@ export async function runSbd1Backtest(cfg: Sbd1BacktestConfig): Promise<string> 
     }
   }
 
-  return renderReport(cfg, universe, days.length, recs, rejections, approximations);
+  return renderReport(cfg, variant, universe, days.length, recs, rejections, approximations);
 }
 
 function pct(n: number, d: number): string {
@@ -124,6 +127,7 @@ function group(recs: Rec[], keyOf: (r: Rec) => string): string[] {
 
 function renderReport(
   cfg: Sbd1BacktestConfig,
+  variant: string,
   universe: string[],
   days: number,
   recs: Rec[],
@@ -134,7 +138,7 @@ function renderReport(
   const hits = recs.filter((r) => r.hit).length;
   const inval = recs.filter((r) => r.invalidated).length;
   L.push("=".repeat(72));
-  L.push("SB-D1 PRECISION — STOCK-LEVEL BACKTEST (spec §22, underlying only)");
+  L.push(`SB-D1 ${variant.toUpperCase()} — STOCK-LEVEL BACKTEST (underlying only, same 2R yardstick)`);
   L.push(`  window: ${cfg.from} .. ${cfg.to}  ·  ${days} trading days  ·  ${universe.length} symbols`);
   L.push("=".repeat(72));
   L.push("");
