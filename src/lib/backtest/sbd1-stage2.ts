@@ -26,6 +26,7 @@ export interface Sbd1Stage2Config {
   callsOnly?: boolean; // VegaMade v2 experiment: drop the losing put side
   marketAlign?: boolean; // default true; false = trade both sides regardless of SPY trend (more sample; the underlying exit caps losers)
   shares?: boolean; // VegaMade v3: trade the STOCK (long calls / short puts), NOT options — no theta/spread erosion
+  regimeFilter?: boolean; // VegaMade v4: only take longs when SPY is above its 200-day SMA (sit out bear markets)
   universeProfile?: string; // which seeded universe to load (default sniper_swing = mega-caps; zones_legacy = cheap $5-65)
 }
 
@@ -126,6 +127,15 @@ export async function runSbd1Stage2(cfg: Sbd1Stage2Config): Promise<string> {
     data.advanceTo(day);
     const view = data.view();
     const spyTrend = variant === "vegamade" ? classifyTrend(view.bars("SPY")) : null;
+    let regimeOk = true;
+    if (cfg.regimeFilter) {
+      const spyBars = view.bars("SPY");
+      const spyToday = data.todayBar("SPY");
+      if (spyBars.length >= 200 && spyToday) {
+        const sma200 = spyBars.slice(-200).reduce((a, b) => a + b.c, 0) / 200;
+        regimeOk = spyToday.c > sma200; // risk-on only
+      } else regimeOk = false;
+    }
     for (const sym of universe) {
       const today = data.todayBar(sym);
       if (!today) continue;
@@ -137,6 +147,7 @@ export async function runSbd1Stage2(cfg: Sbd1Stage2Config): Promise<string> {
       }
       for (const s of evald.setups) {
         if (cfg.callsOnly && s.direction === "put") continue; // VegaMade v2: calls only
+        if (cfg.regimeFilter && !regimeOk) { skip("regime_off_bear_market"); continue; } // VegaMade v4: risk-off, sit out
         if (variant === "vegamade" && cfg.marketAlign !== false) {
           const aligned = (s.direction === "call" && spyTrend === "bullish") || (s.direction === "put" && spyTrend === "bearish");
           if (!aligned) continue;
@@ -276,7 +287,7 @@ function render(cfg: Sbd1Stage2Config, variant: string, symbols: number, days: n
   const vega = variant === "vegamade";
   L.push("=".repeat(72));
   L.push(`SB-D1 ${variant.toUpperCase()} — OPTION-PRICE SIM (real chain, 1 contract)`);
-  L.push(`  ${cfg.from} .. ${cfg.to} · ${days} days · ${symbols} symbols${cfg.callsOnly ? " · CALLS ONLY" : ""}${cfg.universeProfile === "zones_legacy" ? " · CHEAP universe" : ""}${cfg.marketAlign === false ? " · no-align" : ""}`);
+  L.push(`  ${cfg.from} .. ${cfg.to} · ${days} days · ${symbols} symbols${cfg.callsOnly ? " · CALLS ONLY" : ""}${cfg.universeProfile === "zones_legacy" ? " · CHEAP universe" : ""}${cfg.marketAlign === false ? " · no-align" : ""}${cfg.regimeFilter ? " · regime-filtered" : ""}`);
   L.push(cfg.shares ? "  instrument: SHARES ($1000 notional/trade) · exit: 2R target / close-through-zone stop · ~3wk swing"
         : vega ? "  contract: ATM/slightly-ITM ~2wk swing · exit: stock hits 2R target OR closes back through the zone (no -25% option stop)"
                : "  contract: $0.50-1.00 · exit: +100% / -25% premium, ~1-day hold");

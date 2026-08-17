@@ -99,8 +99,9 @@ async function main() {
       const universeProfile = process.argv.includes("--cheap") ? "zones_legacy" : undefined;
       const marketAlign = process.argv.includes("--no-align") ? false : undefined;
       const shares = process.argv.includes("--shares");
+      const regimeFilter = process.argv.includes("--regime");
       console.log(`SB-D1 ${variant} OPTION sim: ${from}..${to}${callsOnly ? " calls-only" : ""}${universeProfile ? " CHEAP" : ""}...`);
-      console.log(await runSbd1Stage2({ from, to, universe, variant, callsOnly, universeProfile, marketAlign, shares }));
+      console.log(await runSbd1Stage2({ from, to, universe, variant, callsOnly, universeProfile, marketAlign, shares, regimeFilter }));
       return;
     }
     console.log(`SB-D1 ${variant} stock-level backtest: ${from}..${to} (daily zones 1D/ATR50/1.7, underlying only)...`);
