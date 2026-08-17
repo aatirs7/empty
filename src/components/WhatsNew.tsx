@@ -124,8 +124,11 @@ export default function WhatsNew() {
 
   useEffect(() => {
     setMounted(true);
+    // Do NOT auto-open (owner 2026-07-27: on mobile the modal blocked the app and
+    // couldn't be dismissed). It now opens ONLY when the "What's new" button fires
+    // the vega:whatsnew event. Mark this version seen so nothing re-triggers it.
     try {
-      if (localStorage.getItem("vega_whatsnew") !== VERSION) setOpen(true);
+      localStorage.setItem("vega_whatsnew", VERSION);
     } catch {
       /* ignore */
     }
