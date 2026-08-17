@@ -95,8 +95,10 @@ async function main() {
     // --stage 2 (or --options) runs the OPTION-PRICE sim (+100%/-25% premium exit);
     // otherwise the underlying stock-level report.
     if (arg("stage") === "2" || process.argv.includes("--options")) {
-      console.log(`SB-D1 ${variant} OPTION sim: ${from}..${to} (real chain, $0.50-1.00, +100%/-25%)...`);
-      console.log(await runSbd1Stage2({ from, to, universe, variant }));
+      const callsOnly = process.argv.includes("--calls-only");
+      const universeProfile = process.argv.includes("--cheap") ? "zones_legacy" : undefined;
+      console.log(`SB-D1 ${variant} OPTION sim: ${from}..${to}${callsOnly ? " calls-only" : ""}${universeProfile ? " CHEAP" : ""}...`);
+      console.log(await runSbd1Stage2({ from, to, universe, variant, callsOnly, universeProfile }));
       return;
     }
     console.log(`SB-D1 ${variant} stock-level backtest: ${from}..${to} (daily zones 1D/ATR50/1.7, underlying only)...`);

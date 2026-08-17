@@ -23,6 +23,8 @@ export interface Sbd1Stage2Config {
   to: string;
   universe?: string[];
   variant?: "precision" | "simple" | "vegamade";
+  callsOnly?: boolean; // VegaMade v2 experiment: drop the losing put side
+  universeProfile?: string; // which seeded universe to load (default sniper_swing = mega-caps; zones_legacy = cheap $5-65)
 }
 
 // Nitosphere's SB-D1 contract + exit spec (§6-9).
@@ -67,7 +69,7 @@ function simulatePremiumExit(entryAsk: number, optionBars: OptionBar[], entryDay
 export async function runSbd1Stage2(cfg: Sbd1Stage2Config): Promise<string> {
   const variant = cfg.variant ?? "vegamade";
   const evaluate = variant === "precision" ? evaluateSbd1 : evaluateSbd1Simple;
-  const universe = (cfg.universe?.length ? cfg.universe : await loadUniverse("sniper_swing")).slice().sort();
+  const universe = (cfg.universe?.length ? cfg.universe : await loadUniverse(cfg.universeProfile ?? "sniper_swing")).slice().sort();
   if (universe.length === 0) throw new Error("SB-D1 Stage 2: empty universe.");
 
   const data = await PointInTimeData.load({ symbols: [...universe, "SPY", "QQQ"], from: cfg.from, to: cfg.to });
@@ -92,6 +94,7 @@ export async function runSbd1Stage2(cfg: Sbd1Stage2Config): Promise<string> {
         continue;
       }
       for (const s of evald.setups) {
+        if (cfg.callsOnly && s.direction === "put") continue; // VegaMade v2: calls only
         if (variant === "vegamade") {
           const aligned = (s.direction === "call" && spyTrend === "bullish") || (s.direction === "put" && spyTrend === "bearish");
           if (!aligned) continue;
@@ -199,7 +202,7 @@ function render(cfg: Sbd1Stage2Config, variant: string, symbols: number, days: n
   const vega = variant === "vegamade";
   L.push("=".repeat(72));
   L.push(`SB-D1 ${variant.toUpperCase()} — OPTION-PRICE SIM (real chain, 1 contract)`);
-  L.push(`  ${cfg.from} .. ${cfg.to} · ${days} days · ${symbols} symbols`);
+  L.push(`  ${cfg.from} .. ${cfg.to} · ${days} days · ${symbols} symbols${cfg.callsOnly ? " · CALLS ONLY" : ""}${cfg.universeProfile === "zones_legacy" ? " · CHEAP universe" : ""}`);
   L.push(vega ? "  contract: ATM/slightly-ITM ~2wk swing · exit: stock hits 2R target OR closes back through the zone (no -25% option stop)"
               : "  contract: $0.50-1.00 · exit: +100% / -25% premium, ~1-day hold");
   L.push("=".repeat(72));
