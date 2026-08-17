@@ -97,8 +97,9 @@ async function main() {
     if (arg("stage") === "2" || process.argv.includes("--options")) {
       const callsOnly = process.argv.includes("--calls-only");
       const universeProfile = process.argv.includes("--cheap") ? "zones_legacy" : undefined;
+      const marketAlign = process.argv.includes("--no-align") ? false : undefined;
       console.log(`SB-D1 ${variant} OPTION sim: ${from}..${to}${callsOnly ? " calls-only" : ""}${universeProfile ? " CHEAP" : ""}...`);
-      console.log(await runSbd1Stage2({ from, to, universe, variant, callsOnly, universeProfile }));
+      console.log(await runSbd1Stage2({ from, to, universe, variant, callsOnly, universeProfile, marketAlign }));
       return;
     }
     console.log(`SB-D1 ${variant} stock-level backtest: ${from}..${to} (daily zones 1D/ATR50/1.7, underlying only)...`);

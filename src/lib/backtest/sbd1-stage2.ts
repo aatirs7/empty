@@ -24,6 +24,7 @@ export interface Sbd1Stage2Config {
   universe?: string[];
   variant?: "precision" | "simple" | "vegamade";
   callsOnly?: boolean; // VegaMade v2 experiment: drop the losing put side
+  marketAlign?: boolean; // default true; false = trade both sides regardless of SPY trend (more sample; the underlying exit caps losers)
   universeProfile?: string; // which seeded universe to load (default sniper_swing = mega-caps; zones_legacy = cheap $5-65)
 }
 
@@ -95,7 +96,7 @@ export async function runSbd1Stage2(cfg: Sbd1Stage2Config): Promise<string> {
       }
       for (const s of evald.setups) {
         if (cfg.callsOnly && s.direction === "put") continue; // VegaMade v2: calls only
-        if (variant === "vegamade") {
+        if (variant === "vegamade" && cfg.marketAlign !== false) {
           const aligned = (s.direction === "call" && spyTrend === "bullish") || (s.direction === "put" && spyTrend === "bearish");
           if (!aligned) continue;
         }
@@ -202,7 +203,7 @@ function render(cfg: Sbd1Stage2Config, variant: string, symbols: number, days: n
   const vega = variant === "vegamade";
   L.push("=".repeat(72));
   L.push(`SB-D1 ${variant.toUpperCase()} — OPTION-PRICE SIM (real chain, 1 contract)`);
-  L.push(`  ${cfg.from} .. ${cfg.to} · ${days} days · ${symbols} symbols${cfg.callsOnly ? " · CALLS ONLY" : ""}${cfg.universeProfile === "zones_legacy" ? " · CHEAP universe" : ""}`);
+  L.push(`  ${cfg.from} .. ${cfg.to} · ${days} days · ${symbols} symbols${cfg.callsOnly ? " · CALLS ONLY" : ""}${cfg.universeProfile === "zones_legacy" ? " · CHEAP universe" : ""}${cfg.marketAlign === false ? " · no-align" : ""}`);
   L.push(vega ? "  contract: ATM/slightly-ITM ~2wk swing · exit: stock hits 2R target OR closes back through the zone (no -25% option stop)"
               : "  contract: $0.50-1.00 · exit: +100% / -25% premium, ~1-day hold");
   L.push("=".repeat(72));
