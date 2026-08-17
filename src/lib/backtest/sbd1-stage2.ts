@@ -25,6 +25,7 @@ export interface Sbd1Stage2Config {
   variant?: "precision" | "simple" | "vegamade";
   callsOnly?: boolean; // VegaMade v2 experiment: drop the losing put side
   marketAlign?: boolean; // default true; false = trade both sides regardless of SPY trend (more sample; the underlying exit caps losers)
+  shares?: boolean; // VegaMade v3: trade the STOCK (long calls / short puts), NOT options — no theta/spread erosion
   universeProfile?: string; // which seeded universe to load (default sniper_swing = mega-caps; zones_legacy = cheap $5-65)
 }
 
@@ -103,6 +104,36 @@ export async function runSbd1Stage2(cfg: Sbd1Stage2Config): Promise<string> {
         const key = `${sym}|${s.zone.bottom}|${s.zone.top}|${s.type}`;
         if (seen.has(key)) continue;
         seen.add(key);
+
+        // VegaMade v3 (SHARES): trade the underlying, not options — no theta/spread
+        // erosion. Long on a call setup, short on a put setup. Exit at the 2R target
+        // (limit) or when the stock CLOSES back through the zone (stop); ~3-week swing
+        // horizon; small round-trip cost. Fixed $1000 notional for comparable $.
+        if (cfg.shares) {
+          const bars: Bar[] = [today, ...data.futureBars(sym, 20)];
+          const isLong = s.direction === "call";
+          const entry = s.entry,
+            target = s.safeTarget,
+            stop = s.invalidation;
+          const riskPct = Math.abs(entry - stop) / entry;
+          let exitPx = bars[bars.length - 1]?.c ?? entry;
+          let reason = "time_exit";
+          for (let i = 1; i < bars.length; i++) {
+            const b = bars[i];
+            if (isLong) {
+              if (b.c <= stop) { exitPx = b.c; reason = "stop"; break; } // conservative: close-through stop first
+              if (b.h >= target) { exitPx = target; reason = "target"; break; }
+            } else {
+              if (b.c >= stop) { exitPx = b.c; reason = "stop"; break; }
+              if (b.l <= target) { exitPx = target; reason = "target"; break; }
+            }
+            if (i >= 15) { exitPx = b.c; reason = "time_exit"; break; }
+          }
+          const gross = isLong ? (exitPx - entry) / entry : (entry - exitPx) / entry;
+          const net = gross - 0.0006; // ~6bps round-trip stock cost (spread + slippage)
+          trades.push({ symbol: sym, day, direction: s.direction, entryAsk: round2(entry), exitBid: round2(exitPx), plUsd: round2(net * 1000), reason: `${reason}_${(net / (riskPct || 1)).toFixed(1)}R` });
+          continue;
+        }
 
         // VegaMade v1 (Claude's experiment) uses a PROPER SWING contract + an
         // UNDERLYING-based exit; simple/precision keep the cheap +100%/-25% spec so
@@ -204,8 +235,9 @@ function render(cfg: Sbd1Stage2Config, variant: string, symbols: number, days: n
   L.push("=".repeat(72));
   L.push(`SB-D1 ${variant.toUpperCase()} — OPTION-PRICE SIM (real chain, 1 contract)`);
   L.push(`  ${cfg.from} .. ${cfg.to} · ${days} days · ${symbols} symbols${cfg.callsOnly ? " · CALLS ONLY" : ""}${cfg.universeProfile === "zones_legacy" ? " · CHEAP universe" : ""}${cfg.marketAlign === false ? " · no-align" : ""}`);
-  L.push(vega ? "  contract: ATM/slightly-ITM ~2wk swing · exit: stock hits 2R target OR closes back through the zone (no -25% option stop)"
-              : "  contract: $0.50-1.00 · exit: +100% / -25% premium, ~1-day hold");
+  L.push(cfg.shares ? "  instrument: SHARES ($1000 notional/trade) · exit: 2R target / close-through-zone stop · ~3wk swing"
+        : vega ? "  contract: ATM/slightly-ITM ~2wk swing · exit: stock hits 2R target OR closes back through the zone (no -25% option stop)"
+               : "  contract: $0.50-1.00 · exit: +100% / -25% premium, ~1-day hold");
   L.push("=".repeat(72));
   L.push("");
   L.push(`Trades: ${trades.length}   ·   win rate ${trades.length ? Math.round((wins.length / trades.length) * 100) : 0}%   ·   profit factor ${pf ?? "—"}`);
