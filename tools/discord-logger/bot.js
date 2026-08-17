@@ -169,6 +169,10 @@ client.on(Events.MessageCreate, async (msg) => {
   // decides ("push" → git push; anything else → more edits; "cancel"/"undo" → revert).
   // Needs Send Messages permission in the channel.
   if (msg.mentions?.has(client.user)) {
+    // ACKNOWLEDGE FIRST, before ANY work: an instant 👀 reaction on the message the
+    // moment it's seen (works even without Send Messages permission), then a text
+    // "on it" below. So there is never silence between the message and the work.
+    await msg.react("👀").catch(() => {});
     await logMessage(msg); // keep the request in the transcript too
     const text = msg.content.replace(/<@!?\d+>/g, "").trim();
     const reply = async (s) => {
