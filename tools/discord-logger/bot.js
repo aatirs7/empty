@@ -17,7 +17,7 @@ import { mkdirSync, existsSync, readFileSync, appendFileSync, writeFileSync } fr
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, GatewayIntentBits, Events } from "discord.js";
-import { answerQuestion } from "./answer.js";
+import { answerQuestion, makeChange } from "./answer.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Load .env from THIS folder no matter where the process was launched from, so it
@@ -121,6 +121,8 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
+let changeInFlight = false; // one `!change` at a time (avoid overlapping edits)
+
 client.once(Events.ClientReady, async (c) => {
   console.log(`Logged in as ${c.user.tag}. Watching channel ${CHANNEL_ID}.`);
   try {
@@ -142,23 +144,39 @@ client.on(Events.MessageCreate, async (msg) => {
   if (msg.channelId !== CHANNEL_ID) return;
   if (msg.author?.id === client.user?.id) return; // don't log our own replies
 
-  // Codebase Q&A: when @mentioned, pull relevant repo context and answer SHORT.
-  // Needs Send Messages permission in the channel + ANTHROPIC_API_KEY in .env.
+  // When @mentioned: a plain question → READ-ONLY answer; a message whose text starts
+  // with `!change` → the bot EDITS the repo (Read/Grep/Glob/Edit/Write/Bash, commits
+  // locally, never pushes/deploys). Needs Send Messages permission in the channel.
   if (msg.mentions?.has(client.user)) {
-    await logMessage(msg); // keep the question in the transcript too
-    const question = msg.content.replace(/<@!?\d+>/g, "").trim();
+    await logMessage(msg); // keep the request in the transcript too
+    const text = msg.content.replace(/<@!?\d+>/g, "").trim();
+    const change = text.match(/^!?change\b[:\s]*(.*)/is); // "!change ..." or "change ..."
+    const reply = async (s) => {
+      try {
+        await msg.reply(s.length > 1900 ? s.slice(0, 1900) + " …(truncated)" : s);
+      } catch {
+        console.error("Reply failed — does the bot have Send Messages permission in this channel?");
+      }
+    };
+
+    if (change) {
+      if (changeInFlight) return void reply("Still working on the previous change, give me a sec.");
+      changeInFlight = true;
+      await reply("🛠️ On it, making that change and typechecking. This can take a minute or two.");
+      try {
+        await reply(await makeChange(change[1], REPO_ROOT));
+      } finally {
+        changeInFlight = false;
+      }
+      return;
+    }
+
     try {
       await msg.channel.sendTyping();
     } catch {
       /* ignore */
     }
-    let answer = await answerQuestion(question, REPO_ROOT);
-    if (answer.length > 1900) answer = answer.slice(0, 1900) + " …(truncated)";
-    try {
-      await msg.reply(answer);
-    } catch {
-      console.error("Reply failed — does the bot have Send Messages permission in this channel?");
-    }
+    await reply(await answerQuestion(text, REPO_ROOT));
     return;
   }
 
