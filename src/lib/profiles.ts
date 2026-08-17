@@ -549,7 +549,7 @@ const VEGAMADE_V1: Profile = {
   ...SBD1,
   id: "vegamade_v1",
   label: "VegaMade v1",
-  description: "Claude-designed: fresh daily-zone tap, market-aligned, ATM/ITM ~2wk contract, exit on the STOCK (2R target / zone break). First PROFITABLE option backtest (+$535, PF 1.18).",
+  description: "Claude-designed daily-zone tap (ATM contract, underlying exit). Looked profitable in-sample but FAILED true out-of-sample (Oct-Dec 2025: -$2,679). No robust edge found — research only, do not trade.",
   // The winning design (2026-08-16, option-sim proven): a REAL ATM / slightly-ITM
   // contract ~2 weeks out (high delta, gentle theta) — NOT a cheap 1-day lottery — so
   // the option tracks the ~3-day underlying move. Exit is UNDERLYING-based: sell when
