@@ -1,5 +1,7 @@
 # Discord channel logger
 
+It also answers questions when @mentioned and accepts `!change` commands to edit the code from Discord.
+
 A tiny bot that mirrors **one** Discord channel (your general chat) into local files
 so Claude Code always has the history, and **auto-downloads attachments** (like the
 SB-D1 `.txt`) into `logs/attachments/`.
