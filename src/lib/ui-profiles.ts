@@ -12,9 +12,8 @@
 // SBv1 (sniper_swing) was SHELVED 2026-07-27 and replaced by SB-D1 — no tab.
 export const UI_PROFILE_TABS = [
   { id: "sb_d1", label: "SB-D1" },
-  { id: "sbv2", label: "SBv2" },
+  { id: "vegamade_v1", label: "VegaMade v1" },
   { id: "qqq_manual", label: "QQQ Manual" },
-  { id: "sb15m", label: "SB 15M" },
 ] as const;
 
 export const UI_PROFILE_IDS: string[] = UI_PROFILE_TABS.map((t) => t.id);

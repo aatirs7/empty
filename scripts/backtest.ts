@@ -33,6 +33,9 @@ const PROFILE_ALIASES: Record<string, string> = {
   sbd1: "sb_d1",
   sb_d1: "sb_d1",
   "sb d1": "sb_d1",
+  vegamade: "sb_d1",
+  vegamade_v1: "sb_d1",
+  "vegamade v1": "sb_d1",
   qqq_manual: "qqq_manual",
   qqq_0dte: "qqq_0dte",
 };
@@ -86,7 +89,8 @@ async function main() {
   if (profileId === "sb_d1") {
     // SB-D1 stock-level backtest. --variant precision (full filter stack) or simple
     // (raw daily-zone tap, Nitosphere spec). Same 2R underlying yardstick either way.
-    const variant = (arg("variant") ?? "precision") === "simple" ? "simple" : "precision";
+    const vraw = rawProfile.includes("vegamade") ? "vegamade" : (arg("variant") ?? "precision");
+    const variant = vraw === "simple" || vraw === "vegamade" ? vraw : "precision";
     console.log(`SB-D1 ${variant} stock-level backtest: ${from}..${to} (daily zones 1D/ATR50/1.7, underlying only)...`);
     console.log(await runSbd1Backtest({ from, to, universe, variant }));
     return;

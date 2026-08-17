@@ -13,13 +13,16 @@ import { loadUniverse } from "../scanner";
 import { PointInTimeData } from "./data";
 import { tradingDaysFromBars } from "./clock";
 import { walkForward, DEFAULT_HORIZON } from "./outcomes";
-import { evaluateSbd1, evaluateSbd1Simple, type Sbd1SetupType, type Sbd1Trend } from "../sbd1";
+import { evaluateSbd1, evaluateSbd1Simple, classifyTrend, type Sbd1SetupType, type Sbd1Trend } from "../sbd1";
 
 export interface Sbd1BacktestConfig {
   from: string;
   to: string;
   universe?: string[];
-  variant?: "precision" | "simple"; // precision = full filter stack; simple = raw daily-zone tap
+  // precision = full filter stack · simple = raw daily-zone tap · vegamade = the simple
+  // tap FILTERED to market-regime alignment (VegaMade v1: only trade the side that
+  // agrees with SPY's daily trend — trade with the tide, drop the counter-market side).
+  variant?: "precision" | "simple" | "vegamade";
 }
 
 interface Rec {
@@ -48,7 +51,9 @@ const TYPE_LABEL: Record<Sbd1SetupType, string> = {
 
 export async function runSbd1Backtest(cfg: Sbd1BacktestConfig): Promise<string> {
   const variant = cfg.variant ?? "precision";
-  const evaluate = variant === "simple" ? evaluateSbd1Simple : evaluateSbd1;
+  // precision uses the full engine; simple + vegamade use the raw-tap engine (vegamade
+  // then adds the market-alignment filter below).
+  const evaluate = variant === "precision" ? evaluateSbd1 : evaluateSbd1Simple;
   const universe = (cfg.universe?.length ? cfg.universe : await loadUniverse("sniper_swing")).slice().sort();
   if (universe.length === 0) throw new Error("SB-D1 backtest: empty universe (seed the sniper_swing universe or pass --universe).");
 
@@ -64,6 +69,10 @@ export async function runSbd1Backtest(cfg: Sbd1BacktestConfig): Promise<string> 
   for (const day of days) {
     data.advanceTo(day);
     const view = data.view();
+    // VegaMade v1: the broad-market regime for the day (SPY daily trend). Only setups
+    // whose direction agrees with it are taken (calls in an up-market, puts in a down-
+    // market) — trade with the tide, which is exactly what beat the counter-side.
+    const spyTrend = variant === "vegamade" ? classifyTrend(view.bars("SPY")) : null;
     for (const sym of universe) {
       const today = data.todayBar(sym);
       if (!today) continue;
@@ -78,6 +87,14 @@ export async function runSbd1Backtest(cfg: Sbd1BacktestConfig): Promise<string> 
       }
       for (const [k, n] of Object.entries(evald.rejections)) rejections[k] = (rejections[k] ?? 0) + n;
       for (const s of evald.setups) {
+        // VegaMade market-alignment gate.
+        if (variant === "vegamade") {
+          const aligned = (s.direction === "call" && spyTrend === "bullish") || (s.direction === "put" && spyTrend === "bearish");
+          if (!aligned) {
+            rejections["market_misaligned"] = (rejections["market_misaligned"] ?? 0) + 1;
+            continue;
+          }
+        }
         const key = `${sym}|${s.zone.bottom}|${s.zone.top}|${s.type}`;
         if (seen.has(key)) continue;
         seen.add(key);

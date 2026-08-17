@@ -10,7 +10,7 @@
 import { type StrategyOptions, DEFAULT_STRATEGY_OPTIONS } from "./strategy";
 import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
-export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy" | "sb15m" | "sb_d1";
+export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy" | "sb15m" | "sb_d1" | "vegamade_v1";
 
 /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day;
  *  oneDay = next trading day (the QQQ 1-day-swing leg). */
@@ -217,9 +217,10 @@ const SNIPER_SWING: Profile = {
 // as pure account-risk protections. Own paper account (ALPACA_*_3). PAPER-ONLY.
 const SBV2: Profile = {
   id: "sbv2",
-  label: "SBv2",
-  description: "4H empty-space breakout of a daily order block + first-retest entry. Premium exits: +100% target / -25% stop.",
+  label: "SBv2 (shelved)",
+  description: "Shelved 2026-08-16: backtest net -$602/$1000 (win 13%). Kept for history only.",
   active: true,
+  shelved: true, // owner: keep only QQQ Manual + the best performer (SB-D1/VegaMade)
   setupKind: "breakout", // scanner: daily zones + completed-4h qualification (breakout.ts)
   entryKind: "flip_retest", // monitor fires on the FIRST live touch of the stored boundary
   strategy: DEFAULT_STRATEGY_OPTIONS, // zone opts: daily ATR-50, displacement 1.7 (spec-fixed)
@@ -412,7 +413,8 @@ const QQQ_MANUAL: Profile = {
 // (auto-buy + exits HARD-GATED on those keys). Auto OFF — paper-measure first.
 const SB15M: Profile = {
   id: "sb15m",
-  label: "SB 15M",
+  label: "SB 15M (shelved)",
+  shelved: true, // owner 2026-08-16: backtest loses (-$1,026, ~10% win). History only.
   description: "15-min empty-space zone-tap day trader: first touch of the facing 4H-OB boundary, one $1-2 contract, -20% / breakeven at +40% / +100%.",
   active: true,
   entryKind: "empty_space_tap", // monitor fires on the boundary TAP itself (no candle)
@@ -535,6 +537,21 @@ const SBD1: Profile = {
   baselineSymbol: "SPY",
 };
 
+// VegaMade v1 — Claude's own profile (2026-08-16), designed from what the backtests
+// actually showed works: the daily-zone TAP (SB-D1 Simple) is the edge, but only in
+// the direction the broad market is trending (calls off a fresh demand zone in an
+// up-market, puts off a fresh supply zone in a down-market — "trade with the tide").
+// Head-to-head test (Apr-Aug 2026, underlying 2R yardstick): VegaMade 52.4% vs Simple
+// 50.7% vs Precision 44.9%, and it beats the money-losing SBv2/SB15M outright. The
+// market-alignment gate lives in the backtest (`--variant vegamade`); this config
+// mirrors SB-D1 (same 1D/ATR-50/1.7 foundation). Live path not built (paused).
+const VEGAMADE_V1: Profile = {
+  ...SBD1,
+  id: "vegamade_v1",
+  label: "VegaMade v1",
+  description: "Claude-designed: fresh daily-zone tap, market-aligned (calls in up-markets, puts in down). Best of the backtested profiles.",
+};
+
 export const PROFILES: Record<ProfileId, Profile> = {
   sniper_swing: SNIPER_SWING,
   sbv2: SBV2,
@@ -544,9 +561,10 @@ export const PROFILES: Record<ProfileId, Profile> = {
   zones_legacy: ZONES_LEGACY,
   sb15m: SB15M,
   sb_d1: SBD1,
+  vegamade_v1: VEGAMADE_V1,
 };
 
-export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy", "sb15m", "sb_d1"];
+export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy", "sb15m", "sb_d1", "vegamade_v1"];
 
 export function getProfile(id: string | null | undefined): Profile {
   return PROFILES[(id ?? "sniper_swing") as ProfileId] ?? SNIPER_SWING;

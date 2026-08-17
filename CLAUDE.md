@@ -294,6 +294,15 @@ Notes: default backfill is the last 200 messages (raise `BACKFILL_LIMIT` in `.en
 host it on Railway/Render). The logs are the owner's private chat: use them as context,
 don't quote personal/off-topic messages back.
 
+### Profile cull + VegaMade v1 (2026-08-16, owner via Nitosphere) — LIVE (paused)
+Owner: "which profile has the most potential? keep QQQ Manual + the next most promising only, then make your own profile VegaMade v1 and see if it outperforms in testing." Decision driven by backtests (Apr-Aug 2026, 129 names, underlying 2R yardstick):
+- **SB15M loses** (−$1,026, ~10% win, real 15m option sim) and **SBv2 loses** (−$602, run #8) → both **SHELVED** (`shelved:true`, dropped from UI tabs; kept for history).
+- **SB-D1** is the only positive-expectancy family (~45-51% to 2R; the demand-zone-rejection CALL side is the real edge at 64-68%). KEPT.
+- **VegaMade v1** (`vegamade_v1`, Claude-designed): the SB-D1 Simple daily-zone TAP **filtered to market-regime alignment** — only take the side that agrees with SPY's daily trend (calls in up-markets, puts in down). Backtest: **52.4%** to 2R (21 setups) vs Simple 50.7% (73) vs Precision 44.9% (158); tighter loser MAE (−9.1% vs −12.3%). Best of the bunch. Profile registered (spread-clones SB-D1 config); the market-alignment gate lives in the backtest engine (`--variant vegamade` / `--profile VegaMade`), not the live path (not built; paused).
+- **UI tabs now: SB-D1 · VegaMade v1 · QQQ Manual** (`UI_PROFILE_TABS`). SBv2/SB15M/SBv1 all shelved.
+- Backtest: `src/lib/backtest/sbd1.ts` `variant: "precision"|"simple"|"vegamade"`; `evaluateSbd1Simple` (raw tap) in `sbd1.ts`; vegamade = simple + SPY-`classifyTrend` alignment filter in the runner.
+- **CAVEATS (told to owner):** underlying-only (no option +100%/-25% sim yet), in-sample, ONE bullish-ish window, small samples (VegaMade n=21). Not proof of profit — next real step is the option-price sim on VegaMade's calls.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.
