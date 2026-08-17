@@ -27,6 +27,7 @@
     "arm": "tsx scripts/arm-paper-month.ts",
     "profile-auto": "tsx scripts/profile-auto.ts",
     "monitor": "tsx scripts/monitor.ts",
+    "vegamade": "tsx scripts/vegamade.ts",
     "seed": "tsx scripts/seed-watchlist.ts",
     "inspect": "tsx scripts/inspect-db.ts",
     "check:m5": "tsx scripts/check-m5.ts",

@@ -364,6 +364,38 @@ export async function placeOptionOrder(input: PlaceOptionOrderInput): Promise<Or
   return trading<Order>("/v2/orders", { method: "POST", body: JSON.stringify(body) });
 }
 
+export interface PlaceEquityOrderInput {
+  symbol: string; // stock ticker
+  qty: number; // whole shares
+  side: "buy" | "sell";
+  limitPrice?: number; // omit = market order
+}
+
+/**
+ * Places a PAPER equity (shares) order for VegaMade v4. Re-asserts paper mode and a
+ * per-order dollar ceiling (MAX_EQUITY_ORDER_USD, default $2000) so nothing oversizes.
+ * There is NO live-equity path — this only ever runs against the paper endpoint.
+ */
+export async function placeEquityOrder(input: PlaceEquityOrderInput): Promise<Order> {
+  if (process.env.TRADING_MODE !== "paper") {
+    throw new Error(`GUARDRAIL: TRADING_MODE must be "paper", got "${process.env.TRADING_MODE}".`);
+  }
+  if (!(input.qty >= 1)) throw new Error(`GUARDRAIL: equity qty must be >= 1 share, got ${input.qty}.`);
+  const capUsd = Number(process.env.MAX_EQUITY_ORDER_USD ?? 2000);
+  if (input.limitPrice != null && input.qty * input.limitPrice > capUsd) {
+    throw new Error(`GUARDRAIL: order $${(input.qty * input.limitPrice).toFixed(0)} exceeds MAX_EQUITY_ORDER_USD ($${capUsd}).`);
+  }
+  const body: Record<string, string> = {
+    symbol: input.symbol,
+    qty: String(Math.floor(input.qty)),
+    side: input.side,
+    type: input.limitPrice != null ? "limit" : "market",
+    time_in_force: "day",
+  };
+  if (input.limitPrice != null) body.limit_price = input.limitPrice.toFixed(2);
+  return trading<Order>("/v2/orders", { method: "POST", body: JSON.stringify(body) });
+}
+
 /** Polls an order until it reaches a terminal state or the timeout elapses. */
 export async function waitForFill(orderId: string, timeoutMs = 20_000, intervalMs = 1500): Promise<Order> {
   const terminal = new Set(["filled", "canceled", "rejected", "expired"]);

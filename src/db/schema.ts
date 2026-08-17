@@ -208,6 +208,27 @@ export const positionState = pgTable("position_state", {
   openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// VegaMade v4 SHARES positions (Claude's long-only demand-zone dip-buy). Its own
+// table because it trades STOCK, not options — carries the per-position 2R target,
+// zone-break stop, and zone so the daily runner can manage the swing exit.
+export const vegamadePositions = pgTable("vegamade_positions", {
+  id: serial("id").primaryKey(),
+  symbol: text("symbol").notNull(),
+  shares: integer("shares").notNull(),
+  entryPrice: numeric("entry_price").notNull(),
+  target: numeric("target").notNull(), // 2R underlying target
+  stop: numeric("stop").notNull(), // invalidation (zone-break) level
+  zoneBottom: numeric("zone_bottom").notNull(),
+  zoneTop: numeric("zone_top").notNull(),
+  entryOrderId: text("entry_order_id"),
+  openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
+  status: text("status").notNull().default("open"), // open | closed
+  exitPrice: numeric("exit_price"),
+  exitAt: timestamp("exit_at", { withTimezone: true }),
+  exitReason: text("exit_reason"),
+  realizedPl: numeric("realized_pl"),
+});
+
 // Mechanical shadow outcome per proposal (and a daily SPY baseline). Measures
 // what Vega PROPOSED, independent of which trades the owner approved.
 export const shadowOutcomes = pgTable("shadow_outcomes", {

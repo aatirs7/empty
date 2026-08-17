@@ -11,6 +11,7 @@ import {
   listPositions,
   getPosition,
   placeOptionOrder,
+  placeEquityOrder,
   waitForFill,
   closePosition,
   getClosedOrders,
@@ -21,6 +22,7 @@ import {
   type Position,
   type Order,
   type PlaceOptionOrderInput,
+  type PlaceEquityOrderInput,
   type PortfolioPL,
   type AccountKeys,
 } from "./alpaca";
@@ -31,6 +33,7 @@ export interface BrokerAdapter {
   listPositions(): Promise<Position[]>;
   getPosition(symbol: string): Promise<Position | null>;
   placeOptionOrder(input: PlaceOptionOrderInput): Promise<Order>;
+  placeEquityOrder(input: PlaceEquityOrderInput): Promise<Order>; // VegaMade v4 (shares)
   waitForFill(orderId: string, timeoutMs?: number, intervalMs?: number): Promise<Order>;
   closePosition(symbol: string, qty?: number): Promise<Order>;
   getClosedOrders(symbol: string): Promise<Order[]>;
@@ -83,6 +86,7 @@ class AlpacaBroker implements BrokerAdapter {
   listPositions = () => this.run(() => listPositions());
   getPosition = (symbol: string) => this.run(() => getPosition(symbol));
   placeOptionOrder = (input: PlaceOptionOrderInput) => this.run(() => placeOptionOrder(input));
+  placeEquityOrder = (input: PlaceEquityOrderInput) => this.run(() => placeEquityOrder(input));
   waitForFill = (orderId: string, timeoutMs?: number, intervalMs?: number) => this.run(() => waitForFill(orderId, timeoutMs, intervalMs));
   closePosition = (symbol: string, qty?: number) => this.run(() => closePosition(symbol, qty));
   getClosedOrders = (symbol: string) => this.run(() => getClosedOrders(symbol));
