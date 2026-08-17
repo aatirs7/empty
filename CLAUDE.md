@@ -309,6 +309,13 @@ Owner: "which profile has the most potential? keep QQQ Manual + the next most pr
 - **VegaMade v1 (owner: "vegamade is yours to experiment") is the FIRST PROFITABLE result: +$535 net, PF 1.18** (13 trades, 31% win). Its fix, hard-coded into the `vegamade` branch of sbd1-stage2 + the profile config: (1) a **real ATM/slightly-ITM ~2-week contract** (`VEGA_CONTRACT`: otm2/itm5, priceCap wide) with high delta + gentle theta so it tracks the stock, NOT a cheap OTM lottery; (2) **UNDERLYING-based exit** (`simulateSwingExit`: sell at the stock's 2R target or when it closes back through the zone; NO −25% option stop; catastrophe floor near expiry only); (3) market-alignment entry (calls in up-markets, puts in down). **Calls carry it (+$2,107 on 9); the put side loses (−$1,572 on 0/4).**
 - **HONEST caveats:** 13 trades, ONE bull-ish window, in-sample, modeled spread, calls-driven. Encouraging because the STRUCTURAL fix (real-delta contract + underlying exit) is generalizable — but NOT proof. Earns out-of-sample + other-regime testing, not deployment. Obvious v2: fix/drop the weak put side. On a $1000 account the ATM contract ($5-30) is too big — VegaMade's edge needs either a bigger account or a cheaper-stock universe (see memory `universe-must-be-cheap-stocks`).
 
+### VegaMade OUT-OF-SAMPLE test — edge does NOT hold (2026-08-16) — the important negative
+Ran the three follow-ups (flags `--calls-only`, `--cheap` [zones_legacy 110-name $5-65 universe]). Results (option sim, 1 contract):
+- Original Apr-Aug both: +$535 (PF 1.18, 13). Calls-only Apr-Aug: **+$2,107** (PF 2.55, 9).
+- **OOS Jan-Apr both: −$74** (PF 0.83, 7). **OOS Jan-Apr calls-only: −$281** (PF 0.37, 5). The calls that made +$2,107 in Apr-Aug LOST −$281 in Jan-Apr.
+- Cheap universe Apr-Aug: +$481 (PF 4.29, 7, tiny −$29 avg loss) — structurally the best fit (affordable + small controlled losses) but ALSO one window, small sample.
+- **VERDICT: VegaMade's positive result was a favorable-WINDOW artifact, not a robust edge.** It's positive in Apr-Aug, negative in Jan-Apr. "Drop puts" only helps in the window where calls already worked (curve-fit). Sample sizes are noise-level (5-13 trades) — the daily-zone-tap on options is too SPARSE to establish significance. **Do NOT deploy.** Only thread worth pulling: the cheap universe, and only with a much longer window / more names for real sample size. This negative is the backtest discipline working — it saved us from trading a curve-fit.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.
