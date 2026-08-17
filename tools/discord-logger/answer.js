@@ -10,19 +10,23 @@
  */
 import { spawn } from "node:child_process";
 
-const TIMEOUT_MS = Number(process.env.BOT_TIMEOUT_MS || 600000);
+const TIMEOUT_MS = Number(process.env.BOT_TIMEOUT_MS || 900000); // 15 min
 const MODEL = process.env.BOT_MODEL || ""; // optional --model override
 
-/** Run headless Claude Code with a prompt (via stdin). Returns its final text. */
-function runClaude(prompt, repoRoot) {
+/** Run headless Claude Code with a prompt (via stdin). MEMORY: pass the previous
+ *  session id to `resumeId` and it continues that SAME conversation, so the bot
+ *  remembers across Discord messages. Returns { text, sessionId } (sessionId is the
+ *  id to resume next time). Uses --output-format json to capture the session id. */
+function runClaude(prompt, repoRoot, resumeId) {
   return new Promise((resolve) => {
-    const args = ["-p", "--output-format", "text", "--allowedTools", "Read,Grep,Glob,Edit,Write,Bash"];
+    const args = ["-p", "--output-format", "json", "--allowedTools", "Read,Grep,Glob,Edit,Write,Bash"];
+    if (resumeId) args.push("--resume", resumeId);
     if (MODEL) args.push("--model", MODEL);
     const child = spawn("claude", args, { cwd: repoRoot, shell: true });
     let out = "";
     let err = "";
     let done = false;
-    const finish = (msg) => {
+    const finish = (text, sessionId) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -31,15 +35,23 @@ function runClaude(prompt, repoRoot) {
       } catch {
         /* already gone */
       }
-      resolve(msg);
+      resolve({ text, sessionId });
     };
-    const timer = setTimeout(() => finish("That took too long, so I stopped. Try again or narrow it down."), TIMEOUT_MS);
+    const timer = setTimeout(
+      () => finish("That took too long, so I stopped before finishing. A big multi-step job (like running several backtests) is better done with Claude directly, not me. Try a smaller step.", resumeId),
+      TIMEOUT_MS,
+    );
     child.stdout.on("data", (d) => (out += d.toString()));
     child.stderr.on("data", (d) => (err += d.toString()));
-    child.on("error", (e) => finish(`Couldn't run the Claude CLI (${e?.message ?? e}). Is \`claude\` installed and logged in?`));
+    child.on("error", (e) => finish(`Couldn't run the Claude CLI (${e?.message ?? e}). Is \`claude\` installed and logged in?`, resumeId));
     child.on("close", (code) => {
-      const text = out.trim();
-      finish(text || (code === 0 ? "(no output)" : `Failed${err ? `: ${err.split("\n")[0]}` : ""}.`));
+      // --output-format json prints one JSON object: { result, session_id, ... }.
+      try {
+        const j = JSON.parse(out);
+        finish((j.result || "").trim() || "(no output)", j.session_id || resumeId);
+      } catch {
+        finish(out.trim() || (code === 0 ? "(no output)" : `Failed${err ? `: ${err.split("\n")[0]}` : ""}.`), resumeId);
+      }
     });
     child.stdin.write(prompt);
     child.stdin.end();
@@ -64,10 +76,13 @@ const PREAMBLE =
   "Style: plain language for a non-expert, concise. Do NOT use em dashes (the '—' character); " +
   "use commas, periods, or parentheses.\n\nMESSAGE:\n";
 
-/** Answer a question or make a change. `bot.js` checks whether HEAD moved to know if
- *  a commit happened and it should offer to push. */
-export function handleRequest(text, repoRoot) {
+/** Answer a question or make a change, REMEMBERING the ongoing conversation. Pass the
+ *  previous sessionId to continue; returns { text, sessionId } to store for next time.
+ *  Only the FIRST message of a session gets the rules preamble; resumed turns just send
+ *  the message (the model already has the rules + prior context). */
+export function handleRequest(text, repoRoot, sessionId) {
   const t = (text || "").trim();
-  if (!t) return Promise.resolve("Ask me something, or tell me what to change (e.g. “set SB-D1 maxContracts to 2”).");
-  return runClaude(PREAMBLE + t, repoRoot);
+  if (!t) return Promise.resolve({ text: "Ask me something, or tell me what to change (e.g. “set SB-D1 maxContracts to 2”).", sessionId });
+  const prompt = sessionId ? t : PREAMBLE + t;
+  return runClaude(prompt, repoRoot, sessionId);
 }

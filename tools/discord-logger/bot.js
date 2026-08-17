@@ -125,6 +125,9 @@ const client = new Client({
 let busy = false; // one request at a time (avoid overlapping edits)
 // After a change commits locally, we wait for the human to say "push" or give edits.
 let pending = null; // { userId, baseRef } — baseRef = HEAD before the change session
+// Conversation MEMORY: the Claude Code session id, so each @mention CONTINUES the same
+// conversation instead of starting fresh. `!new` (or !reset) starts a clean session.
+let sessionId = null;
 
 /** Run a git command in the repo. Resolves {code, out, err}. */
 function git(args) {
@@ -200,19 +203,26 @@ client.on(Events.MessageCreate, async (msg) => {
       // else: treat as more edits on the same change session.
     }
 
+    // Start a fresh conversation (drops the remembered context).
+    if (/^!?(new|reset|forget)\b/i.test(text)) {
+      sessionId = null;
+      return void reply("Fresh start — I've cleared our conversation memory.");
+    }
+
     if (busy) return void reply("Give me a sec, still working on the last one.");
     busy = true;
     await reply("👀 On it…");
     try {
       const before = await gitHead();
-      const out = await handleRequest(text, REPO_ROOT);
+      const res = await handleRequest(text, REPO_ROOT, sessionId);
+      sessionId = res.sessionId || sessionId; // remember for the next message
       const after = await gitHead();
       if (after && after !== before) {
         // A commit happened. Keep the ORIGINAL base across follow-up edits so "undo"
         // scraps the whole session; refresh it only when starting fresh (no pending).
         pending = { userId: msg.author?.id, baseRef: pending?.baseRef ?? before };
       }
-      await reply(out);
+      await reply(res.text);
     } finally {
       busy = false;
     }
