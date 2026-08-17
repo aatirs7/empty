@@ -30,6 +30,24 @@ npm start                   # backfills recent history, then logs live
 - `npm run sync` — backfill once and exit (good before a Claude session; no need to leave it running).
 - In the channel, typing `!sync 300` pulls the last 300 on demand.
 
+## Ask it questions (@mention)
+
+@mention the bot with a question and it answers from **this codebase**, e.g.:
+
+> @Vega Assistant how does SB-D1 decide to enter a trade?
+
+Under the hood it runs the **Claude Code CLI** (`claude -p`) on **your Claude
+subscription** — it explores the repo itself and replies in 2–4 sentences. **No API
+key, no per-message charge** (it does use your plan's Claude Code usage, shared with
+normal dev — so it's "no extra $", not unlimited).
+
+Requirements:
+- The `claude` CLI installed and logged in on the machine running the bot (already
+  true if you use Claude Code here).
+- The bot has **Send Messages** permission in the channel (add it in the channel's
+  permissions if replies fail).
+- The bot must be **running** (`npm start`) to answer live.
+
 ## What Claude reads
 
 - `logs/general.md` — readable transcript (newest appended at the bottom).

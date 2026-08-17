@@ -17,11 +17,13 @@ import { mkdirSync, existsSync, readFileSync, appendFileSync, writeFileSync } fr
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, GatewayIntentBits, Events } from "discord.js";
+import { answerQuestion } from "./answer.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Load .env from THIS folder no matter where the process was launched from, so it
 // can be started from the repo root (e.g. Claude running it for you).
 dotenv.config({ path: join(HERE, ".env") });
+const REPO_ROOT = join(HERE, "..", ".."); // tools/discord-logger → repo root
 const LOG_DIR = join(HERE, "logs");
 const ATT_DIR = join(LOG_DIR, "attachments");
 const JSONL = join(LOG_DIR, "general.jsonl"); // structured, one message per line
@@ -139,6 +141,27 @@ client.once(Events.ClientReady, async (c) => {
 client.on(Events.MessageCreate, async (msg) => {
   if (msg.channelId !== CHANNEL_ID) return;
   if (msg.author?.id === client.user?.id) return; // don't log our own replies
+
+  // Codebase Q&A: when @mentioned, pull relevant repo context and answer SHORT.
+  // Needs Send Messages permission in the channel + ANTHROPIC_API_KEY in .env.
+  if (msg.mentions?.has(client.user)) {
+    await logMessage(msg); // keep the question in the transcript too
+    const question = msg.content.replace(/<@!?\d+>/g, "").trim();
+    try {
+      await msg.channel.sendTyping();
+    } catch {
+      /* ignore */
+    }
+    let answer = await answerQuestion(question, REPO_ROOT);
+    if (answer.length > 1900) answer = answer.slice(0, 1900) + " …(truncated)";
+    try {
+      await msg.reply(answer);
+    } catch {
+      console.error("Reply failed — does the bot have Send Messages permission in this channel?");
+    }
+    return;
+  }
+
   // Optional on-demand backfill: type "!sync 300" in the channel.
   const m = msg.content?.match(/^!sync(?:\s+(\d+))?/i);
   if (m) {
