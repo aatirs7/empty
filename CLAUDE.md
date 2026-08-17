@@ -328,6 +328,13 @@ Isolated the confound: every prior failure was the OPTION layer (theta+spread), 
 - **VegaMade v3 = LONG-ONLY demand-zone-tap SHARES swing. Positive across all 3 tested windows incl. the truly held-out Oct-Dec.** Canonical backtest: `npm run backtest -- --profile SB-D1 --variant simple --stage 2 --shares --calls-only --from <> --to <>`.
 - **HONEST caveats:** MARGINAL edge (PF 1.06-2.38; Jan-Apr barely positive), ~92 long trades total, and LONG-BIASED — all 3 windows are within a broadly up 2026 tape, so a sustained BEAR market would likely hurt (longs off support in a downtrend). $1000-account sizing/concurrency (1 position at a time) not yet modeled. NOT a money printer — but the first thing that isn't a curve-fit. Next: model account sizing/concurrency + test a bear window if data allows. Live path (shares execution) NOT built; app still paused.
 
+### VegaMade v3 — LONG multi-year + bear test + account sim (2026-08-16, FINAL picture)
+The shares sim needs only STOCK bars (not option bars), so it backtests over YEARS. Long-only demand-zone-tap shares, 129-name universe, `--shares --calls-only`:
+- **2022-2026 (4.5yr, 435 trades): 61% win, PF 2.07, +$8,997 per-trade.** A genuinely robust per-trade edge on a real sample across multiple regimes. THE validation the rest of the project never had.
+- **BUT 2022 (bear year) alone LOSES: 86 trades, 49% win, PF 0.68, -$785.** Confirms the long-bias — it's a "buy dips in up/neutral tapes" edge that gets hurt in a sustained downtrend. NOT market-neutral.
+- **Account sim (`accountSimShares`, real $1000, compounding, cap N concurrent, extra signals skipped) 2022-2026:** max-1-open $1000→$1,066 (+6.6%/4.5yr, -44.7% DD, took 131/435); max-2 →$1,800 (+80%, -26% DD); max-3 →$1,786 (+79%, -18% DD). On a TRUE $1k account (≈1 position at a time) it's weak (+6.6%, huge DD, skips ~70% of signals); it only works well with 2-3 concurrent (~$2-3k capital).
+- **FINAL VERDICT: VegaMade v3 is a REAL long-only dip-buy edge (validated 4.5yr/435 trades OOS), but NOT an all-weather $1k product** — it's long-biased (loses bears), high-drawdown (-18 to -45%), and capital-constrained on $1k. It's a legitimate COMPONENT: to be robust it needs a market-regime filter (sit out sustained downtrends) + more capital + position sizing (the natural v4, deliberately NOT built to avoid re-overfitting). This is the honest end state; the app stays paused and no live shares path exists.
+
 ## Notes for future sessions
 
 - Learning instrument, not a money machine. First month is paper only, measuring whether the "priced in vs mispriced" read beats doing nothing.

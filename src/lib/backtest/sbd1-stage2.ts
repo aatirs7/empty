@@ -51,6 +51,46 @@ interface Trade {
   exitBid: number;
   plUsd: number; // net of fees, qty 1
   reason: string;
+  exitDay?: string; // shares mode: for the account/concurrency sim
+  plPct?: number; // shares mode: return on the position (for compounding)
+}
+
+/** Account sim for the SHARES strategy: a real $startEquity account holding at most
+ *  `maxOpen` positions at once (each sized at 1/maxOpen of current equity), compounding.
+ *  Overlapping signals beyond the cap are skipped. Returns the equity curve summary. */
+function accountSimShares(trades: Trade[], maxOpen: number, startEquity: number) {
+  const evs: { day: string; type: "entry" | "exit"; i: number }[] = [];
+  trades.forEach((t, i) => {
+    if (t.exitDay == null || t.plPct == null) return;
+    evs.push({ day: t.day, type: "entry", i });
+    evs.push({ day: t.exitDay, type: "exit", i });
+  });
+  // Exits before entries on the same day (free the slot first); then by date.
+  evs.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.type === "exit" ? -1 : 1));
+  let equity = startEquity;
+  let peak = startEquity;
+  let maxDD = 0;
+  const open = new Map<number, number>(); // i -> allocated $
+  let taken = 0;
+  let skipped = 0;
+  for (const e of evs) {
+    if (e.type === "entry") {
+      if (open.size >= maxOpen) {
+        skipped++;
+        continue;
+      }
+      open.set(e.i, equity / maxOpen);
+      taken++;
+    } else {
+      const alloc = open.get(e.i);
+      if (alloc == null) continue; // was skipped
+      equity += alloc * (trades[e.i].plPct ?? 0);
+      open.delete(e.i);
+      peak = Math.max(peak, equity);
+      maxDD = Math.min(maxDD, (equity - peak) / peak);
+    }
+  }
+  return { endEquity: Math.round(equity), retPct: Math.round(((equity - startEquity) / startEquity) * 1000) / 10, maxDDpct: Math.round(maxDD * 1000) / 10, taken, skipped };
 }
 
 /** Premium exit against REAL option bars: +100% TP / -25% SL / time exit. Skips the
@@ -116,22 +156,24 @@ export async function runSbd1Stage2(cfg: Sbd1Stage2Config): Promise<string> {
             target = s.safeTarget,
             stop = s.invalidation;
           const riskPct = Math.abs(entry - stop) / entry;
-          let exitPx = bars[bars.length - 1]?.c ?? entry;
+          const lastBar = bars[bars.length - 1];
+          let exitPx = lastBar?.c ?? entry;
           let reason = "time_exit";
+          let exitDay = lastBar ? barDate(lastBar.t) : day;
           for (let i = 1; i < bars.length; i++) {
             const b = bars[i];
             if (isLong) {
-              if (b.c <= stop) { exitPx = b.c; reason = "stop"; break; } // conservative: close-through stop first
-              if (b.h >= target) { exitPx = target; reason = "target"; break; }
+              if (b.c <= stop) { exitPx = b.c; reason = "stop"; exitDay = barDate(b.t); break; } // conservative: close-through stop first
+              if (b.h >= target) { exitPx = target; reason = "target"; exitDay = barDate(b.t); break; }
             } else {
-              if (b.c >= stop) { exitPx = b.c; reason = "stop"; break; }
-              if (b.l <= target) { exitPx = target; reason = "target"; break; }
+              if (b.c >= stop) { exitPx = b.c; reason = "stop"; exitDay = barDate(b.t); break; }
+              if (b.l <= target) { exitPx = target; reason = "target"; exitDay = barDate(b.t); break; }
             }
-            if (i >= 15) { exitPx = b.c; reason = "time_exit"; break; }
+            if (i >= 15) { exitPx = b.c; reason = "time_exit"; exitDay = barDate(b.t); break; }
           }
           const gross = isLong ? (exitPx - entry) / entry : (entry - exitPx) / entry;
           const net = gross - 0.0006; // ~6bps round-trip stock cost (spread + slippage)
-          trades.push({ symbol: sym, day, direction: s.direction, entryAsk: round2(entry), exitBid: round2(exitPx), plUsd: round2(net * 1000), reason: `${reason}_${(net / (riskPct || 1)).toFixed(1)}R` });
+          trades.push({ symbol: sym, day, exitDay, plPct: net, direction: s.direction, entryAsk: round2(entry), exitBid: round2(exitPx), plUsd: round2(net * 1000), reason: `${reason}_${(net / (riskPct || 1)).toFixed(1)}R` });
           continue;
         }
 
@@ -243,6 +285,14 @@ function render(cfg: Sbd1Stage2Config, variant: string, symbols: number, days: n
   L.push(`Trades: ${trades.length}   ·   win rate ${trades.length ? Math.round((wins.length / trades.length) * 100) : 0}%   ·   profit factor ${pf ?? "—"}`);
   L.push(`NET (1 contract/trade): ${money(net)}   ·   avg win ${money(wins.length ? grossWin / wins.length : 0)}  vs  avg loss ${money(losses.length ? -grossLoss / losses.length : 0)}`);
   L.push(`Exits: ${Object.entries(byReason).map(([k, v]) => `${k} ${v}`).join(" · ")}`);
+  if (cfg.shares) {
+    L.push("");
+    L.push("ACCOUNT SIM (real $1000, compounding, holds N at a time; extra signals skipped):");
+    for (const mo of [1, 2, 3]) {
+      const a = accountSimShares(trades, mo, 1000);
+      L.push(`  max ${mo} open: $1000 → $${a.endEquity} (${a.retPct >= 0 ? "+" : ""}${a.retPct}%) · max DD ${a.maxDDpct}% · took ${a.taken}, skipped ${a.skipped}`);
+    }
+  }
   L.push("");
   L.push(dir("call"));
   L.push(dir("put"));

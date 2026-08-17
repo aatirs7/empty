@@ -549,7 +549,7 @@ const VEGAMADE_V1: Profile = {
   ...SBD1,
   id: "vegamade_v1",
   label: "VegaMade v1",
-  description: "VegaMade v3 (Claude): LONG SHARES (not options) on fresh demand-zone taps, 2R target / zone-break stop, ~3wk swing. Positive across ALL 3 tested windows incl. held-out (+$721 / +$46 / +$280 on $1k notional). Marginal + long-biased — the first result here that survives out-of-sample. Research; not wired to live.",
+  description: "VegaMade v3 (Claude): LONG SHARES on fresh demand-zone dips, 2R target / zone-break stop, ~3wk swing. REAL edge over 4.5yr/435 trades (61% win, PF 2.07) — but LONG-BIASED (loses the 2022 bear -$785) + needs >$1k (1-position $1k acct = +6.6%/4.5yr, -45% DD; 2-3 positions = +80%). A real long-only dip-buy component, not an all-weather product. Research; live path not built.",
   // The winning design (2026-08-16, option-sim proven): a REAL ATM / slightly-ITM
   // contract ~2 weeks out (high delta, gentle theta) — NOT a cheap 1-day lottery — so
   // the option tracks the ~3-day underlying move. Exit is UNDERLYING-based: sell when
