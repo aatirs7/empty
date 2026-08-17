@@ -16,8 +16,9 @@ import dotenv from "dotenv";
 import { mkdirSync, existsSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { Client, GatewayIntentBits, Events } from "discord.js";
-import { answerQuestion, makeChange } from "./answer.js";
+import { handleRequest } from "./answer.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Load .env from THIS folder no matter where the process was launched from, so it
@@ -121,7 +122,26 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
-let changeInFlight = false; // one `!change` at a time (avoid overlapping edits)
+let busy = false; // one request at a time (avoid overlapping edits)
+// After a change commits locally, we wait for the human to say "push" or give edits.
+let pending = null; // { userId, baseRef } — baseRef = HEAD before the change session
+
+/** Run a git command in the repo. Resolves {code, out, err}. */
+function git(args) {
+  return new Promise((resolve) => {
+    const c = spawn("git", args, { cwd: REPO_ROOT, shell: true });
+    let out = "";
+    let err = "";
+    c.stdout.on("data", (d) => (out += d.toString()));
+    c.stderr.on("data", (d) => (err += d.toString()));
+    c.on("close", (code) => resolve({ code, out: out.trim(), err: err.trim() }));
+    c.on("error", (e) => resolve({ code: 1, out: "", err: String(e?.message ?? e) }));
+  });
+}
+const gitHead = async () => (await git(["rev-parse", "HEAD"])).out;
+
+const PUSH_RE = /^\s*(push|ship( it)?|deploy|yes,?\s*push|go ahead|lgtm)\b/i;
+const CANCEL_RE = /^\s*(cancel|undo|revert|scrap|nvm|never ?mind|no,?\s*(undo|cancel))\b/i;
 
 client.once(Events.ClientReady, async (c) => {
   console.log(`Logged in as ${c.user.tag}. Watching channel ${CHANNEL_ID}.`);
@@ -144,13 +164,13 @@ client.on(Events.MessageCreate, async (msg) => {
   if (msg.channelId !== CHANNEL_ID) return;
   if (msg.author?.id === client.user?.id) return; // don't log our own replies
 
-  // When @mentioned: a plain question → READ-ONLY answer; a message whose text starts
-  // with `!change` → the bot EDITS the repo (Read/Grep/Glob/Edit/Write/Bash, commits
-  // locally, never pushes/deploys). Needs Send Messages permission in the channel.
+  // When @mentioned: it answers questions AND makes changes. After it commits a
+  // change (locally), it asks whether to push; the NEXT message from that person
+  // decides ("push" → git push; anything else → more edits; "cancel"/"undo" → revert).
+  // Needs Send Messages permission in the channel.
   if (msg.mentions?.has(client.user)) {
     await logMessage(msg); // keep the request in the transcript too
     const text = msg.content.replace(/<@!?\d+>/g, "").trim();
-    const change = text.match(/^!?change\b[:\s]*(.*)/is); // "!change ..." or "change ..."
     const reply = async (s) => {
       try {
         await msg.reply(s.length > 1900 ? s.slice(0, 1900) + " …(truncated)" : s);
@@ -159,24 +179,39 @@ client.on(Events.MessageCreate, async (msg) => {
       }
     };
 
-    if (change) {
-      if (changeInFlight) return void reply("Still working on the previous change, give me a sec.");
-      changeInFlight = true;
-      await reply("🛠️ On it, making that change and typechecking. This can take a minute or two.");
-      try {
-        await reply(await makeChange(change[1], REPO_ROOT));
-      } finally {
-        changeInFlight = false;
+    // --- Follow-up to a change that's waiting for a push decision ---------------
+    if (pending && msg.author?.id === pending.userId) {
+      if (PUSH_RE.test(text)) {
+        await reply("⬆️ Pushing…");
+        const r = await git(["push"]);
+        pending = null;
+        return void reply(r.code === 0 ? `Pushed. ✅\n${(r.out || r.err || "").slice(0, 300)}` : `Push failed:\n${(r.err || r.out).slice(0, 400)}`);
       }
-      return;
+      if (CANCEL_RE.test(text)) {
+        const base = pending.baseRef;
+        pending = null;
+        const r = await git(["reset", "--hard", base]);
+        return void reply(r.code === 0 ? "Reverted the change, back to how it was before. Nothing was pushed." : `Couldn't revert cleanly: ${r.err.slice(0, 300)}`);
+      }
+      // else: treat as more edits on the same change session.
     }
 
+    if (busy) return void reply("Give me a sec, still working on the last one.");
+    busy = true;
+    await reply("👀 On it…");
     try {
-      await msg.channel.sendTyping();
-    } catch {
-      /* ignore */
+      const before = await gitHead();
+      const out = await handleRequest(text, REPO_ROOT);
+      const after = await gitHead();
+      if (after && after !== before) {
+        // A commit happened. Keep the ORIGINAL base across follow-up edits so "undo"
+        // scraps the whole session; refresh it only when starting fresh (no pending).
+        pending = { userId: msg.author?.id, baseRef: pending?.baseRef ?? before };
+      }
+      await reply(out);
+    } finally {
+      busy = false;
     }
-    await reply(await answerQuestion(text, REPO_ROOT));
     return;
   }
 

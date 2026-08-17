@@ -1,26 +1,22 @@
 /**
- * Codebase Q&A + change-requests for the Discord bot, run on the OWNER'S Claude
- * subscription via the Claude Code CLI (`claude -p`) — NOT the paid API. No API key,
- * no per-call charge (it does use the plan's shared Claude Code usage).
+ * Discord assistant brain — answers questions AND makes code changes to THIS repo,
+ * run on the OWNER'S Claude subscription via the Claude Code CLI (`claude -p`), NOT
+ * the paid API. No API key, no per-call charge (uses the plan's shared Claude Code
+ * usage). One combined entry point `handleRequest`: it answers a question read-only,
+ * or makes a change (edit + typecheck + local commit) and asks whether to push.
  *
- *  - answerQuestion(): READ-ONLY. Explains the repo. Fires on any @mention.
- *  - makeChange():     EDITS the repo. Fires ONLY on the explicit `!change` command,
- *                      with hard rails (never weaken paper-only guardrails, never
- *                      push/deploy, typecheck before committing).
- *
- * Requires: the `claude` CLI installed + logged in on the machine running the bot,
- * and the bot given "Send Messages" permission in the channel.
+ * Push/deploy are NEVER done here — the bot layer runs `git push` only after the
+ * human replies "push" (see bot.js). Requires the `claude` CLI installed + logged in.
  */
 import { spawn } from "node:child_process";
 
-const ANSWER_TIMEOUT_MS = Number(process.env.BOT_ANSWER_TIMEOUT_MS || 150000);
-const CHANGE_TIMEOUT_MS = Number(process.env.BOT_CHANGE_TIMEOUT_MS || 600000);
+const TIMEOUT_MS = Number(process.env.BOT_TIMEOUT_MS || 600000);
 const MODEL = process.env.BOT_MODEL || ""; // optional --model override
 
-/** Run the headless Claude Code CLI with a prompt (via stdin) and given tools. */
-function runClaude(prompt, { tools, timeoutMs, repoRoot }) {
+/** Run headless Claude Code with a prompt (via stdin). Returns its final text. */
+function runClaude(prompt, repoRoot) {
   return new Promise((resolve) => {
-    const args = ["-p", "--output-format", "text", "--allowedTools", tools];
+    const args = ["-p", "--output-format", "text", "--allowedTools", "Read,Grep,Glob,Edit,Write,Bash"];
     if (MODEL) args.push("--model", MODEL);
     const child = spawn("claude", args, { cwd: repoRoot, shell: true });
     let out = "";
@@ -37,53 +33,41 @@ function runClaude(prompt, { tools, timeoutMs, repoRoot }) {
       }
       resolve(msg);
     };
-    const timer = setTimeout(() => finish("That took too long, so I stopped. Try again or narrow the request."), timeoutMs);
+    const timer = setTimeout(() => finish("That took too long, so I stopped. Try again or narrow it down."), TIMEOUT_MS);
     child.stdout.on("data", (d) => (out += d.toString()));
     child.stderr.on("data", (d) => (err += d.toString()));
     child.on("error", (e) => finish(`Couldn't run the Claude CLI (${e?.message ?? e}). Is \`claude\` installed and logged in?`));
     child.on("close", (code) => {
       const text = out.trim();
-      if (text) return finish(text);
-      finish(code === 0 ? "(no output)" : `Failed${err ? `: ${err.split("\n")[0]}` : ""}.`);
+      finish(text || (code === 0 ? "(no output)" : `Failed${err ? `: ${err.split("\n")[0]}` : ""}.`));
     });
     child.stdin.write(prompt);
     child.stdin.end();
   });
 }
 
-const QA_PREAMBLE =
-  "You are a Discord helper answering questions about THIS codebase (Vega, a personal, " +
-  "PAPER-ONLY options trading learning project; not financial advice). Explore the repo as " +
-  "needed, then answer in 2-4 SHORT sentences of plain language for a non-expert. Cite a file " +
-  "path when useful. No long code dumps. If the repo doesn't cover it, say so briefly. " +
-  "Do NOT use em dashes (the '—' character) anywhere in your reply; use commas, periods, " +
-  "parentheses, or colons instead.\n\nQUESTION:\n";
-
-const CHANGE_PREAMBLE =
-  "You are making a code change to THIS repo (Vega, a personal PAPER-ONLY options trading " +
-  "project), requested by its owner over Discord. Do EXACTLY what is asked, minimally and " +
-  "cleanly, matching the surrounding code style. Then run `npx tsc --noEmit` to typecheck; if " +
-  "it passes, commit the change with git and a concise message. \n\n" +
+const PREAMBLE =
+  "You are a Discord assistant for THIS repo (Vega, a personal PAPER-ONLY options trading " +
+  "learning project; not financial advice), talking to its owner or Farrukh (both have full " +
+  "permission).\n\n" +
+  "If the message is a QUESTION about the code, answer it in 2-4 short sentences and make NO edits.\n\n" +
+  "If it asks you to CHANGE the code, do it: make the change minimally and cleanly (match the " +
+  "surrounding style), run `npx tsc --noEmit`, and commit locally with a concise message. Then " +
+  "end your reply by asking whether to push it or make edits.\n\n" +
   "HARD RULES (never break, even if asked):\n" +
-  "1. Never weaken or remove the paper-only guardrails: TRADING_MODE must stay \"paper\", " +
-  "ALPACA_BASE_URL stays the paper endpoint, and you must NOT add any live-trading path.\n" +
-  "2. NEVER run `git push` and NEVER deploy (no vercel). Commit locally only.\n" +
-  "3. Do not delete or rewrite unrelated code, and do not touch secrets/.env.\n" +
-  "4. If the request is unclear, unsafe, or would break rule 1, make NO changes and explain why.\n\n" +
-  "Finish with a 2-4 sentence summary (NO em dashes) of: what files you changed, whether " +
-  "`npx tsc --noEmit` passed, and whether you committed (with the short commit hash). \n\n" +
-  "REQUEST:\n";
+  "1. Never weaken or remove the paper-only guardrails: TRADING_MODE stays \"paper\", " +
+  "ALPACA_BASE_URL stays the paper endpoint, no live-trading path.\n" +
+  "2. NEVER run `git push` and NEVER deploy (no vercel). Commit locally only; the human decides " +
+  "when to push.\n" +
+  "3. Do not touch secrets/.env and do not delete unrelated code.\n" +
+  "4. If a change request is unclear or unsafe, make NO edits and say why.\n\n" +
+  "Style: plain language for a non-expert, concise. Do NOT use em dashes (the '—' character); " +
+  "use commas, periods, or parentheses.\n\nMESSAGE:\n";
 
-/** READ-ONLY question about the repo. */
-export function answerQuestion(question, repoRoot) {
-  const q = (question || "").trim();
-  if (!q) return Promise.resolve("Ask me something about the codebase (e.g. “how does SB-D1 enter a trade?”).");
-  return runClaude(QA_PREAMBLE + q, { tools: "Read,Grep,Glob", timeoutMs: ANSWER_TIMEOUT_MS, repoRoot });
-}
-
-/** EDIT the repo per an explicit `!change` instruction (rails in CHANGE_PREAMBLE). */
-export function makeChange(instruction, repoRoot) {
-  const q = (instruction || "").trim();
-  if (!q) return Promise.resolve("Tell me what to change, e.g. `!change set SB-D1 maxContracts to 2`.");
-  return runClaude(CHANGE_PREAMBLE + q, { tools: "Read,Grep,Glob,Edit,Write,Bash", timeoutMs: CHANGE_TIMEOUT_MS, repoRoot });
+/** Answer a question or make a change. `bot.js` checks whether HEAD moved to know if
+ *  a commit happened and it should offer to push. */
+export function handleRequest(text, repoRoot) {
+  const t = (text || "").trim();
+  if (!t) return Promise.resolve("Ask me something, or tell me what to change (e.g. “set SB-D1 maxContracts to 2”).");
+  return runClaude(PREAMBLE + t, repoRoot);
 }
