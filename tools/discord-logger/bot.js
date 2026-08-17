@@ -128,6 +128,10 @@ let pending = null; // { userId, baseRef } — baseRef = HEAD before the change 
 // Conversation MEMORY: the Claude Code session id, so each @mention CONTINUES the same
 // conversation instead of starting fresh. `!new` (or !reset) starts a clean session.
 let sessionId = null;
+// A big job the bot recommended running in the terminal; if the user overrides
+// ("you run it"), the bot runs it here anyway.
+let deferred = null; // { userId, text }
+const OVERRIDE_RE = /^\s*(you run it|run it anyway|do it anyway|no,?\s*you|go ahead|just do it|yes,?\s*(run|do) it)\b/i;
 
 /** Run a git command in the repo. Resolves {code, out, err}. */
 function git(args) {
@@ -206,23 +210,36 @@ client.on(Events.MessageCreate, async (msg) => {
     // Start a fresh conversation (drops the remembered context).
     if (/^!?(new|reset|forget)\b/i.test(text)) {
       sessionId = null;
+      deferred = null;
       return void reply("Fresh start — I've cleared our conversation memory.");
     }
 
+    // Override: the user tells the bot to run a big job it had recommended for the
+    // terminal. Fold the request back in with an approval note.
+    const isOverride = deferred && msg.author?.id === deferred.userId && OVERRIDE_RE.test(text);
+    const workText = isOverride ? "The user approved doing this heavy job here despite the size. Proceed and complete it fully now.\n\n" + deferred.text : text;
+    if (isOverride) deferred = null;
+
     if (busy) return void reply("Give me a sec, still working on the last one.");
     busy = true;
-    await reply("👀 On it…");
+    await reply(isOverride ? "👀 Okay, running it here as you asked — this may take a while." : "👀 On it…");
     try {
       const before = await gitHead();
-      const res = await handleRequest(text, REPO_ROOT, sessionId);
+      const res = await handleRequest(workText, REPO_ROOT, sessionId);
       sessionId = res.sessionId || sessionId; // remember for the next message
-      const after = await gitHead();
-      if (after && after !== before) {
-        // A commit happened. Keep the ORIGINAL base across follow-up edits so "undo"
-        // scraps the whole session; refresh it only when starting fresh (no pending).
-        pending = { userId: msg.author?.id, baseRef: pending?.baseRef ?? before };
+      // The model can defer a big job to the terminal.
+      if (!isOverride && /^\s*RECOMMEND_TERMINAL:/i.test(res.text)) {
+        deferred = { userId: msg.author?.id, text };
+        await reply(res.text.replace(/^\s*RECOMMEND_TERMINAL:\s*/i, "").trim() + '\n\n(Reply "you run it" if you want me to do it here anyway.)');
+      } else {
+        const after = await gitHead();
+        if (after && after !== before) {
+          // A commit happened. Keep the ORIGINAL base across follow-up edits so "undo"
+          // scraps the whole session; refresh it only when starting fresh (no pending).
+          pending = { userId: msg.author?.id, baseRef: pending?.baseRef ?? before };
+        }
+        await reply(res.text);
       }
-      await reply(res.text);
     } finally {
       busy = false;
     }

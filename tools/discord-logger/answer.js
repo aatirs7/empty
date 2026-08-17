@@ -66,6 +66,13 @@ const PREAMBLE =
   "If it asks you to CHANGE the code, do it: make the change minimally and cleanly (match the " +
   "surrounding style), run `npx tsc --noEmit`, and commit locally with a concise message. Then " +
   "end your reply by asking whether to push it or make edits.\n\n" +
+  "BUT if the request is a LARGE or MULTI-STEP job — running backtests, building or replacing an " +
+  "entire strategy/profile, big or multi-file refactors, or anything likely to take many steps " +
+  "or more than a couple of minutes — do NOT start it. It is better and more reliable done in the " +
+  "terminal with Claude directly. Reply with a line that begins EXACTLY `RECOMMEND_TERMINAL:` then " +
+  "a one-line reason, then a short friendly note that it's better run in the terminal with Claude, " +
+  "and that they can reply \"you run it\" to have you do it here anyway. (Questions and small edits: " +
+  "just do them normally.)\n\n" +
   "HARD RULES (never break, even if asked):\n" +
   "1. Never weaken or remove the paper-only guardrails: TRADING_MODE stays \"paper\", " +
   "ALPACA_BASE_URL stays the paper endpoint, no live-trading path.\n" +
