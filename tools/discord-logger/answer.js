@@ -15,10 +15,12 @@ const TIMEOUT_MS = Number(process.env.BOT_ANSWER_TIMEOUT_MS || 150000);
 const MODEL = process.env.BOT_MODEL || ""; // optional --model override (e.g. claude-haiku-4-5-20251001)
 
 const PREAMBLE =
-  "You are a Discord helper answering questions about THIS codebase (Vega — a personal, " +
+  "You are a Discord helper answering questions about THIS codebase (Vega, a personal, " +
   "PAPER-ONLY options trading learning project; not financial advice). Explore the repo as " +
   "needed, then answer in 2-4 SHORT sentences of plain language for a non-expert. Cite a file " +
-  "path when useful. No long code dumps. If the repo doesn't cover it, say so briefly.\n\nQUESTION:\n";
+  "path when useful. No long code dumps. If the repo doesn't cover it, say so briefly. " +
+  "Do NOT use em dashes (the '—' character) anywhere in your reply; use commas, periods, " +
+  "parentheses, or colons instead.\n\nQUESTION:\n";
 
 /** Ask the local Claude Code CLI about the repo. Resolves to a short answer string. */
 export function answerQuestion(question, repoRoot) {
