@@ -16,6 +16,7 @@ import { runStage2 } from "../src/lib/backtest/stage2";
 import { runIntraday } from "../src/lib/backtest/intraday";
 import { runSbv2Breakout } from "../src/lib/backtest/sbv2-breakout";
 import { runSbd1Backtest } from "../src/lib/backtest/sbd1";
+import { runSbd1Stage2 } from "../src/lib/backtest/sbd1-stage2";
 import { buildStage1Report, renderStage1Report, buildStage2Report, renderStage2Report, buildIntradayReport, renderIntradayReport } from "../src/lib/backtest/report";
 
 function arg(name: string): string | undefined {
@@ -91,6 +92,13 @@ async function main() {
     // (raw daily-zone tap, Nitosphere spec). Same 2R underlying yardstick either way.
     const vraw = rawProfile.includes("vegamade") ? "vegamade" : (arg("variant") ?? "precision");
     const variant = vraw === "simple" || vraw === "vegamade" ? vraw : "precision";
+    // --stage 2 (or --options) runs the OPTION-PRICE sim (+100%/-25% premium exit);
+    // otherwise the underlying stock-level report.
+    if (arg("stage") === "2" || process.argv.includes("--options")) {
+      console.log(`SB-D1 ${variant} OPTION sim: ${from}..${to} (real chain, $0.50-1.00, +100%/-25%)...`);
+      console.log(await runSbd1Stage2({ from, to, universe, variant }));
+      return;
+    }
     console.log(`SB-D1 ${variant} stock-level backtest: ${from}..${to} (daily zones 1D/ATR50/1.7, underlying only)...`);
     console.log(await runSbd1Backtest({ from, to, universe, variant }));
     return;
