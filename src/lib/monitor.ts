@@ -1356,7 +1356,8 @@ export async function monitorTick(): Promise<Fire[]> {
       const noOwnAccount =
         (c.profileId === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) ||
         (c.profileId === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim()) ||
-        (c.profileId === "sb15m" && !process.env.ALPACA_API_KEY_ID4?.trim());
+        (c.profileId === "sb15m" && !process.env.ALPACA_API_KEY_ID4?.trim()) ||
+        (c.profileId === "sb_d1" && !process.env.ALPACA_API_KEY_ID3?.trim());
       const autoOn = !noOwnAccount && (await cachedSettings(c.profileId)).autoExecute;
       if (noOwnAccount) {
         const keysHint = c.profileId === "sbv3" ? "ALPACA_*_5" : c.profileId === "sb15m" ? "ALPACA_*_4" : "ALPACA_*_2";
@@ -1422,7 +1423,7 @@ export async function monitorTick(): Promise<Fire[]> {
         }
       }
     }
-    for (const pid of ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "sb15m"]) {
+    for (const pid of ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "sb15m", "sb_d1"]) {
       try {
         // A shelved profile is PAUSED: no orders, and no exit management — its account
         // may have been handed to another profile (qqq_0dte → qqq_manual, 2026-07-15),
@@ -1434,6 +1435,7 @@ export async function monitorTick(): Promise<Fire[]> {
         if (pid === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) continue;
         if (pid === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim()) continue;
         if (pid === "sb15m" && !process.env.ALPACA_API_KEY_ID4?.trim()) continue;
+        if (pid === "sb_d1" && !process.env.ALPACA_API_KEY_ID3?.trim()) continue;
         if (!(await cachedSettings(pid)).autoManage) continue;
         fires.push(...(await manageExits(pid, nearClose)));
       } catch {

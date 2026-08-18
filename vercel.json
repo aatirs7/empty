@@ -4,6 +4,7 @@
   "installCommand": "npm install --no-audit --no-fund",
   "crons": [
     { "path": "/api/monitor", "schedule": "* * * * *" },
+    { "path": "/api/scan", "schedule": "0 4 * * 1-5" },
     { "path": "/api/vegamade", "schedule": "0 22 * * 1-5" },
     { "path": "/api/remind-levels", "schedule": "45 12 * * 1-5" },
     { "path": "/api/remind-levels", "schedule": "45 13 * * 1-5" },

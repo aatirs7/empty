@@ -512,28 +512,31 @@ const ZONES_LEGACY: Profile = {
 const SBD1: Profile = {
   id: "sb_d1",
   label: "SB-D1",
-  description: "SB-D1 Precision — selective 1D-zone swing (calls + puts), one $1,000 account. Fresh replacement for SBv1.",
+  description: "SB-D1 Daily Zone Rejection: tap a daily zone from the correct side → buy a $0.50-1.00 call/put → +100% TP / -25% stop, ~1-day swing. Owner's message (8) spec; live paper (note: backtests lose).",
   active: true,
   strategy: DEFAULT_STRATEGY_OPTIONS, // zone foundation only; SB-D1 detection lives in sbd1.ts
   zoneTimeframes: [DAILY_TF], // 1D / ATR-50 / displacement-1.7 ONLY (spec §1)
-  confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1 }, // SB-D1 uses its own 15m confirmation (staged)
-  minScore: 78, // §17 aligned-trend floor (neutral needs 85, enforced in sbd1.ts)
+  // "SB-D1 Daily Zone Rejection Swing" (owner's message (8).txt, LIVE-enabled
+  // 2026-08-18): the daily-zone TAP is the whole trigger — no confirmation, no score
+  // gate (minScore 0), no model. Monitor's tap-crossing path fires; execute resolves a
+  // $0.50-1.00 contract; manageExits runs the +100%/-25% intraday exit.
+  confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1 },
+  minScore: 0, // the tap is the trigger (spec §11) — no score minimum
   contract: {
-    // §9 DTE 21-60 (≈ monthly) and §10 delta 0.50-0.80 (ATM/slightly-ITM). The
-    // real strike engine (greeks + IV scenarios + reward:risk) is staged; these are
-    // placeholder band values for the profile registry.
-    expiryKind: "twoToFourWeeks",
-    otmPct: 2,
-    itmPct: 8, // slightly ITM preferred (§10)
-    priceFloor: 0.75,
-    priceIdeal: 1.25, // §12 preferred premium $75-150
-    priceCap: 2.0, // §12 hard premium cap $200
-    liquiditySpread: 0.9, // §11 spread <= ~10% of midpoint
+    // §6: $0.50-1.00 premium, short weekly (~1-day swing), ATM-ish so a cheap strike exists.
+    expiryKind: "friday",
+    otmPct: 6,
+    itmPct: 6,
+    priceFloor: 0.5,
+    priceIdeal: 0.75,
+    priceCap: 1.0,
+    liquiditySpread: 0.7,
   },
-  // §12/§20 Tier 1: 2% risk, ONE contract, ONE open position, ONE new entry/day.
-  caps: { perTradeBudget: 200, maxContracts: 1, maxOpenPositions: 1, maxTradesPerDay: 1 },
-  exit: { style: "swing", catastropheFloor: 0.1, catastropheDays: 2, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
-  autoDefault: false, // §22: paper-measure + validate before it ever trades
+  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3, maxTradesPerDay: 3 },
+  // §7/§8: +100% option take-profit, -25% option stop. Intraday style = premium TP/SL;
+  // the short weekly expiry is the outer time bound (~1-day-swing intent).
+  exit: { style: "intraday", takeProfit: 1.0, stopLoss: -0.25, sameDayExit: false },
+  autoDefault: false, // enabled via profile_settings by the owner
   baselineSymbol: "SPY",
 };
 
