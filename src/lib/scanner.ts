@@ -186,7 +186,15 @@ export async function runScan(runDate = new Date().toISOString().slice(0, 10)): 
   const results: ScanResult[] = [];
   for (const profile of activeProfiles()) {
     if (profile.manualLevels) continue; // levels are hand-entered (/api/manual-levels), never scanned
-    results.push(await scanProfile(profile, runDate));
+    // Per-profile isolation: one profile throwing must NOT abort the rest of the scan.
+    // (Bug: a mid-list profile error was silently starving every profile after it —
+    // e.g. sb_d1, near the end, never got scanned.)
+    try {
+      results.push(await scanProfile(profile, runDate));
+    } catch (e) {
+      console.error(`scanProfile(${profile.id}) failed:`, e instanceof Error ? e.message : e);
+      results.push({ profileId: profile.id, runDate, scanned: 0, candidates: 0, validSetups: 0 });
+    }
   }
 
   const totalScanned = results.reduce((s, r) => s + r.scanned, 0);

@@ -55,6 +55,7 @@ async function main() {
   add(SNIPER, "sniper_swing");
   add(SNIPER, "sbv2"); // SBv2 shares SBv1's universe for a clean comparison
   add(SNIPER, "sbv3"); // SBv3 = SBv2 clone (Farrukh's next update lands here)
+  add(SNIPER, "sb_d1"); // SB-D1 Daily Zone Rejection (owner-enabled 2026-08-18) — same mega-cap universe
   add(QQQ, "qqq_0dte");
   add(ZONES, "zones_legacy");
   add(SB15M_LIST, "sb15m");
