@@ -338,7 +338,7 @@ const QQQ_0DTE: Profile = {
 const QQQ_MANUAL: Profile = {
   id: "qqq_manual",
   label: "QQQ Manual",
-  description: "QQQ 0DTE off owner-entered levels: first level touched, direction from the 15-min approach, 5-contract ladder.",
+  description: "QQQ 0DTE off owner-entered levels: each level trades as price comes into it, direction from the 15-min approach, 5-contract ladder.",
   active: true,
   manualLevels: true, // candidates come ONLY from /api/manual-levels — never scanned
   strategy: DEFAULT_STRATEGY_OPTIONS,
@@ -359,8 +359,10 @@ const QQQ_MANUAL: Profile = {
     liquiditySpread: 0.7, // real two-sided market
     minAskSize: 5, // enough size quoted to fill the whole 5-lot
   },
-  // Exactly 5 contracts (5 × $0.35 = $175 worst case); ONE trade per session.
-  caps: { perTradeBudget: 200, maxContracts: 5, exactContracts: 5, maxOpenPositions: 1, maxTradesPerDay: 1 },
+  // Exactly 5 contracts (5 × $0.35 = $175 worst case). Owner 2026-08-24: EVERY level
+  // set can trade as price comes into it, so allow several entries/opens per day
+  // (each distinct level fires once; these caps bound the total).
+  caps: { perTradeBudget: 200, maxContracts: 5, exactContracts: 5, maxOpenPositions: 5, maxTradesPerDay: 5 },
   exit: {
     style: "intraday",
     takeProfit: 1.0, // fallback TP only if the ladder state is somehow unavailable

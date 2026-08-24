@@ -265,23 +265,6 @@ async function manualApproach(symbol: string, level: number, cur: number): Promi
   return { touched: false, reason: `level ${level} not reached (15m close ${prev.c}, now ${cur})` };
 }
 
-/** Has this profile actually PLACED a buy today? QQQ Manual takes ONE trade per
- *  session — "once the first level triggers an entry, ignore all other levels". A
- *  level that fails to enter (no contract in band, etc.) does NOT consume the day. */
-async function enteredToday(profileId: string): Promise<boolean> {
-  const [row] = await db
-    .select({ n: sql<string>`count(*)` })
-    .from(orders)
-    .innerJoin(proposals, eq(orders.proposalId, proposals.id))
-    .where(
-      and(
-        eq(proposals.profileId, profileId),
-        sql`(${orders.submittedAt} AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`,
-        sql`${orders.status} not in ('canceled', 'rejected')`,
-      ),
-    );
-  return Number(row?.n ?? 0) > 0;
-}
 
 /** Minutes since midnight in ET (SB15M's 9:45am-2:45pm day-trade entry window). */
 function etMinutesNow(): number {
@@ -1131,10 +1114,13 @@ export async function monitorTick(): Promise<Fire[]> {
       if (level <= 0) continue;
       const touch = await manualApproach(c.symbol, level, cur);
       if (!touch.touched) continue;
-      // One trade per session: only a PLACED order consumes the day (a level that
-      // couldn't find a contract leaves the rest of the list eligible).
-      if (manualDone ?? (manualDone = await enteredToday(c.profileId))) {
-        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `level ${level} touched — ignored, this session's trade is already taken` });
+      // EVERY level the owner set can trade as price comes into it (owner 2026-08-24):
+      // each DISTINCT level fires once (tappedSet dedup above), bounded by the profile's
+      // maxTradesPerDay/maxOpenPositions caps inside executeProposal. We only block a
+      // SECOND placement within THIS same tick (manualDone) so several levels tapped in
+      // one minute don't all fire at once; the rest trade on later ticks.
+      if (manualDone) {
+        fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: `level ${level} touched — deferred, another entry was already placed this tick` });
         continue;
       }
       direction = touch.direction; // decided at TOUCH time, not when the levels were saved
