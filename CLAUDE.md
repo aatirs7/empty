@@ -8,6 +8,14 @@ Vega is a personal, mobile-first web app (PWA) that researches pre-market news w
 
 Full requirements: `c:\Users\aatir\Downloads\vega-spec.md`. This file records the deltas from that spec plus the hard rules.
 
+## CURRENT STATE — LIVE (paper), as of 2026-08-24
+
+The app is RUNNING (paper). The 2026-07-27 pause is OVER. Historical section headers below marked "(paused)" are point-in-time and NO LONGER describe the live state — do not repeat "the app is paused" without checking. Verify the truth from the system, not the docs: `npx tsx scripts/profile-auto.ts` for per-profile auto state, recent `proposals`/`orders`/`activity_log` rows for actual trades, `vercel.json` crons for scheduling.
+
+- **Auto ON (paper):** `sb_d1` (SB-D1 Daily Zone Rejection OPTIONS, own account ALPACA_*_3), `vegamade_v1` (VegaMade v4 SHARES, default account), `qqq_manual` (needs daily owner levels; QQQ account ALPACA_*_2).
+- **Crons live:** `/api/monitor` (per-min), `/api/scan`, `/api/vegamade`, `/api/remind-levels` ×2, `/api/daily-report` ×2 (see `vercel.json`).
+- Everything else (SBv1/SBv2/SBv3/SB15M/qqq_0dte/zones_legacy) stays shelved + auto-off. Full detail in memory `vega-paused`.
+
 ## NON-NEGOTIABLE GUARDRAILS
 
 Never violate these. Never "temporarily" disable them to make a test pass.
