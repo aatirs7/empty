@@ -50,6 +50,9 @@ export interface ZoneSetup {
   // the touch tolerance (0.05-0.10 ATR).
   active_zones?: { bottom: number; top: number }[];
   htf_atr?: number;
+  // Zone-to-zone swing (owner 2026-08-24): the underlying take-profit = the near edge
+  // of the NEXT opposing Daily zone. Read back by the swing exit (zoneOfPosition).
+  predictedTarget?: number | null;
 }
 
 export interface StrategyOptions {
@@ -187,6 +190,76 @@ export function buildZoneSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STR
 /** Backward-compatible single-setup builder (the nearest/best zone). */
 export function buildZoneSetup(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS): ZoneSetup {
   return buildZoneSetups(bars, opts, 1)[0];
+}
+
+/** Minimum underlying room (entry -> next opposing zone) for a zone-swing setup. */
+export const ZONE_SWING_MIN_MOVE = 10; // dollars
+
+/**
+ * Daily Empty-Space Zone-to-Zone Swing (owner 2026-08-24, `zone-zoneswing.txt`).
+ * Find a setup where price sits in CLEAN EMPTY SPACE next to a Daily zone, with the
+ * NEXT opposing Daily zone at least $10 of underlying away as the target:
+ *   Bullish — nearest zone BELOW price is support; tap its TOP edge (facing the empty
+ *     space) from above => CALL; TP = near (bottom) edge of the nearest zone ABOVE.
+ *   Bearish — nearest zone ABOVE price is resistance; tap its BOTTOM edge from below
+ *     => PUT; TP = near (top) edge of the nearest zone BELOW.
+ * Empty space is guaranteed by construction (nearest-below/nearest-above neighbours,
+ * nothing between). The zone edge facing the empty space is the tap/entry; the near
+ * edge of the next opposing zone is `predictedTarget`. Exits are underlying-driven.
+ */
+export function buildZoneSwingSetups(bars: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS, limit = 1): ZoneSetup[] {
+  const { active, atr, lastBar } = computeZones(bars, opts.zone);
+  const price = lastBar.c;
+  const empty: ZoneSetup = {
+    active_zone: null,
+    tapped_edge: null,
+    trigger_edge: "first_touch",
+    approach: null,
+    direction: null,
+    clear_runway: false,
+    tap_granularity: "daily_scan",
+    distance_to_edge_pct: null,
+    setup_valid: false,
+    price,
+  };
+  if (active.length < 2) return [empty];
+  // Must be in clean empty space — not sitting inside a zone.
+  if (active.some((z) => price >= z.bottom && price <= z.top)) return [empty];
+
+  const below = active.filter((z) => z.top < price).sort((a, b) => b.top - a.top); // nearest-below first
+  const above = active.filter((z) => z.bottom > price).sort((a, b) => a.bottom - b.bottom); // nearest-above first
+  const allZonesJson = active.map((z) => ({ bottom: z.bottom, top: z.top }));
+
+  const cands: { zone: Zone; entry: number; target: number; direction: "call" | "put"; approach: "from_above" | "from_below" }[] = [];
+  if (below.length && above.length) {
+    // Bullish: support below, target = the zone above.
+    const entry = below[0].top;
+    const target = above[0].bottom;
+    if (target - entry >= ZONE_SWING_MIN_MOVE) cands.push({ zone: below[0], entry, target, direction: "call", approach: "from_above" });
+    // Bearish: resistance above, target = the zone below.
+    const bEntry = above[0].bottom;
+    const bTarget = below[0].top;
+    if (bEntry - bTarget >= ZONE_SWING_MIN_MOVE) cands.push({ zone: above[0], entry: bEntry, target: bTarget, direction: "put", approach: "from_below" });
+  }
+  if (!cands.length) return [empty];
+
+  // Nearest actionable entry first (whichever edge price is closer to taps next).
+  cands.sort((a, b) => Math.abs(price - a.entry) - Math.abs(price - b.entry));
+  return cands.slice(0, limit).map((c) => ({
+    active_zone: { bottom: c.zone.bottom, top: c.zone.top },
+    tapped_edge: Math.round(c.entry * 100) / 100,
+    trigger_edge: "first_touch",
+    approach: c.approach,
+    direction: c.direction,
+    clear_runway: true, // empty space to the next opposing zone by construction
+    tap_granularity: "daily_scan",
+    distance_to_edge_pct: Math.round((Math.abs(price - c.entry) / price) * 10000) / 100,
+    setup_valid: true,
+    price,
+    predictedTarget: Math.round(c.target * 100) / 100,
+    active_zones: allZonesJson,
+    htf_atr: Math.round(atr * 10000) / 10000,
+  }));
 }
 
 // SBv2 won't watch a flip whose retest is already implausibly far away (spec:

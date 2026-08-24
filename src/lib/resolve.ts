@@ -22,6 +22,9 @@ export interface ResolveInput {
   maxPrice?: number; // legacy: prefer contracts cheaper than this per share
   contract?: ContractConfig; // profile-driven window/band/expiry/liquidity (preferred)
   minDays?: number; // minimum days to expiry (SBv2: 2, so a Thu tap buys NEXT Friday, not a 1-DTE)
+  // Zone-swing (owner 2026-08-24): the underlying take-profit. With contract.strikeFromTarget,
+  // the strike is anchored ~$N into the money PAST this price (ITM at target), not the spot band.
+  targetPrice?: number;
 }
 
 export interface ResolvedContract {
@@ -140,7 +143,34 @@ export async function resolveContract(input: ResolveInput): Promise<ResolvedCont
   const itmPct = input.contract?.itmPct ?? 3;
   const spread = input.contract?.liquiditySpread ?? 0.7;
 
-  if (band) {
+  // TARGET-ANCHORED strike (zone-swing, owner 2026-08-24): pick the liquid strike
+  // nearest to ~$N into the money PAST the target (call: target - N; put: target + N)
+  // so the contract is ITM at the target. Ignores the spot-relative premium band.
+  const strikeFromTarget = input.contract?.strikeFromTarget;
+  if (strikeFromTarget != null && input.targetPrice && input.targetPrice > 0) {
+    const tStrike = input.direction === "call" ? input.targetPrice - strikeFromTarget : input.targetPrice + strikeFromTarget;
+    const nearest = poolAll
+      .slice()
+      .sort((a, b) => Math.abs(Number(a.strike_price) - tStrike) - Math.abs(Number(b.strike_price) - tStrike))
+      .slice(0, 14);
+    if (nearest.length) {
+      const quotes = await getOptionQuotes(nearest.map((c) => c.symbol));
+      const priced = nearest
+        .map((c) => ({ c, q: quotes[c.symbol], ask: quotes[c.symbol]?.ap ?? 0, bid: quotes[c.symbol]?.bp ?? 0 }))
+        .filter((x) => x.ask > 0.05 && x.bid > 0 && x.bid >= spread * x.ask);
+      if (priced.length) {
+        const chosen = priced.reduce((best, x) =>
+          Math.abs(Number(x.c.strike_price) - tStrike) < Math.abs(Number(best.c.strike_price) - tStrike) ? x : best,
+        );
+        pick = chosen.c;
+        quote = chosen.q;
+      }
+    }
+    // Nothing liquid near the target strike -> leave unpriced so execute skips (no
+    // spot-band fallback for this mode).
+  }
+
+  if (band && !pick && strikeFromTarget == null) {
     const lo = input.direction === "call" ? spot * (1 - itmPct / 100) : spot * (1 - otmPct / 100);
     const hi = input.direction === "call" ? spot * (1 + otmPct / 100) : spot * (1 + itmPct / 100);
     let candidates = poolAll.filter((c) => Number(c.strike_price) >= lo && Number(c.strike_price) <= hi);

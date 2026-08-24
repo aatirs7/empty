@@ -75,6 +75,14 @@ function accountKeysFor(profileId?: string): AccountKeys | null {
     const secret = process.env.ALPACA_API_SECRET_KEY4?.trim();
     if (id && secret) return { id, secret };
   }
+  if (profileId === "zone_swing") {
+    // Daily Empty-Space Zone-to-Zone Swing (owner 2026-08-24) — own account when keys6
+    // exist; monitor.ts hard-gates its auto-buy/manage on keys6 (default-keys fallback
+    // is read-only, so it never trades another profile's account).
+    const id = process.env.ALPACA_API_KEY_ID6?.trim();
+    const secret = process.env.ALPACA_API_SECRET_KEY6?.trim();
+    if (id && secret) return { id, secret };
+  }
   return null; // default keys
 }
 

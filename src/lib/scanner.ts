@@ -8,7 +8,7 @@ import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "../db";
 import { universe as universeTable, candidates as candidatesTable, researchRuns } from "../db/schema";
 import { getMultiStockBars, getIntradayBars, type Bar } from "./alpaca";
-import { buildZoneSetups, buildFlipSetupsDetailed, buildBreakoutSetupsDetailed } from "./strategy";
+import { buildZoneSetups, buildFlipSetupsDetailed, buildBreakoutSetupsDetailed, buildZoneSwingSetups } from "./strategy";
 import { FLIP_REJECTION_LABELS, type FlipRejection } from "./flips";
 import { BREAKOUT_REJECTION_LABELS, type BreakoutRejection } from "./breakout";
 import { classifyAndScore } from "./playbook";
@@ -110,6 +110,10 @@ async function scanTimeframe(
         const built = buildFlipSetupsDetailed(bars, strat, watch);
         setups = built.setups;
         for (const [k, n] of Object.entries(built.rejections)) tally(k, n);
+      } else if (profile.setupKind === "zone_swing") {
+        // Daily Empty-Space Zone-to-Zone Swing (owner 2026-08-24): tap a Daily zone
+        // edge, target the next opposing Daily zone (≥ $10 room).
+        setups = buildZoneSwingSetups(bars, strat, watch);
       } else {
         setups = buildZoneSetups(bars, strat, watch);
       }

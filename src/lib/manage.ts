@@ -53,6 +53,7 @@ export async function zoneOfPosition(occSymbol: string): Promise<{
   direction: "call" | "put";
   predictedTarget: number | null;
   expectedHoldMin: number | null;
+  entryDate: string | null; // YYYY-MM-DD of the entry order (zone-swing next-day-open check)
 } | null> {
   const [ord] = await db
     .select()
@@ -66,7 +67,8 @@ export async function zoneOfPosition(occSymbol: string): Promise<{
   if (!zs?.active_zone || (zs.direction !== "call" && zs.direction !== "put")) return null;
   const predictedTarget = typeof zs.predictedTarget === "number" ? zs.predictedTarget : null;
   const expectedHoldMin = typeof zs.expectedHoldMin === "number" ? zs.expectedHoldMin : null;
-  return { bottom: zs.active_zone.bottom, top: zs.active_zone.top, direction: zs.direction, predictedTarget, expectedHoldMin };
+  const entryDate = ord.submittedAt ? new Date(ord.submittedAt).toISOString().slice(0, 10) : null;
+  return { bottom: zs.active_zone.bottom, top: zs.active_zone.top, direction: zs.direction, predictedTarget, expectedHoldMin, entryDate };
 }
 
 /** Most recent COMPLETED daily close of the underlying (excludes today's forming bar). */

@@ -677,10 +677,23 @@ async function manageExits(profileId: string, nearClose: boolean): Promise<Fire[
               const underlyingNow = bars[bars.length - 1].c;
               const completed = bars.filter((b) => b.t.slice(0, 10) < today);
               const lastClose = completed.length ? completed[completed.length - 1].c : null;
-              if (lastClose != null && zone.direction === "call" && lastClose < zone.bottom) {
-                reason = `swing invalidated — daily close ${lastClose} back below the zone`;
-              } else if (lastClose != null && zone.direction === "put" && lastClose > zone.top) {
-                reason = `swing invalidated — daily close ${lastClose} back above the zone`;
+              const todayBar = bars.find((b) => b.t.slice(0, 10) === today);
+              // Zone-swing (owner 2026-08-24): invalidate on a daily close/open back
+              // INSIDE the entry zone (past the tapped edge — call below the TOP, put
+              // above the BOTTOM). Default profiles keep the far-edge rule (call below
+              // the bottom, put above the top) and no open check — behavior unchanged.
+              const reenter = profile.exit.invalidateOnDailyReenter === true;
+              const callBreak = reenter ? zone.top : zone.bottom;
+              const putBreak = reenter ? zone.bottom : zone.top;
+              const openInvalid =
+                reenter && todayBar != null && zone.entryDate != null && today > zone.entryDate &&
+                ((zone.direction === "call" && todayBar.o < callBreak) || (zone.direction === "put" && todayBar.o > putBreak));
+              if (lastClose != null && zone.direction === "call" && lastClose < callBreak) {
+                reason = `swing invalidated — daily close ${lastClose} back ${reenter ? "inside" : "through"} the zone`;
+              } else if (lastClose != null && zone.direction === "put" && lastClose > putBreak) {
+                reason = `swing invalidated — daily close ${lastClose} back ${reenter ? "inside" : "through"} the zone`;
+              } else if (openInvalid) {
+                reason = `swing invalidated — session opened ${todayBar!.o} back inside the zone`;
               } else if (profile.exit.swingTakeProfit == null) {
                 // Underlying-target exit (SBv1: persisted DB target, else the playbook
                 // safe-target). Profiles with a premium take-profit skip this entirely.
@@ -978,6 +991,15 @@ export async function monitorTick(): Promise<Fire[]> {
       const b = c.direction === "call" ? z.top : z.bottom;
       return b > 0 && Math.abs(cur - b) / b <= TAP_PRECHECK_BAND;
     }
+    if (p.entryKind === "zone_swing_tap") {
+      // Zone-swing tap of the facing edge (call: zone top from above; put: zone bottom
+      // from below). Superset of tapCrossing so a between-tick tap still runs the loop.
+      const b = c.direction === "call" ? z.top : z.bottom;
+      if (b <= 0) return false;
+      const last = mem.lastPrice.get(c.symbol);
+      const crossed = last != null && (c.direction === "call" ? last > b && cur <= b : last < b && cur >= b);
+      return crossed || Math.abs(cur - b) / b <= TAP_PRECHECK_BAND;
+    }
     if (p.confirmation.enabled) return cur >= z.bottom * 0.99 && cur <= z.top * 1.01;
     return true; // tap-crossing profiles need prev-tick state — must run the loop
   });
@@ -1141,6 +1163,27 @@ export async function monitorTick(): Promise<Fire[]> {
         },
       ]);
       confirmReason = ` Level ${level} touched at ${cur}; prior completed 15m bar (${touch.barTime}) closed ${touch.barClose}, i.e. approaching ${touch.approach.replace("_", " ")} → ${direction.toUpperCase()}.`;
+    } else if (profile.entryKind === "zone_swing_tap") {
+      // Daily Empty-Space Zone-to-Zone Swing (owner 2026-08-24): enter on a live
+      // intraday TAP of the Daily zone edge facing the empty space (call = price falls
+      // to tap the zone TOP from above; put = price rises to tap the zone BOTTOM from
+      // below). No daily-close wait; mechanical (no sniper engine). One per candidate/day.
+      if (tappedSet.has(c.id)) continue;
+      if (prev == null) continue; // need a prior tick to detect the crossing
+      if (!tapCrossing(direction, prev, cur, z.bottom, z.top)) continue;
+      const tgt = (c.setup as { predictedTarget?: number } | null)?.predictedTarget ?? null;
+      await logActivity([
+        {
+          profileId: c.profileId,
+          symbol: c.symbol,
+          kind: "tap",
+          direction,
+          price: cur,
+          candidateId: c.id,
+          detail: `daily zone edge ${direction === "call" ? z.top : z.bottom} tapped at ${cur} → ${direction.toUpperCase()} toward next zone ${tgt ?? "?"}`,
+        },
+      ]);
+      confirmReason = ` Daily zone edge tapped at ${cur}; ride the empty space to the next zone ${tgt ?? "?"} (>= $10). ITM following-Friday contract; exit on the underlying reaching the target or a daily close/open back inside the zone (no option-% stop).`;
     } else if (profile.confirmation.enabled) {
       // Confirmation profiles (SBv1, QQQ 0DTE): fire only when price is AT the zone
       // AND an intraday confirmation candle prints (rejection/engulf/strong close +
@@ -1160,7 +1203,7 @@ export async function monitorTick(): Promise<Fire[]> {
     // Score the setup; only fire if it clears the profile's quality threshold. The
     // mechanical profiles (QQQ Manual, SB 15M) skip this entirely — their entry is the
     // level itself, and a scoring failure must never block a trade already decided.
-    const noScoring = profile.manualLevels || profile.entryKind === "empty_space_tap";
+    const noScoring = profile.manualLevels || profile.entryKind === "empty_space_tap" || profile.entryKind === "zone_swing_tap";
     let pb: ReturnType<typeof classifyAndScore> | null = null;
     let bars: Bar[] = [];
     if (!noScoring) {
@@ -1220,7 +1263,7 @@ export async function monitorTick(): Promise<Fire[]> {
     // score gate and NO adversarial sniper engine (per sniperbot-daily-swing-v2.md). It
     // keeps only the spec's light gates: a valid DB target (reward/move large enough) +
     // the news-against veto. SBv1/QQQ keep the score gate + sniper engine unchanged.
-    const mechanical = profile.entryKind === "flip_retest";
+    const mechanical = profile.entryKind === "flip_retest" || profile.entryKind === "zone_swing_tap";
     if (!pb && !noScoring) {
       fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: "could not score; skipped" });
       if (mechanical) await notifyBlocked(c.profileId, c.symbol, direction, "could not read the chart");
@@ -1343,10 +1386,12 @@ export async function monitorTick(): Promise<Fire[]> {
         (c.profileId === "qqq_manual" && !process.env.ALPACA_API_KEY_ID2?.trim()) ||
         (c.profileId === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim()) ||
         (c.profileId === "sb15m" && !process.env.ALPACA_API_KEY_ID4?.trim()) ||
-        (c.profileId === "sb_d1" && !process.env.ALPACA_API_KEY_ID3?.trim());
+        (c.profileId === "sb_d1" && !process.env.ALPACA_API_KEY_ID3?.trim()) ||
+        (c.profileId === "zone_swing" && !process.env.ALPACA_API_KEY_ID6?.trim());
       const autoOn = !noOwnAccount && (await cachedSettings(c.profileId)).autoExecute;
       if (noOwnAccount) {
-        const keysHint = c.profileId === "sbv3" ? "ALPACA_*_5" : c.profileId === "sb15m" ? "ALPACA_*_4" : "ALPACA_*_2";
+        const keysHint =
+          c.profileId === "sbv3" ? "ALPACA_*_5" : c.profileId === "sb15m" ? "ALPACA_*_4" : c.profileId === "sb_d1" ? "ALPACA_*_3" : c.profileId === "zone_swing" ? "ALPACA_*_6" : "ALPACA_*_2";
         await db
           .update(proposals)
           .set({ status: "expired", zoneRead: `${alert} Auto-skip: ${c.profileId} has no account keys (set ${keysHint})` })
@@ -1367,7 +1412,7 @@ export async function monitorTick(): Promise<Fire[]> {
             .set({ status: "expired", zoneRead: `${alert} Auto-skip: ${why}` })
             .where(eq(proposals.id, prop.id));
           fires.push({ symbol: c.symbol, direction, candidateId: c.id, price: cur, placed: false, detail: why });
-          if (profile.entryKind === "flip_retest" || profile.entryKind === "empty_space_tap" || profile.manualLevels)
+          if (profile.entryKind === "flip_retest" || profile.entryKind === "empty_space_tap" || profile.entryKind === "zone_swing_tap" || profile.manualLevels)
             await notifyBlocked(c.profileId, c.symbol, direction, friendlyBlock(why));
         }
       } else {
@@ -1409,7 +1454,7 @@ export async function monitorTick(): Promise<Fire[]> {
         }
       }
     }
-    for (const pid of ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "sb15m", "sb_d1"]) {
+    for (const pid of ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "sb15m", "sb_d1", "zone_swing"]) {
       try {
         // A shelved profile is PAUSED: no orders, and no exit management — its account
         // may have been handed to another profile (qqq_0dte → qqq_manual, 2026-07-15),
@@ -1422,6 +1467,7 @@ export async function monitorTick(): Promise<Fire[]> {
         if (pid === "sbv3" && !process.env.ALPACA_API_KEY_ID5?.trim()) continue;
         if (pid === "sb15m" && !process.env.ALPACA_API_KEY_ID4?.trim()) continue;
         if (pid === "sb_d1" && !process.env.ALPACA_API_KEY_ID3?.trim()) continue;
+        if (pid === "zone_swing" && !process.env.ALPACA_API_KEY_ID6?.trim()) continue;
         if (!(await cachedSettings(pid)).autoManage) continue;
         fires.push(...(await manageExits(pid, nearClose)));
       } catch {

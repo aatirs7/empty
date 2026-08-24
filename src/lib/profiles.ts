@@ -10,7 +10,7 @@
 import { type StrategyOptions, DEFAULT_STRATEGY_OPTIONS } from "./strategy";
 import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
-export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy" | "sb15m" | "sb_d1" | "vegamade_v1";
+export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy" | "sb15m" | "sb_d1" | "vegamade_v1" | "zone_swing";
 
 /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day;
  *  oneDay = next trading day (the QQQ 1-day-swing leg). */
@@ -24,6 +24,11 @@ export interface ZoneTimeframe {
   expiryKind?: ExpiryKind; // contract expiry for setups off this tf (defaults to the profile's)
 }
 const DAILY_TF: ZoneTimeframe = { timeframe: "daily", opts: DEFAULT_ZONE_OPTIONS }; // ATR50, disp 1.7
+// Zone-swing daily zones (owner 2026-08-24): same ATR50 / 1.7, but KEEP every zone as a
+// standing support/resistance level (firstTouchOnly OFF). The zone-to-zone swing needs
+// all the levels the indicator still draws, not just untouched ones — a zone tapped once
+// is still the wall the next move rides to.
+const ZONE_SWING_DAILY_TF: ZoneTimeframe = { timeframe: "daily", opts: { ...DEFAULT_ZONE_OPTIONS, firstTouchOnly: false } };
 const FOURH_TF: ZoneTimeframe = { timeframe: "4h", opts: { ...DEFAULT_ZONE_OPTIONS, displacement: 1.3 } };
 // QQQ intraday timeframes — PURELY same-day 0DTE (15Min + 1H). 4H was dropped: its
 // historical hold is ~3.7 trading days (a multi-day swing), which doesn't fit 0DTE.
@@ -45,6 +50,11 @@ export interface ContractConfig {
   // 5-lot and must not take a 1-lot quote). Only enforced when the feed reports a
   // size — an absent size is not treated as zero (it would block every trade).
   minAskSize?: number;
+  // Zone-swing (owner 2026-08-24): pick the strike this many dollars PAST the target
+  // into the money (call strike ≈ target - N, put strike ≈ target + N) so the contract
+  // is ITM at the target. When set (with a targetPrice), resolveContract anchors the
+  // strike to the target instead of the spot-relative premium band.
+  strikeFromTarget?: number;
 }
 
 export interface ProfileCaps {
@@ -117,6 +127,10 @@ export interface ExitConfig {
   // Structural early exit (SB15M spec §12): close when a COMPLETED 15-minute candle
   // closes through the zone against the position — before the % stop if needed.
   invalidateOn15mClose?: boolean;
+  // Zone-swing (owner 2026-08-24): invalidate when the underlying DAILY-closes back
+  // INSIDE the entry zone (past the tapped edge — tighter than the far-edge default),
+  // or the NEXT session OPENS back inside it. No option-premium stop at all.
+  invalidateOnDailyReenter?: boolean;
 }
 
 export interface ConfirmationConfig {
@@ -136,13 +150,13 @@ export interface Profile {
   // "flip" (RETIRED 2026-07-21 — the old SBv2 daily-flip logic; no active profile
   // uses it, code kept for reference), or "breakout" (SBv2 2026-07-21 — completed
   // 4H body-close outside a daily zone into empty space, awaiting first retest).
-  setupKind?: "tap" | "flip" | "breakout";
+  setupKind?: "tap" | "flip" | "breakout" | "zone_swing";
   // How the live monitor triggers an entry: "tap" (default — a boundary crossing /
   // confirmation candle), "flip_retest" (SBv2 — the FIRST live tap of the stored
   // boundary, re-validated at fire time), or "empty_space_tap" (SB 15M — the first
   // live touch of the zone boundary FACING price after an approach through empty
   // space; rejects a gap-through, a deep-inside tap, or a stale feed).
-  entryKind?: "tap" | "flip_retest" | "empty_space_tap";
+  entryKind?: "tap" | "flip_retest" | "empty_space_tap" | "zone_swing_tap";
   strategy: StrategyOptions;
   zoneTimeframes: ZoneTimeframe[]; // zone timeframes to scan (QQQ = Daily + 4H)
   confirmation: ConfirmationConfig;
@@ -564,6 +578,56 @@ const VEGAMADE_V1: Profile = {
   exit: { style: "swing", catastropheFloor: 0.15, catastropheDays: 3, takeProfit: 1.0, stopLoss: -0.3, sameDayExit: false },
 };
 
+// Daily Empty-Space Zone-to-Zone Swing (owner 2026-08-24, `zone-zoneswing.txt`) — a
+// genuinely different, robust-by-design profile: trade a Daily zone edge THROUGH empty
+// space to the NEXT opposing Daily zone (≥ $10 underlying room). Uses the exact same
+// 1D / ATR-50 / 1.7 SniperBot zones (setupKind "zone_swing" builds the setup). Entry =
+// a live intraday TAP of the facing edge (no daily-close wait). Contract = the FOLLOWING
+// week's Friday, strike ~$2-3 PAST the target into the money (high delta → tracks the
+// stock, ITM at target). Exit is purely UNDERLYING structure — the VegaMade insight:
+// take profit when the stock reaches the next zone; invalidate only on a daily
+// close/open back inside the entry zone; NO option-percentage stop. Auto OFF (shadow)
+// until the owner enables it and adds ALPACA_*_6.
+const ZONE_SWING: Profile = {
+  id: "zone_swing",
+  label: "Zone Swing",
+  description: "Daily Empty-Space Zone-to-Zone Swing: tap a Daily zone edge → ride through empty space (≥$10) to the next opposing Daily zone. Following-week Friday, ITM-at-target strike. Exit on the underlying reaching the next zone or a daily close/open back inside the zone — no option-% stop (VegaMade-style structural exit). Auto OFF until enabled.",
+  active: true,
+  setupKind: "zone_swing",
+  entryKind: "zone_swing_tap",
+  strategy: DEFAULT_STRATEGY_OPTIONS,
+  zoneTimeframes: [ZONE_SWING_DAILY_TF], // 1D / ATR-50 / 1.7, all standing zones (spec)
+  confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1 },
+  minScore: 0, // the tap is the trigger — mechanical, no sniper engine
+  contract: {
+    // Strike anchored to the TARGET (≈ $2.5 ITM), NOT a premium band. The band fields
+    // below are permissive fallbacks; strikeFromTarget + the execute-side targetPrice
+    // drive the real selection (resolveContract).
+    expiryKind: "friday", // + minDays 7 in execute => the FOLLOWING week's Friday
+    otmPct: 4,
+    itmPct: 20, // allow a comfortably-ITM strike
+    priceFloor: 0.1,
+    priceIdeal: 3.0,
+    priceCap: 40.0,
+    liquiditySpread: 0.6,
+    strikeFromTarget: 2.5, // $2-3 past the target into the money (spec §6)
+  },
+  caps: { perTradeBudget: 900, maxContracts: 1, maxOpenPositions: 3, maxTradesPerDay: 3 },
+  exit: {
+    style: "swing",
+    invalidateOnDailyReenter: true, // daily close/open back inside the entry zone = out
+    // No targetPremium / swingTakeProfit / swingStopLoss => the underlying-target +
+    // reenter-invalidation branch runs (predictedTarget = the next zone). NO option-% stop.
+    catastropheFloor: 0.05, // expiry-salvage safety only (never mid-swing)
+    catastropheDays: 1,
+    takeProfit: 1.0, // inert (swing style); kept to satisfy the type
+    stopLoss: -0.99, // inert
+    sameDayExit: false,
+  },
+  autoDefault: false, // shadow until the owner turns it on
+  baselineSymbol: "SPY",
+};
+
 export const PROFILES: Record<ProfileId, Profile> = {
   sniper_swing: SNIPER_SWING,
   sbv2: SBV2,
@@ -574,9 +638,10 @@ export const PROFILES: Record<ProfileId, Profile> = {
   sb15m: SB15M,
   sb_d1: SBD1,
   vegamade_v1: VEGAMADE_V1,
+  zone_swing: ZONE_SWING,
 };
 
-export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy", "sb15m", "sb_d1", "vegamade_v1"];
+export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy", "sb15m", "sb_d1", "vegamade_v1", "zone_swing"];
 
 export function getProfile(id: string | null | undefined): Profile {
   return PROFILES[(id ?? "sniper_swing") as ProfileId] ?? SNIPER_SWING;

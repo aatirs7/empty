@@ -13,6 +13,7 @@
 export const UI_PROFILE_TABS = [
   { id: "sb_d1", label: "SB-D1" },
   { id: "vegamade_v1", label: "VegaMade v1" },
+  { id: "zone_swing", label: "Zone Swing" },
   { id: "qqq_manual", label: "QQQ Manual" },
 ] as const;
 
