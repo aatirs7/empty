@@ -190,6 +190,12 @@ export async function runScan(runDate = new Date().toISOString().slice(0, 10)): 
   const results: ScanResult[] = [];
   for (const profile of activeProfiles()) {
     if (profile.manualLevels) continue; // levels are hand-entered (/api/manual-levels), never scanned
+    // Skip SHELVED profiles (2026-08-26): they're quarantined from live trading, so
+    // scanning them produces no orders — but the slow ones (sbv2 breakout's per-symbol
+    // 4H fetches, qqq_0dte/sb15m intraday) were eating the whole 300s Vercel budget and
+    // TIMING OUT the cron before it reached the live profiles (sb_d1/zone_swing got no
+    // candidates on 08-25/08-26 and never traded). Live profiles come first now.
+    if (profile.shelved) continue;
     // Per-profile isolation: one profile throwing must NOT abort the rest of the scan.
     // (Bug: a mid-list profile error was silently starving every profile after it —
     // e.g. sb_d1, near the end, never got scanned.)
