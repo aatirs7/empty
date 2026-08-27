@@ -548,7 +548,11 @@ const SBD1: Profile = {
     priceCap: 1.0,
     liquiditySpread: 0.7,
   },
-  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 3, maxTradesPerDay: 3 },
+  // Owner 2026-08-26: raised from 3/3 — sb_d1 finds ~20+ valid daily taps and was
+  // leaving high-score setups (SHOP 93, NEE 86, SBUX 81) on the table. 8 trades/day, 6
+  // concurrent open. On the ~$636 account each 1-contract trade is ~$50-100, so 6 open
+  // ≈ $450 exposure (fits), and most close fast on the +100%/-25% intraday exit.
+  caps: { perTradeBudget: 100, maxContracts: 1, maxOpenPositions: 6, maxTradesPerDay: 8 },
   // §7/§8: +100% option take-profit, -25% option stop. Intraday style = premium TP/SL;
   // the short weekly expiry is the outer time bound (~1-day-swing intent).
   exit: { style: "intraday", takeProfit: 1.0, stopLoss: -0.25, sameDayExit: false },
