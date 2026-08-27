@@ -55,7 +55,11 @@ async function main() {
   add(SNIPER, "sniper_swing");
   add(SNIPER, "sbv2"); // SBv2 shares SBv1's universe for a clean comparison
   add(SNIPER, "sbv3"); // SBv3 = SBv2 clone (Farrukh's next update lands here)
-  add(SNIPER, "sb_d1"); // SB-D1 Daily Zone Rejection (owner-enabled 2026-08-18) — same mega-cap universe
+  // SB-D1 uses the CHEAP universe (owner 2026-08-27): its $0.50-1.00 contract rule is
+  // incompatible with $100-500 mega-caps (a near-money weekly there costs $8-28, so
+  // every setup skipped "no contract in band"). $5-65 names produce real $0.50-1.00
+  // near-money weeklies. REVERT to mega-caps: change ZONES -> SNIPER here + reseed.
+  add(ZONES, "sb_d1");
   add(SNIPER, "zone_swing"); // Daily Empty-Space Zone-to-Zone Swing (owner 2026-08-24) — mega-caps have $10+ zone-to-zone room
   add(QQQ, "qqq_0dte");
   add(ZONES, "zones_legacy");
