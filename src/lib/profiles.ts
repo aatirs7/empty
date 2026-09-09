@@ -10,7 +10,7 @@
 import { type StrategyOptions, DEFAULT_STRATEGY_OPTIONS } from "./strategy";
 import { type ZoneOptions, DEFAULT_ZONE_OPTIONS } from "./zones";
 
-export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy" | "sb15m" | "sb_d1" | "vegamade_v1" | "zone_swing";
+export type ProfileId = "sniper_swing" | "sbv2" | "sbv3" | "qqq_0dte" | "qqq_manual" | "zones_legacy" | "sb15m" | "sb_d1" | "vegamade_v1" | "zone_swing" | "zone_4h";
 
 /** friday = nearest weekly Friday; twoToFourWeeks = ~21d; zeroDte = same-day;
  *  oneDay = next trading day (the QQQ 1-day-swing leg). */
@@ -150,7 +150,7 @@ export interface Profile {
   // "flip" (RETIRED 2026-07-21 — the old SBv2 daily-flip logic; no active profile
   // uses it, code kept for reference), or "breakout" (SBv2 2026-07-21 — completed
   // 4H body-close outside a daily zone into empty space, awaiting first retest).
-  setupKind?: "tap" | "flip" | "breakout" | "zone_swing";
+  setupKind?: "tap" | "flip" | "breakout" | "zone_swing" | "zone_swing_4h";
   // How the live monitor triggers an entry: "tap" (default — a boundary crossing /
   // confirmation candle), "flip_retest" (SBv2 — the FIRST live tap of the stored
   // boundary, re-validated at fire time), or "empty_space_tap" (SB 15M — the first
@@ -527,9 +527,10 @@ const ZONES_LEGACY: Profile = {
 // contract band below is a placeholder until the delta-based strike engine lands.
 const SBD1: Profile = {
   id: "sb_d1",
-  label: "SB-D1",
-  description: "SB-D1 Daily Zone Rejection: tap a daily zone from the correct side → buy a $0.50-1.00 call/put → +100% TP / -25% stop, ~1-day swing. Owner's message (8) spec; live paper (note: backtests lose).",
+  label: "SB-D1 (shelved)",
+  description: "SHELVED 2026-09-09 — replaced by Zone 4H (`zone_4h`), which took over its paper account. History only.",
   active: true,
+  shelved: true, // owner 2026-09-09: replaced by the 4H two-touch profile
   strategy: DEFAULT_STRATEGY_OPTIONS, // zone foundation only; SB-D1 detection lives in sbd1.ts
   zoneTimeframes: [DAILY_TF], // 1D / ATR-50 / displacement-1.7 ONLY (spec §1)
   // "SB-D1 Daily Zone Rejection Swing" (owner's message (8).txt, LIVE-enabled
@@ -632,6 +633,48 @@ const ZONE_SWING: Profile = {
   baselineSymbol: "SPY",
 };
 
+// 4H Empty-Space Zone-to-Zone Swing (owner 2026-09-09, `message (9).txt`) — REPLACES
+// sb_d1 and takes its paper account (ALPACA_*_3). Same 1D / ATR-50 / 1.7 zones, but a
+// TWO-TOUCH confirmation: the entry zone must have been REJECTED on a completed 4H
+// candle within the last 2 trading days (tap + close back through the facing edge);
+// the live retap of that confirmed zone after the open is the entry (reuses the
+// zone_swing_tap monitor path + underlying-structure swing exit). Strike ~$2 ITM past
+// the next opposing zone (target). Scans ONLY the owner's 26-name watchlist. Live paper.
+const ZONE_4H: Profile = {
+  id: "zone_4h",
+  label: "Zone 4H",
+  description: "4H Empty-Space Zone-to-Zone Swing: a 1D zone rejected on a 4H candle within 2 trading days, re-tapped live after the open → buy a following-Friday call/put ~$2 ITM past the next opposing zone → exit when the underlying reaches that zone (no option-% stop). Owner's 26-name watchlist only. Replaces SB-D1.",
+  active: true,
+  setupKind: "zone_swing_4h",
+  entryKind: "zone_swing_tap", // live retap of the confirmed zone edge (reused)
+  strategy: DEFAULT_STRATEGY_OPTIONS,
+  zoneTimeframes: [ZONE_SWING_DAILY_TF], // 1D zones, all standing levels; 4H bars fetched for confirmation
+  confirmation: { enabled: false, timeframe: "5Min", minRelVolume: 1 },
+  minScore: 0, // mechanical — the confirmed retap is the trigger
+  contract: {
+    expiryKind: "friday", // + minDays 7 in execute => a following-week Friday weekly
+    otmPct: 4,
+    itmPct: 20, // allow a comfortably-ITM strike
+    priceFloor: 0.1,
+    priceIdeal: 3.0,
+    priceCap: 60.0,
+    liquiditySpread: 0.6,
+    strikeFromTarget: 2.0, // ~$2 ITM past the target (message (9) spec)
+  },
+  caps: { perTradeBudget: 900, maxContracts: 1, maxOpenPositions: 4, maxTradesPerDay: 4 },
+  exit: {
+    style: "swing",
+    invalidateOnDailyReenter: true, // out on a daily close/open back inside the entry zone
+    catastropheFloor: 0.05, // expiry-salvage only
+    catastropheDays: 1,
+    takeProfit: 1.0, // inert (swing)
+    stopLoss: -0.99, // inert
+    sameDayExit: false,
+  },
+  autoDefault: false, // enabled via profile_settings (owner turns it on)
+  baselineSymbol: "SPY",
+};
+
 export const PROFILES: Record<ProfileId, Profile> = {
   sniper_swing: SNIPER_SWING,
   sbv2: SBV2,
@@ -643,9 +686,10 @@ export const PROFILES: Record<ProfileId, Profile> = {
   sb_d1: SBD1,
   vegamade_v1: VEGAMADE_V1,
   zone_swing: ZONE_SWING,
+  zone_4h: ZONE_4H,
 };
 
-export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy", "sb15m", "sb_d1", "vegamade_v1", "zone_swing"];
+export const PROFILE_IDS: ProfileId[] = ["sniper_swing", "sbv2", "sbv3", "qqq_0dte", "qqq_manual", "zones_legacy", "sb15m", "sb_d1", "vegamade_v1", "zone_swing", "zone_4h"];
 
 export function getProfile(id: string | null | undefined): Profile {
   return PROFILES[(id ?? "sniper_swing") as ProfileId] ?? SNIPER_SWING;

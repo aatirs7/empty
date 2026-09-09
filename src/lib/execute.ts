@@ -238,7 +238,10 @@ export async function executeProposal(proposalId: number, mode: "manual" | "auto
     }
   }
 
-  const limitPrice = resolved.price;
+  // MID-PRICE entry (owner 2026-09-09, universal): enter at the midpoint between bid
+  // and ask, not the ask — better fills, applied to EVERY option buy. Falls back to
+  // resolved.price (ask) when there's no two-sided quote to midpoint.
+  const limitPrice = resolved.mid != null && resolved.mid > 0 ? Math.round(resolved.mid * 100) / 100 : resolved.price;
   // Buy as many cheap contracts as the per-trade budget allows (>=1, capped)...
   let qty = Math.max(1, Math.min(maxContracts, Math.floor(perTradeBudget / (limitPrice * 100))));
   // ...unless the profile demands an EXACT lot (QQQ Manual: "buy exactly 5 contracts …

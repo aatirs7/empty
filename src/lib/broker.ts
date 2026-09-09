@@ -53,9 +53,10 @@ function accountKeysFor(profileId?: string): AccountKeys | null {
     const secret = process.env.ALPACA_API_SECRET_KEY2?.trim();
     if (id && secret) return { id, secret };
   }
-  if (profileId === "sbv2" || profileId === "sb_d1") {
-    // SBv2 is shelved; SB-D1 (owner-enabled 2026-08-18) trades that idle account so it
-    // never collides with VegaMade's shares on the default keys.
+  if (profileId === "sbv2" || profileId === "sb_d1" || profileId === "zone_4h") {
+    // ALPACA_*_3 account: SBv2 (shelved) → SB-D1 (shelved 2026-09-09) → Zone 4H, which
+    // REPLACED sb_d1 and inherited its paper account. Only one of these trades at a time
+    // (the others are shelved), so no collision.
     const id = process.env.ALPACA_API_KEY_ID3?.trim();
     const secret = process.env.ALPACA_API_SECRET_KEY3?.trim();
     if (id && secret) return { id, secret };

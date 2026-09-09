@@ -41,6 +41,13 @@ const ZONES = [
   "GDX","GDXJ","SLV","EEM","FXI","EWZ","KRE","ARKK","UNG","SPY",
 ];
 
+// Zone 4H watchlist (owner 2026-09-09, `message (9).txt`): the ONLY names this profile
+// scans/trades. Liquid, optionable, wide zone-to-zone ranges.
+const ZONE4H = [
+  "NVDA","TSLA","META","HOOD","MSTR","AMD","PLTR","AMZN","AAPL","MSFT","GOOGL","COIN","AVGO",
+  "MU","ORCL","SOFI","RIVN","RKLB","ASTS","IONQ","DKNG","HIMS","CRCL","RBLX","DELL","UBER",
+];
+
 async function main() {
   const rows: { symbol: string; profileId: string; rank: number }[] = [];
   const add = (list: string[], profileId: string) => {
@@ -59,7 +66,8 @@ async function main() {
   // incompatible with $100-500 mega-caps (a near-money weekly there costs $8-28, so
   // every setup skipped "no contract in band"). $5-65 names produce real $0.50-1.00
   // near-money weeklies. REVERT to mega-caps: change ZONES -> SNIPER here + reseed.
-  add(ZONES, "sb_d1");
+  add(ZONES, "sb_d1"); // shelved 2026-09-09 (replaced by zone_4h); kept for history
+  add(ZONE4H, "zone_4h"); // 4H two-touch profile — owner's 26-name watchlist ONLY
   add(SNIPER, "zone_swing"); // Daily Empty-Space Zone-to-Zone Swing (owner 2026-08-24) — mega-caps have $10+ zone-to-zone room
   add(QQQ, "qqq_0dte");
   add(ZONES, "zones_legacy");

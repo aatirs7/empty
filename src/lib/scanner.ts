@@ -8,7 +8,7 @@ import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "../db";
 import { universe as universeTable, candidates as candidatesTable, researchRuns } from "../db/schema";
 import { getMultiStockBars, getIntradayBars, type Bar } from "./alpaca";
-import { buildZoneSetups, buildFlipSetupsDetailed, buildBreakoutSetupsDetailed, buildZoneSwingSetups } from "./strategy";
+import { buildZoneSetups, buildFlipSetupsDetailed, buildBreakoutSetupsDetailed, buildZoneSwingSetups, buildZoneSwing4hSetups } from "./strategy";
 import { FLIP_REJECTION_LABELS, type FlipRejection } from "./flips";
 import { BREAKOUT_REJECTION_LABELS, type BreakoutRejection } from "./breakout";
 import { classifyAndScore } from "./playbook";
@@ -77,7 +77,7 @@ async function scanTimeframe(
   // addition to the daily zones — fetch the 4h series per symbol, drop the
   // forming bar so a mid-formation candle can never qualify a breakout.
   const bars4hBySymbol: Record<string, Bar[]> = {};
-  if (profile.setupKind === "breakout" && ztf.timeframe === "daily") {
+  if ((profile.setupKind === "breakout" || profile.setupKind === "zone_swing_4h") && ztf.timeframe === "daily") {
     for (const sym of symbols) {
       try {
         const raw = await getIntradayBars(sym, "4Hour", FOURH_SCAN_LOOKBACK_MIN);
@@ -114,6 +114,13 @@ async function scanTimeframe(
         // Daily Empty-Space Zone-to-Zone Swing (owner 2026-08-24): tap a Daily zone
         // edge, target the next opposing Daily zone (≥ $10 room).
         setups = buildZoneSwingSetups(bars, strat, watch);
+      } else if (profile.setupKind === "zone_swing_4h") {
+        // 4H Empty-Space Zone-to-Zone Swing (owner 2026-09-09): same 1D zones + a
+        // TWO-TOUCH 4H confirmation (zone rejected on a completed 4H candle within 2
+        // trading days); the live retap is the entry.
+        const b4 = bars4hBySymbol[sym] ?? [];
+        if (b4.length < 6) continue;
+        setups = buildZoneSwing4hSetups(bars, b4, strat, watch);
       } else {
         setups = buildZoneSetups(bars, strat, watch);
       }

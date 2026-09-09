@@ -11,7 +11,7 @@
 // sbv3 was shelved 2026-07-16 (Farrukh: "close/disable for now") — no tab.
 // SBv1 (sniper_swing) was SHELVED 2026-07-27 and replaced by SB-D1 — no tab.
 export const UI_PROFILE_TABS = [
-  { id: "sb_d1", label: "SB-D1" },
+  { id: "zone_4h", label: "Zone 4H" },
   { id: "vegamade_v1", label: "VegaMade v1" },
   { id: "zone_swing", label: "Zone Swing" },
   { id: "qqq_manual", label: "QQQ Manual" },

@@ -262,6 +262,97 @@ export function buildZoneSwingSetups(bars: Bar[], opts: StrategyOptions = DEFAUL
   }));
 }
 
+/**
+ * Was the entry zone REJECTED on a completed 4H candle within the last 2 trading days?
+ * (message (9).txt two-touch confirmation.) CALL/demand: a 4H candle dipped to tap the
+ * zone top and CLOSED back ABOVE it. PUT/supply: a 4H candle rose to tap the zone bottom
+ * and CLOSED back BELOW it. Returns the confirming candle's timestamp, or null.
+ */
+function confirmed4hRejection(completed4h: Bar[], zone: Zone, direction: "call" | "put"): string | null {
+  if (!completed4h.length) return null;
+  const dates = [...new Set(completed4h.map((b) => b.t.slice(0, 10)))].sort();
+  const recent2 = new Set(dates.slice(-2)); // confirmation no older than 2 trading days
+  const recent = completed4h.filter((b) => recent2.has(b.t.slice(0, 10)));
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const b = recent[i];
+    if (direction === "call") {
+      if (b.l <= zone.top && b.c > zone.top) return b.t; // tapped demand top, closed above
+    } else {
+      if (b.h >= zone.bottom && b.c < zone.bottom) return b.t; // tapped supply bottom, closed below
+    }
+  }
+  return null;
+}
+
+/**
+ * 4H Empty-Space Zone-to-Zone Swing (owner 2026-09-09, `message (9).txt`). Same 1D /
+ * ATR-50 / 1.7 zones as zone_swing, but with a TWO-TOUCH confirmation on 4H candles:
+ * the entry zone must have been REJECTED by a completed 4H candle within the last 2
+ * trading days (tap + close back through the facing edge). The live retap of that same
+ * confirmed zone is the trigger (handled by entryKind "zone_swing_tap"). Target = the
+ * next opposing zone through clean empty space; strike ~$2 ITM past it (contract config).
+ */
+export function buildZoneSwing4hSetups(dailyBars: Bar[], bars4h: Bar[], opts: StrategyOptions = DEFAULT_STRATEGY_OPTIONS, limit = 1): ZoneSetup[] {
+  const { active, atr, lastBar } = computeZones(dailyBars, opts.zone);
+  const price = lastBar.c;
+  const empty: ZoneSetup = {
+    active_zone: null,
+    tapped_edge: null,
+    trigger_edge: "first_touch",
+    approach: null,
+    direction: null,
+    clear_runway: false,
+    tap_granularity: "daily_scan",
+    distance_to_edge_pct: null,
+    setup_valid: false,
+    price,
+  };
+  if (active.length < 2) return [empty];
+  if (active.some((z) => price >= z.bottom && price <= z.top)) return [empty]; // price inside a zone
+  const completed4h = bars4h.filter((b) => Date.parse(b.t) + 4 * 60 * 60_000 <= Date.now());
+  if (!completed4h.length) return [empty];
+
+  const below = active.filter((z) => z.top < price).sort((a, b) => b.top - a.top); // nearest-below first
+  const above = active.filter((z) => z.bottom > price).sort((a, b) => a.bottom - b.bottom); // nearest-above first
+  const allZonesJson = active.map((z) => ({ bottom: z.bottom, top: z.top }));
+  const minMove = Math.max(2, price * 0.02); // meaningful zone-to-zone room (scales with price)
+
+  const cands: { zone: Zone; entry: number; target: number; direction: "call" | "put"; approach: "from_above" | "from_below"; confirmedAt: string }[] = [];
+  if (below.length && above.length) {
+    // Bullish: nearest demand zone below (entry), nearest supply zone above (target).
+    const entryZone = below[0];
+    const entry = entryZone.top;
+    const target = above[0].bottom;
+    const conf = confirmed4hRejection(completed4h, entryZone, "call");
+    if (conf && target - entry >= minMove) cands.push({ zone: entryZone, entry, target, direction: "call", approach: "from_above", confirmedAt: conf });
+    // Bearish: nearest supply zone above (entry), nearest demand zone below (target).
+    const sZone = above[0];
+    const sEntry = sZone.bottom;
+    const sTarget = below[0].top;
+    const sConf = confirmed4hRejection(completed4h, sZone, "put");
+    if (sConf && sEntry - sTarget >= minMove) cands.push({ zone: sZone, entry: sEntry, target: sTarget, direction: "put", approach: "from_below", confirmedAt: sConf });
+  }
+  if (!cands.length) return [empty];
+
+  cands.sort((a, b) => Math.abs(price - a.entry) - Math.abs(price - b.entry));
+  return cands.slice(0, limit).map((c) => ({
+    active_zone: { bottom: c.zone.bottom, top: c.zone.top },
+    tapped_edge: Math.round(c.entry * 100) / 100,
+    trigger_edge: "first_touch",
+    approach: c.approach,
+    direction: c.direction,
+    clear_runway: true, // empty space to the next opposing zone by construction
+    tap_granularity: "daily_scan",
+    distance_to_edge_pct: Math.round((Math.abs(price - c.entry) / price) * 10000) / 100,
+    setup_valid: true,
+    price,
+    predictedTarget: Math.round(c.target * 100) / 100,
+    accepted_at: c.confirmedAt, // the confirming 4H rejection candle (two-touch)
+    active_zones: allZonesJson,
+    htf_atr: Math.round(atr * 10000) / 10000,
+  }));
+}
+
 // SBv2 won't watch a flip whose retest is already implausibly far away (spec:
 // "price has moved too far away from the entry"). Beyond this % from the boundary,
 // a retest inside the 1-2 session window is unlikely — drop it.
